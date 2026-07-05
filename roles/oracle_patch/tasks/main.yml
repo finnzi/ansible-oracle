@@ -1,0 +1,53 @@
+---
+# tasks/main.yml for oracle_patch
+#
+# The standby-first DETECTION is real and runs now (the user explicitly asked
+# for auto-detection from release notes). The APPLY is scaffolded.
+
+- name: Verify the patch zip is staged
+  ansible.builtin.stat:
+    path: "{{ oracle_patch_zip }}"
+  register: _patch_zip
+  failed_when: not _patch_zip.stat.exists
+
+# ── Standby-first eligibility from the patch README (fully implemented) ─
+- name: Read standby-first eligibility from the patch README
+  patch_standbyfirst_info:
+    zip: "{{ oracle_patch_zip }}"
+  register: _sf
+  when: oracle_patch_dg_standbyfirst | default('auto') in ('auto', true)
+
+- name: Resolve whether to use standby-first patching
+  ansible.builtin.set_fact:
+    oracle_patch_use_standbyfirst: >-
+      {{ (_sf.eligible | default(false))
+         if (oracle_patch_dg_standbyfirst | default('auto') == 'auto')
+         else (oracle_patch_dg_standbyfirst | bool) }}
+  when: oracle_patch_dg_standbyfirst | default('auto') in ('auto', true)
+
+- name: Report standby-first verdict
+  ansible.builtin.debug:
+    msg: >-
+      Patch {{ oracle_patch_zip | basename }}: standby-first eligible =
+      {{ _sf.eligible | default('n/a') }}. Reason:
+      {{ _sf.reason | default('n/a') }}. Apply mode: {{ oracle_patch_mode }}.
+      Target: {{ oracle_patch_target }}.
+
+- name: Verify OPatch upgrade zip is staged
+  ansible.builtin.stat:
+    path: "{{ oracle_patch_opatch_zip }}"
+  register: _opatch_zip
+  failed_when: not _opatch_zip.stat.exists
+
+# ── Apply (stubbed) ────────────────────────────────────────────────────
+- name: Not implemented — fail only if apply is explicitly enabled
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch APPLY is scaffolded, not implemented, in this engagement.
+      Detection above is real. To apply, implement per defaults/main.yml:
+      OPatch upgrade from {{ oracle_patch_opatch_zip | basename }}; opatchauto
+      apply on the {{ oracle_patch_target }} home{% if oracle_patch_mode == 'oop_dual' %} in dual-home
+      mode (install new home, patch, srvctl modify -oraclehome, restart){% endif %};
+      datapatch. Standby-first branch when oracle_patch_use_standbyfirst.
+      Then set oracle_patch_apply_enabled: true.
+  when: oracle_patch_apply_enabled | bool

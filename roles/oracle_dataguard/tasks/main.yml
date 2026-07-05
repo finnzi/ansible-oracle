@@ -1,0 +1,44 @@
+---
+# tasks/main.yml for oracle_dataguard
+#
+# STUB (vertical slice). Gathers the live DG facts (so the test suite can
+# assert "skipped because DG not configured") and asserts the interface
+# contract, then fails loudly ONLY if a real DG action is requested.
+
+- name: Read live DB facts (so we can report role/open-mode)
+  oracle_db_facts:
+    service_name: "{{ (oracle_instances | first).service_name | default((oracle_instances | first).name) }}"
+    host: "{{ (oracle_instances | first).listener_vip | default('superdb.domain.is') }}"
+    port: "{{ (oracle_instances | first).listener_port | default(1521) }}"
+    username: system
+    password: "{{ oracle_lab_system_password | default('SysPassword1_') }}"
+    role: sysdg
+  register: _dg_facts
+  failed_when: false
+  when: oracle_instances | length > 0
+
+- name: Report DG readiness
+  ansible.builtin.debug:
+    msg: >-
+      Data Guard role scaffolded (slice). Live DB role:
+      {{ _dg_facts.facts.database_role | default('unknown') }}; open mode:
+      {{ _dg_facts.facts.open_mode | default('unknown') }}. Set dg_enabled=true
+      and oracle_dataguard_enabled=true on the standby host to materialise it.
+
+- name: Set oracle_dataguard_configured fact
+  ansible.builtin.set_fact:
+    oracle_dataguard_configured: "{{ _dg_facts.facts.database_role | default('PRIMARY') in ['PHYSICAL STANDBY','LOGICAL STANDBY','SNAPSHOT STANDBY'] }}"
+  when: oracle_instances | length > 0
+
+- name: Not implemented — fail only if DG is explicitly requested
+  ansible.builtin.fail:
+    msg: >-
+      oracle_dataguard is scaffolded, not implemented, in this engagement.
+      To deliver DG, implement (per defaults/main.yml INTERFACE):
+      RMAN active duplicate to create the standby; DGMGRL CREATE CONFIGURATION
+      with primary + standby; EDIT DATABASE <sby> SET STATE='READ ONLY WITH APPLY';
+      DGMGRL SWITCHOVER for manual switchovers. Then set
+      oracle_dataguard_enabled: true.
+  when:
+    - dg_enabled | bool
+    - oracle_dataguard_enabled | bool

@@ -1,0 +1,18 @@
+---
+# inventory/group_vars/primary.yml
+#
+# Hosts in the [primary] group run the primary role of a Data Guard pair (or,
+# when dataguard:false, the standalone DB). For the vertical slice the group
+# contains exactly one host: superdb1.
+#
+# In standalone mode the listener VIP is <name>db.domain.is (set per-instance
+# in all.yml). In Data Guard mode the per-instance listener_vip is overridden
+# here to <name>dc1.domain.is so each node binds a distinct IP/hostname.
+
+# When dataguard is enabled, primaries bind the dc1 VIP.
+oracle_instance_overrides:
+  super:
+    listener_vip: "superdc1.domain.is"
+    dg_role: primary
+    # db_unique_name must differ between primary and standby in a DG config.
+    db_unique_name: super_pri

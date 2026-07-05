@@ -1,0 +1,95 @@
+---
+# inventory/group_vars/all.yml
+#
+# Global defaults for every host in the ansible-oracle lab. Per-instance and
+# per-host overrides live in primary.yml / standby.yml / observer.yml and in
+# host_vars/. These defaults express the layout the project mandates:
+#
+#   /<instance>/app/oracle/<db_homeN>   ORACLE_HOMEs (out-of-place friendly)
+#   /<instance>/d01                     data files
+#   /<instance>/a01                     archive logs
+#   /<instance>/f01                     flashback recovery area
+#   /<instance>/r01                     redo log members
+#   /grid/19c/gi_homeN                  Oracle Restart (Grid) homes
+#
+# Everything is filesystem-based — no ASM, by design.
+
+# ── Software versions / source artefacts ──────────────────────────────
+# These filenames match what is staged under download/ by lab-up.sh
+# (symlinked from ~/sources/oracle). Override per-environment if your sources
+# differ.
+oracle_version: "19.3.0.0"
+oracle_release_update: "19.31.0.0.260421"   # informational; surfaces in facts/tests
+
+oracle_install_files:
+  db_zip: "V982063-01-Oracle.19c.Database.Enterprise.Edition.zip"
+  gi_zip: "V982068-01-Oracle.19c.Grid.Infrastructure.zip"
+  client_zip: "V982064-01-Oracle.19c.Database.Client.zip"
+
+oracle_patch_files:
+  opatch_zip: "p6880880_190000_Linux-x86-64.zip"
+  db_ru_zip: "p39062931_190000_Linux-x86-64.zip"   # OJVM 19.31 + DB RU 19.31
+  gi_ru_zip: "p39062956_190000_Linux-x86-64.zip"   # OJVM 19.31 + GI RU 19.31
+
+# Where the containers see the staged installers (bind-mounted from ./download).
+oracle_stage_dir: "/u01/stage"
+
+# ── OS user / groups ──────────────────────────────────────────────────
+oracle_user: oracle
+oracle_group: oinstall
+oracle_roles:
+  - dba
+  - oper
+  - backupdba
+  - dgdba       # SYSDG — Data Guard broker
+  - kmdba
+
+# ── The database instances managed by this repo ───────────────────────
+# A list so the same playbooks can manage several DBs per host (super, duper,
+# fluff ...). Each instance gets its own /<name> tree and its own listener.
+#
+# dataguard: false  -> standalone, listener VIP <name>db.domain.is
+# dataguard: true   -> primary+standby pair, VIPs <name>dc1/dc2.domain.is
+#
+# archive / flashback / force_logging are independently toggleable.
+oracle_instances:
+  - name: super
+    oracle_base: /super/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /super/d01
+      archive: /super/a01
+      flashback: /super/f01
+      redo: /super/r01
+    dataguard: false
+    archivelog: true
+    flashback: false
+    force_logging: true
+    memory:
+      sga_target: 2G
+      pga_aggregate_target: 1G
+    # standalone listener hostname; for DG this is overridden by primary/standby
+    listener_vip: superdb.domain.is
+    listener_port: 1521
+    # The client-facing service that always points at the current primary.
+    # Created via srvctl in oracle_service_manage.
+    service_name: super_svc
+
+# Default listener / DB credentials for the lab (NOT for production). The test
+# suite and the custom modules use these. Real passwords should be vaulted.
+oracle_lab_sys_password: "SysPassword1_"
+oracle_lab_system_password: "SysPassword1_"
+oracle_lab_dg_password: "DgPassword1_"
+
+# ── Domain / DNS conventions for the lab ──────────────────────────────
+lab_domain: domain.is

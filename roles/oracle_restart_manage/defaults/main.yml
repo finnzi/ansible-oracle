@@ -1,0 +1,21 @@
+---
+# defaults/main.yml for oracle_restart_manage
+#
+# Register each instance (and its listener) with Oracle Restart so the DB
+# comes back automatically after a crash or host reboot. Uses srvctl against
+# the Grid Infrastructure standalone (Oracle Restart) home.
+#
+# If Restart is NOT installed (the GI install role is stubbed in the vertical
+# slice), this role detects that and reports the gap as an ansible fact rather
+# than failing the whole play — so the slice still proves install+create+
+# listener. The test suite then asserts the registration status explicitly.
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_instances: []
+
+# The Oracle Restart (GI standalone) home. Defaults to the project layout.
+oracle_gi_home: /grid/19c/gi_home1
+
+# Whether to hard-fail when Restart is missing. False in the slice; true later.
+oracle_restart_required: false

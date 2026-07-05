@@ -1,0 +1,62 @@
+---
+# tasks/main.yml for oracle_restart_manage
+#
+# Register each instance with Oracle Restart (Grid standalone) so the DB and
+# listener auto-start on crash/reboot. Degrades gracefully if Restart isn't
+# installed yet (the slice case) — sets a fact the test suite asserts on.
+
+- name: Resolve current ORACLE_HOME per instance
+  ansible.builtin.set_fact:
+    _restart_instances: >-
+      {{
+        (oracle_instances | default([])) | map('combine',
+          {'_home_path': (item.oracle_base ~ '/' ~
+             ((item.db_homes | selectattr('current','equalto',true) | first | default(item.db_homes[0])).suffix))})
+        | list
+      }}
+
+# ── Is Oracle Restart actually installed on this host? ─────────────────
+- name: Locate srvctl
+  ansible.builtin.stat:
+    path: "{{ oracle_gi_home }}/bin/srvctl"
+  register: _srvctl_bin
+
+- name: Probe Restart stack (ohasd)
+  ansible.builtin.shell: |
+    set -o pipefail
+    if command -v crsctl >/dev/null 2>&1; then
+      crsctl check has 2>&1 || true
+    elif [ -x {{ oracle_gi_home }}/bin/crsctl ]; then
+      {{ oracle_gi_home }}/bin/crsctl check has 2>&1 || true
+    else
+      echo "no-crsctl"
+    fi
+  args: { executable: /bin/bash }
+  register: _has_check
+  changed_when: false
+  failed_when: false
+
+- name: Set oracle_restart_available fact
+  ansible.builtin.set_fact:
+    oracle_restart_available: >-
+      {{ _srvctl_bin.stat.exists and 'CRS-4638' in (_has_check.stdout | default('')) }}
+
+- name: Restart not installed and required — fail loudly
+  ansible.builtin.fail:
+    msg: >-
+      Oracle Restart is required on {{ inventory_hostname }} but srvctl was
+      not found at {{ oracle_gi_home }}/bin/srvctl, or ohasd did not report a
+      healthy state. Install Grid Infrastructure standalone (oracle_gi_install)
+      before registering instances.
+  when:
+    - not oracle_restart_available
+    - oracle_restart_required | bool
+
+# ── Register each instance + its listener with Restart ─────────────────
+- name: Register instance, listener, and start them under Restart
+  ansible.builtin.include_tasks: register-instance.yml
+  loop: "{{ _restart_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  when: oracle_restart_available

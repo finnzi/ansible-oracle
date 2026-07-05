@@ -1,0 +1,124 @@
+---
+# tasks/main.yml for oracle_common
+#
+# Establish the OS substrate Oracle expects: groups, oracle user, sudoers,
+# sysctl, limits, and the base directory layout under each instance's ORACLE_BASE.
+# Idempotent — every task checks before it changes.
+
+# ── 1. Groups ─────────────────────────────────────────────────────────
+- name: Ensure oinstall group exists
+  ansible.builtin.group:
+    name: "{{ oracle_group }}"
+    gid: "{{ oracle_gid }}"
+    state: present
+
+- name: Ensure supplementary OS roles exist (dba, oper, ...)
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop: "{{ oracle_roles }}"
+
+# ── 2. oracle user ────────────────────────────────────────────────────
+- name: Ensure oracle user exists
+  ansible.builtin.user:
+    name: "{{ oracle_user }}"
+    uid: "{{ oracle_uid }}"
+    group: "{{ oracle_group }}"
+    groups: "{{ oracle_roles }}"
+    append: true
+    home: "/home/{{ oracle_user }}"
+    shell: /bin/bash
+    create_home: true
+    comment: "Oracle software owner"
+
+# ── 3. sudoers ────────────────────────────────────────────────────────
+- name: Allow oracle to run sudo without a password (lab)
+  ansible.builtin.copy:
+    dest: /etc/sudoers.d/oracle
+    content: "{{ oracle_user }} ALL=(ALL) NOPASSWD: ALL\n"
+    mode: "0440"
+    owner: root
+    group: root
+    validate: /usr/sbin/visudo -csf %s
+
+- name: Ensure /etc/oradata and stage dirs exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop:
+    - /u01
+    - "{{ oracle_stage_dir | default('/u01/stage') }}"
+
+# ── 4. sysctl ─────────────────────────────────────────────────────────
+# Write the desired parameters to /etc/sysctl.d/99-oracle.conf and reload.
+# Implemented with shell (not ansible.posix.sysctl) to keep the repo free of
+# external collection dependencies. Idempotent: the copy task reports changed
+# only when the file content differs; the reload is gated on that change.
+- name: Render Oracle sysctl file
+  ansible.builtin.copy:
+    dest: /etc/sysctl.d/99-oracle.conf
+    content: |
+      # Managed by ansible-oracle / oracle_common
+      {% for kv in oracle_sysctl | dict2items %}
+      {{ kv.key }} = {{ kv.value }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload sysctl
+
+- name: Flush handlers so sysctl is applied before the play continues
+  ansible.builtin.meta: flush_handlers
+
+# ── 5. limits ─────────────────────────────────────────────────────────
+- name: Configure PAM limits for the oracle user
+  ansible.builtin.copy:
+    dest: /etc/security/limits.d/oracle.conf
+    content: |
+      # Managed by ansible-oracle / oracle_common
+      {{ oracle_user }}  soft  nofile  {{ oracle_limits_soft.nofile }}
+      {{ oracle_user }}  hard  nofile  {{ oracle_limits_hard.nofile }}
+      {{ oracle_user }}  soft  nproc   {{ oracle_limits_soft.nproc }}
+      {{ oracle_user }}  hard  nproc   {{ oracle_limits_hard.nproc }}
+      {{ oracle_user }}  soft  stack   {{ oracle_limits_soft.stack }}
+      {{ oracle_user }}  hard  stack   {{ oracle_limits_hard.stack }}
+    mode: "0644"
+    owner: root
+    group: root
+
+- name: Ensure pam.d includes pam_limits (sshd picks it up)
+  ansible.builtin.lineinfile:
+    path: "{{ item }}"
+    regexp: '^session\s+required\s+pam_limits.so'
+    line: 'session    required   pam_limits.so'
+    create: true
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - /etc/pam.d/system-auth
+    - /etc/pam.d/password-auth
+    - /etc/pam.d/sshd
+  # OL9 symlinks system-auth/password-auth; a duplicate line is harmless.
+  failed_when: false
+
+# ── 6. oracle user shell profile (ORACLE_* defaults per-instance) ──────
+# We do NOT set ORACLE_HOME/SID globally here — those depend on the instance.
+# Per-instance env is written by oracle_storage when the instance tree exists.
+- name: Ensure oracle .bash_profile sources per-instance env directory
+  ansible.builtin.blockinfile:
+    path: "/home/{{ oracle_user }}/.bash_profile"
+    create: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+    marker: "# {mark} ANSIBLE-ORACLE per-instance env"
+    block: |
+      if [ -d /etc/profile.d/oracle-instance.d ]; then
+        for f in /etc/profile.d/oracle-instance.d/*.sh; do
+          [ -r "$f" ] && . "$f"
+        done
+      fi

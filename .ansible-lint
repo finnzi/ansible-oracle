@@ -1,0 +1,34 @@
+---
+# .ansible-lint — project-specific ansible-lint configuration.
+#
+# Documentation of the choices that deviate from defaults:
+
+# Allow longer line length for the SQL heredocs and Jinja set-facts, which are
+# legitimately long.
+parseable: true
+quiet: false
+verbosity: 1
+
+warn_list:
+  # Jinja spacing suggestions are cosmetic (e.g. add a space after a comma
+  # inside a filter). The code is correct; these are warnings only.
+  - jinja[spacing]
+  # command-instead-of-* and key-order warnings are stylistic.
+  - command-instead-of-module
+  - key-order[task]
+
+skip_list:
+  # Role variables intentionally use a shared flat `oracle_*` namespace so the
+  # same var (oracle_user, oracle_instances, ...) flows across roles and
+  # inventory without per-role prefixes. This is a deliberate design choice.
+  - var-naming[no-role-prefix]
+  # yamllint colon-alignment in defaults/main.yml is intentional for
+  # readability of grouped key/value blocks.
+  - yaml[colons]
+  # Line-length: relax for the SQL heredocs (templated ALTER statements
+  # legitimately exceed 160 chars). See .yamllint for the canonical setting.
+  - yaml[line-length]
+
+exclude_paths:
+  - .venv/
+  - download/

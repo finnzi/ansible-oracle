@@ -1,0 +1,97 @@
+---
+# tasks/register-instance.yml — srvctl add + start one instance.
+# `inst` is in scope (one element of _restart_instances).
+
+- name: Is this DB already registered with Restart?
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" config database -d {{ inst.name }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_cfg
+  changed_when: false
+  failed_when: false
+
+- name: Srvctl add database (idempotent)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" add database \
+      -db {{ inst.name }} \
+      -oraclehome {{ inst._home_path }} \
+      -spfile {{ inst.dirs.data }}/{{ inst.name }}/spfile{{ inst.name }}.ora \
+      -role PRIMARY \
+      -dbname {{ inst.name }} \
+      -instance {{ inst.name }} \
+      -startoption OPEN \
+      -stopoption IMMEDIATE \
+      -autostart ENABLE
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: "'NOT_REGISTERED' in _srvctl_cfg.stdout or _srvctl_cfg.rc != 0"
+  register: _srvctl_add
+  changed_when: _srvctl_add.rc == 0
+  failed_when: >-
+    _srvctl_add.rc != 0 and 'already exists' not in (_srvctl_add.stdout | default(''))
+
+# If a spfile isn't at the declared path yet, point Restart at the default in
+# $ORACLE_HOME/dbs. We try the canonical path; on failure we re-add with the
+# default. Keep this defensive — the slice tolerates it.
+- name: Fallback — re-add using default spfile location if canonical missing
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" modify database \
+      -db {{ inst.name }} \
+      -spfile {{ inst._home_path }}/dbs/spfile{{ inst.name }}.ora
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_mod_spfile
+  changed_when: false
+  failed_when: false
+
+- name: Srvctl add listener for this instance (idempotent)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" add listener \
+      -listener LISTENER_{{ inst.name | upper }} \
+      -oraclehome {{ inst._home_path }} \
+      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_add_lsnr
+  changed_when: _srvctl_add_lsnr.rc == 0
+  failed_when: >-
+    _srvctl_add_lsnr.rc != 0 and 'already exists' not in (_srvctl_add_lsnr.stdout | default(''))
+
+- name: Srvctl enable database + listener
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" enable database -d {{ inst.name }}
+    "$ORACLE_HOME/bin/srvctl" enable listener -listener LISTENER_{{ inst.name | upper }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_enable
+  changed_when: false
+  failed_when: false
+
+- name: Srvctl start database + listener (if not already running)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" start listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || true
+    "$ORACLE_HOME/bin/srvctl" start database -d {{ inst.name }} 2>&1 || true
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_start
+  changed_when: "'PRCR-1079' not in (_srvctl_start.stdout | default(''))"
+  failed_when: false

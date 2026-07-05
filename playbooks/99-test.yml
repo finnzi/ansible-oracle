@@ -1,0 +1,43 @@
+---
+# playbooks/99-test.yml — run the pytest suite against the lab.
+# Delegates the test command to localhost (the control node), which reaches
+# the containers over the published listener port + /etc/hosts entries.
+
+- name: Run the ansible-oracle test suite
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    # pytest is run from the repo root so tests/conftest.py resolves imports.
+    repo_root: "{{ playbook_dir | dirname }}"
+  tasks:
+    - name: Locate the venv pytest
+      ansible.builtin.stat:
+        path: "{{ repo_root }}/.venv/bin/pytest"
+      register: _pytest
+
+    - name: Run pytest from the venv
+      ansible.builtin.shell: |
+        set -o pipefail
+        cd {{ repo_root }}
+        ./.venv/bin/pytest tests/ -v
+      args:
+        executable: /bin/bash
+      register: _pytest_run
+      changed_when: false
+      when: _pytest.stat.exists
+
+    - name: Run pytest from PATH (no venv)
+      ansible.builtin.shell: |
+        set -o pipefail
+        cd {{ repo_root }}
+        pytest tests/ -v
+      args:
+        executable: /bin/bash
+      register: _pytest_run_path
+      changed_when: false
+      when: not _pytest.stat.exists
+
+    - name: Show test output
+      ansible.builtin.debug:
+        msg: "{{ (_pytest_run.stdout if _pytest.stat.exists else _pytest_run_path.stdout) | default('') }}"

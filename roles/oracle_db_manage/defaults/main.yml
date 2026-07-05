@@ -1,0 +1,22 @@
+---
+# defaults/main.yml for oracle_db_manage
+#
+# Create (or reconcile) a database instance via DBCA, then apply the runtime
+# parameters from inventory: sga/pga, archivelog, flashback, force logging,
+# and the dedicated file paths for data/archive/flashback/redo.
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_instances: []
+
+oracle_lab_sys_password:    "SysPassword1_"
+oracle_lab_system_password: "SysPassword1_"
+oracle_lab_dg_password:     "DgPassword1_"
+
+# Default memory if the instance omits it.
+oracle_default_memory:
+  sga_target: 2G
+  pga_aggregate_target: 1G
+
+# DBCA template — General Purpose with the default structures.
+oracle_dbca_template: General_Purpose.dbc

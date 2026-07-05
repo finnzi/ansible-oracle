@@ -1,0 +1,98 @@
+---
+# tasks/install-home.yml — install one Oracle home (out-of-place).
+# `tgt` is in scope: name, oracle_base, home_suffix, home_path, stage_dir, zip.
+
+- name: Idempotency marker — is this home already installed?
+  ansible.builtin.stat:
+    path: "{{ tgt.home_path }}/.install_complete"
+  register: _marker
+
+- name: Home directory should exist (created by oracle_storage)
+  ansible.builtin.file:
+    path: "{{ tgt.home_path }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+
+- name: Stage a per-home staging area for the unzip
+  ansible.builtin.file:
+    path: "{{ tgt.stage_dir }}/{{ tgt.name }}_{{ tgt.home_suffix }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+
+- name: Unzip the installer directly into ORACLE_HOME (no-op if marker present)
+  ansible.builtin.unarchive:
+    src: "{{ tgt.stage_dir }}/{{ tgt.zip }}"
+    dest: "{{ tgt.home_path }}"
+    remote_src: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    creates: "{{ tgt.home_path }}/runInstaller"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: not _marker.stat.exists
+
+- name: Write silent installer response file (db_install.rsp)
+  ansible.builtin.template:
+    src: db_install.rsp.j2
+    dest: "{{ tgt.stage_dir }}/{{ tgt.name }}_{{ tgt.home_suffix }}/db_install.rsp"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when: not _marker.stat.exists
+
+- name: Write the oraInst.loc pointer for this host
+  ansible.builtin.copy:
+    dest: /etc/oraInst.loc
+    content: |
+      inventory_loc={{ oracle_inventory_loc }}
+      inst_group={{ oracle_inst_group }}
+    mode: "0644"
+    owner: root
+    group: root
+  when: not _marker.stat.exists
+
+- name: Run runInstaller silently (this is slow — many minutes)
+  ansible.builtin.shell: |
+    set -o pipefail
+    cd {{ tgt.home_path }}
+    ./runInstaller -silent -force -waitforcompletion \
+      -responseFile {{ tgt.stage_dir }}/{{ tgt.name }}_{{ tgt.home_suffix }}/db_install.rsp \
+      -invPtrLoc /etc/oraInst.loc \
+      ORACLE_BASE={{ tgt.oracle_base }} \
+      ORACLE_HOME={{ tgt.home_path }} \
+      oracle.install.db.ConfigureLaterOption=true
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _installer
+  when: not _marker.stat.exists
+  changed_when: _installer.rc == 0
+  # Installer returns non-zero for some soft warnings; treat success codes only.
+  failed_when: >-
+    _installer.rc != 0 and 'Successfully Setup Software' not in (_installer.stdout | default(''))
+
+- name: Run root scripts (orainstRoot.sh + root.sh)
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [ -x {{ oracle_inventory_loc }}/orainstRoot.sh ]; then
+      {{ oracle_inventory_loc }}/orainstRoot.sh
+    fi
+    {{ tgt.home_path }}/root.sh -silent
+  args:
+    executable: /bin/bash
+  when: not _marker.stat.exists and _installer is success
+  changed_when: true
+
+- name: Drop the idempotency marker
+  ansible.builtin.file:
+    path: "{{ tgt.home_path }}/.install_complete"
+    state: touch
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when: not _marker.stat.exists

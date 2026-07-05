@@ -1,0 +1,108 @@
+---
+# tasks/main.yml for oracle_storage
+#
+# Materialise the per-instance directory tree under /<instance>/ (app, d01,
+# a01, f01, r01) and the Oracle Grid home parent (/grid). Also drop a
+# per-instance env fragment in /etc/profile.d/oracle-instance.d so an
+# interactive `sudo -iu oracle` lands in a sane environment.
+#
+# This role is purely idempotent file/dir work — no Oracle binaries touched.
+
+- name: Ensure per-instance top-level directories exist
+  ansible.builtin.file:
+    path: "{{ item.1 }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | map('combine', {'_all': (_inst.dirs | default({})).values() | list
+                         + [(_inst.oracle_base | default('')), (_inst.gi_base | default(''))]})
+      | list
+      | map(attribute='_all')
+      | flatten
+    }}
+  # The above jinja is awkward; use the simpler loop below instead.
+  when: false
+
+# Simpler, readable, debuggable: a nested loop.
+- name: Create instance data/archive/flashback/redo directories
+  ansible.builtin.file:
+    path: "{{ dir_path }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop: >-
+    {%- set paths = [] -%}
+    {%- for inst in (oracle_instances | default([])) -%}
+      {%- for kind, path in (inst.dirs | default({})).items() -%}
+        {%- set _ = paths.append(path) -%}
+      {%- endfor -%}
+      {%- if inst.oracle_base -%}{%- set _ = paths.append(inst.oracle_base) -%}{%- endif -%}
+      {%- if inst.gi_base -%}{%- set _ = paths.append(inst.gi_base) -%}{%- endif -%}
+    {%- endfor -%}
+    {{ paths | unique | list }}
+  loop_control:
+    loop_var: dir_path
+    label: "{{ dir_path }}"
+
+- name: Create ORACLE_HOME directories (one per declared home suffix)
+  ansible.builtin.file:
+    path: "{{ inst.oracle_base }}/{{ home.suffix }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop: "{{ oracle_instances | subelements('db_homes') }}"
+  loop_control:
+    loop_var: _pair
+    label: "{{ _pair.0.name }}:{{ _pair.1.suffix }}"
+  vars:
+    inst: "{{ _pair.0 }}"
+    home: "{{ _pair.1 }}"
+
+- name: Create Grid home directories
+  ansible.builtin.file:
+    path: "{{ inst.gi_base }}/{{ home.suffix }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop: "{{ oracle_instances | subelements('gi_homes') }}"
+  loop_control:
+    loop_var: _pair
+    label: "{{ _pair.0.name }}:{{ _pair.1.suffix }}"
+  vars:
+    inst: "{{ _pair.0 }}"
+    home: "{{ _pair.1 }}"
+
+# ── Per-instance env fragments ────────────────────────────────────────
+- name: Ensure /etc/profile.d/oracle-instance.d exists
+  ansible.builtin.file:
+    path: /etc/profile.d/oracle-instance.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write per-instance env fragment (ORACLE_BASE, current ORACLE_HOME, SID)
+  ansible.builtin.copy:
+    dest: "/etc/profile.d/oracle-instance.d/{{ inst.name }}.sh"
+    content: |
+      # Managed by ansible-oracle / oracle_storage. Source to work on {{ inst.name }}.
+      export ORACLE_BASE={{ inst.oracle_base }}
+      export ORACLE_HOME={{ inst.oracle_base }}/{{ (_current_home.suffix if _current_home else (inst.db_homes[0].suffix)) }}
+      export ORACLE_SID={{ inst.name }}
+      export PATH=$ORACLE_HOME/bin:$PATH
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ oracle_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  vars:
+    _current_home: "{{ inst.db_homes | selectattr('current', 'equalto', true) | first | default(none) }}"

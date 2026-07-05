@@ -1,0 +1,15 @@
+---
+# defaults/main.yml for oracle_network
+#
+# Bind the listener to a dedicated IP/hostname per instance. The hostname is
+# already in /etc/hosts (lab/scripts/update-hosts.sh) and on the host too, so
+# clients resolve the VIP without a dedicated DNS.
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_instances: []
+
+# Default listener shape; overridden per-instance in inventory.
+listener_name_template: "LISTENER_{% raw %}{{ inst.name | upper }}{% endraw %}"
+listener_port: 1521
+listener_admin_port: 1521   # same as data port in the lab; separate in real envs

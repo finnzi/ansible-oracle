@@ -1,0 +1,36 @@
+{# dbca.rsp.j2 — silent DBCA response for a filesystem-backed instance. #}
+{# Managed by ansible-oracle / oracle_db_manage. #}
+responseFileVersion=/oracle/assistants/rspfmt_dbca_response_schema_v19.0.0
+gdbName={{ inst.name }}
+sid={{ inst.name }}
+databaseConfigType=SI
+createAsContainerDatabase=false
+templateName={{ oracle_dbca_template }}
+policyManaged=false
+# Filesystem-only — no ASM, per project mandate.
+storageType=FS
+# Dedicated paths: data on /d01, recovery area on /f01, redo on /r01.
+datafileDestination={{ inst.dirs.data }}
+recoveryAreaDestination={{ inst.dirs.flashback }}
+recoveryAreaSize=10240
+# Use Oracle-Managed Files rooted at the data dir for cleanliness.
+useOMF=true
+dbUniquename={{ inst.db_unique_name | default(inst.name) }}
+# Memory
+totalMemory={{ ((inst.memory | default(oracle_default_memory)).sga_target | default('2G') | regex_replace('[^0-9]','') | int) + ((inst.memory | default(oracle_default_memory)).pga_aggregate_target | default('1G') | regex_replace('[^0-9]','') | int) }}
+memoryPercentage=40
+automaticMemoryManagement=false
+# National charset / characterset
+characterSet=AL32UTF8
+nationalCharacterSet=AL16UTF16
+registerWithDirService=false
+# Credentials
+sysPassword={{ oracle_lab_sys_password }}
+systemPassword={{ oracle_lab_system_password }}
+dbsnmpPassword={{ oracle_lab_sys_password }}
+# Skip the listener-creation step — oracle_network owns the listener.
+emConfiguration=NONE
+emExpressPort=5500
+# Don't auto-register the DB with Restart here; oracle_restart_manage does that.
+databaseType=MULTIPURPOSE
+autostartDuringBuild=true

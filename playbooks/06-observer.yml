@@ -1,0 +1,9 @@
+---
+# playbooks/06-observer.yml — FSFO observer on the third node.
+# SCAFFOLDED. Installs nothing yet; reports readiness.
+
+- name: Configure FSFO observer — scaffolded
+  hosts: observer
+  become: true
+  roles:
+    - role: oracle_observer

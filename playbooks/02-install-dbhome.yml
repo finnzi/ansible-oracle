@@ -1,0 +1,9 @@
+---
+# playbooks/02-install-dbhome.yml — silent out-of-place install of the
+# Oracle 19c Database software into /<instance>/app/oracle/<db_homeN>.
+
+- name: Install Oracle Database software
+  hosts: oracle_db_hosts
+  become: true
+  roles:
+    - role: oracle_db_install

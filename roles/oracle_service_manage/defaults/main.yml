@@ -1,0 +1,13 @@
+---
+# defaults/main.yml for oracle_service_manage
+#
+# Create the dedicated client-facing service that always points at the
+# current primary. Clients connect to <instance>_svc and don't need to know
+# which node is primary. For standalone, it lives on the local listener.
+# For Data Guard (scaffolded), the DG role will relocate it on switchover.
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_instances: []
+oracle_gi_home: /grid/19c/gi_home1
+oracle_restart_available: false

@@ -1,0 +1,14 @@
+---
+# playbooks/00-prep-os.yml — OS substrate: groups, oracle user, sysctl,
+# limits, and the per-instance directory tree.
+#
+# Targets every DB-bearing host in the lab. The slice populates [primary]
+# with superdb1; standby/observer groups pass through harmlessly.
+
+- name: Prepare OS for Oracle on all DB hosts
+  hosts: oracle_db_hosts
+  become: true
+  gather_facts: true
+  roles:
+    - role: oracle_common
+    - role: oracle_storage

@@ -1,0 +1,11 @@
+---
+# meta/main.yml for oracle_common
+galaxy_info:
+  author: ansible-oracle
+  description: OS substrate for Oracle hosts — user, groups, sysctl, limits, sudoers
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions: ["9"]
+dependencies: []

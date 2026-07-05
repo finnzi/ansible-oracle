@@ -1,0 +1,32 @@
+---
+# defaults/main.yml for oracle_observer
+#
+# SCOPE: stubbed in the vertical slice. Deliver, in a future engagement:
+#   1. Silent install of the Oracle Client (Administrator) into
+#      observer_oracle_base/.../client_homeN from the V982064 client zip.
+#   2. Materialise TNS aliases to BOTH primary and standby (the observer
+#      must reach both — the FSFO design hinges on it).
+#   3. Create a dedicated SYSDG user (observer_sysdg_user) on each DB.
+#   4. `dgmgrl -silent sysdg@<cfg> "START OBSERVER IN BACKGROUND;"` wrapped
+#      in a systemd unit (oracle-fsfo-observer.service) that auto-restarts.
+#
+# INTERFACE (consumed by playbooks/06-observer.yml):
+#   observer_enabled:         bool
+#   observer_oracle_base:     /observer/app/oracle
+#   observer_client_home:     /observer/app/oracle/client_home1
+#   observer_dg_connect_identifier: super_pri_dgb
+#   observer_sysdg_user:      dgmonitor
+#   observer_sysdg_password:  (vaulted)
+
+oracle_user: oracle
+oracle_group: oinstall
+
+observer_enabled: false
+observer_oracle_base: /observer/app/oracle
+observer_client_home: /observer/app/oracle/client_home1
+observer_dg_connect_identifier: super_pri_dgb
+observer_sysdg_user: dgmonitor
+observer_sysdg_password: ""  # vault in real envs
+
+# Actually run the (unimplemented) install/start.
+oracle_observer_enabled: false

@@ -1,0 +1,119 @@
+---
+# lab/docker-compose.yml — three-node Oracle lab.
+#
+#   superdb1  172.28.0.11  DB node 1 (primary / standalone). Vertical slice.
+#   superdb2  172.28.0.12  DB node 2 (reserved: Data Guard standby).
+#   observer  172.28.0.13  Observer node (reserved: FSFO broker observer).
+#
+# All three run systemd as PID 1 (--privileged + cgroup mounts) so Oracle
+# Restart and the observer's systemd unit behave faithfully. This is a
+# LAB-ONLY affordance — never do this in production.
+#
+# Bring up:  ./scripts/build-images.sh && ./scripts/lab-up.sh
+# Tear down: ./scripts/lab-down.sh
+
+name: ansible-oracle-lab
+
+networks:
+  labnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
+
+volumes:
+  # Persistent per-instance data so `lab-down && lab-up` doesn't lose the DB.
+  super1_data:
+  super1_arch:
+  super1_flash:
+  super1_redo:
+  super1_app:
+  super2_data:
+  super2_arch:
+  super2_flash:
+  super2_redo:
+  super2_app:
+  grid1_home:
+  grid2_home:
+
+services:
+  superdb1:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    image: ansible-oracle/db:ol9
+    hostname: superdb1
+    domainname: domain.is
+    command: ["/usr/sbin/init"]
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      # cgroups v2 — systemd needs this mounted read-write inside the container.
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      # The staged installers (bind-mounted from the host ./download dir).
+      - ../download:/u01/stage:ro
+      # Per-instance tree.
+      - super1_app:/super/app
+      - super1_data:/super/d01
+      - super1_arch:/super/a01
+      - super1_flash:/super/f01
+      - super1_redo:/super/r01
+      - grid1_home:/grid
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.11
+    ports:
+      # Expose the listener so host-side pytest can connect to superdb.domain.is.
+      - "1521:1521"
+
+  superdb2:
+    build:
+      context: .
+      dockerfile: Dockerfile.db
+    image: ansible-oracle/db:ol9
+    hostname: superdb2
+    domainname: domain.is
+    command: ["/usr/sbin/init"]
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../download:/u01/stage:ro
+      - super2_app:/super/app
+      - super2_data:/super/d01
+      - super2_arch:/super/a01
+      - super2_flash:/super/f01
+      - super2_redo:/super/r01
+      - grid2_home:/grid
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.12
+    ports:
+      - "1522:1521"
+
+  observer:
+    build:
+      context: .
+      dockerfile: Dockerfile.observer
+    image: ansible-oracle/observer:ol9
+    hostname: observer
+    domainname: domain.is
+    command: ["/usr/sbin/init"]
+    privileged: true
+    cgroup: host
+    tmpfs:
+      - /run
+      - /tmp
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - ../download:/u01/stage:ro
+    networks:
+      labnet:
+        ipv4_address: 172.28.0.13

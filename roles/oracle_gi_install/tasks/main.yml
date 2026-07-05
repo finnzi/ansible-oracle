@@ -1,0 +1,37 @@
+---
+# tasks/main.yml for oracle_gi_install
+#
+# STUB (vertical slice). Verifies the Grid installer zip is staged and
+# asserts the interface contract, then reports NotImplemented unless the
+# caller explicitly opts in (oracle_gi_install_enabled: true).
+
+- name: Verify the GI installer zip is staged
+  ansible.builtin.stat:
+    path: "{{ oracle_stage_dir }}/{{ oracle_install_files.gi_zip }}"
+  register: _gi_zip
+
+- name: Report staged GI installer status
+  ansible.builtin.debug:
+    msg: >-
+      GI installer present at {{ oracle_stage_dir }}/{{ oracle_install_files.gi_zip }}:
+      {{ 'yes' if _gi_zip.stat.exists else 'NO (slice tolerates absence)' }}
+
+- name: Set oracle_gi_installed fact (probe for gridSetup/srvctl)
+  ansible.builtin.stat:
+    path: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current','equalto',true) | first).suffix }}/bin/srvctl"
+  register: _gi_srvctl
+  failed_when: false
+
+- name: Record whether Restart is installed
+  ansible.builtin.set_fact:
+    oracle_gi_installed: "{{ _gi_srvctl.stat.exists }}"
+    oracle_gi_home: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current','equalto',true) | first).suffix }}"
+
+- name: Not implemented in this slice — fail only if explicitly enabled
+  ansible.builtin.fail:
+    msg: >-
+      oracle_gi_install is scaffolded, not implemented, in this engagement.
+      To install Grid Infrastructure standalone, fill in gridSetup.sh -silent
+      (CONFIGURE_GIREP_FOR_STANDALONE, filesystem storage, OCR/voting on
+      /grid) and set oracle_gi_install_enabled: true. See defaults/main.yml.
+  when: oracle_gi_install_enabled | bool

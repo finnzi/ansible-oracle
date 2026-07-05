@@ -1,0 +1,165 @@
+---
+# tasks/manage-instance.yml — create one instance via DBCA + reconcile params.
+# `inst` is in scope (one element of _db_instances).
+
+- name: Check if instance already exists (oratab + DB open)
+  ansible.builtin.shell: |
+    set -o pipefail
+    grep -qE '^\s*{{ inst.name }}:' /etc/oratab && echo present || echo absent
+  args: { executable: /bin/bash }
+  register: _oratab
+  changed_when: false
+
+- name: Set _instance_exists fact
+  ansible.builtin.set_fact:
+    _instance_exists: "{{ _oratab.stdout | trim == 'present' }}"
+
+# ── DBCA create ───────────────────────────────────────────────────────
+- name: Stage DBCA response file
+  ansible.builtin.template:
+    src: dbca.rsp.j2
+    dest: "{{ oracle_stage_dir }}/{{ inst.name }}_dbca.rsp"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when: not _instance_exists
+
+- name: Run DBCA -createDatabase (slow — many minutes)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst._home_path }}
+    "$ORACLE_HOME/bin/dbca" -silent -createDatabase \
+      -responseFile {{ oracle_stage_dir }}/{{ inst.name }}_dbca.rsp
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dbca
+  when: not _instance_exists
+  changed_when: "'100% complete' in (_dbca.stdout | default('')) or _dbca.rc == 0"
+  failed_when: >-
+    _dbca.rc != 0 and 'already exists' not in (_dbca.stdout | default(''))
+
+- name: Read live DB facts (open mode, archivelog, flashback, role)
+  oracle_db_facts:
+    service_name: "{{ inst.service_name | default(inst.name) }}"
+    host: "{{ inst.listener_vip | default(inst.name ~ 'db.domain.is') }}"
+    port: "{{ inst.listener_port | default(1521) }}"
+    username: system
+    password: "{{ oracle_lab_system_password }}"
+    role: sysdba
+  register: _dbfacts
+  when: _instance_exists or (_dbca is success)
+  retries: 5
+  delay: 5
+  until: _dbfacts.facts.reachable | default(false)
+  ignore_errors: true
+
+# ── Reconcile runtime parameters (idempotent) ─────────────────────────
+- name: Apply memory / archivelog / flashback / force-logging settings
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    ALTER SYSTEM SET sga_target={{ (inst.memory | default(oracle_default_memory)).sga_target | default(oracle_default_memory.sga_target) }} SCOPE=BOTH SID='*';
+    ALTER SYSTEM SET pga_aggregate_target={{ (inst.memory | default(oracle_default_memory)).pga_aggregate_target | default(oracle_default_memory.pga_aggregate_target) }} SCOPE=BOTH SID='*';
+    -- Archive log destination: dedicated /a01 path
+    ALTER SYSTEM SET log_archive_dest_1='LOCATION={{ inst.dirs.archive }}' SCOPE=BOTH SID='*';
+    -- Recovery area (flashback) on the dedicated /f01 path
+    ALTER SYSTEM SET db_recovery_file_dest='{{ inst.dirs.flashback }}' SCOPE=BOTH SID='*';
+    ALTER SYSTEM SET db_recovery_file_dest_size=10G SCOPE=BOTH SID='*';
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _params_sql
+  changed_when: "'System altered' in (_params_sql.stdout | default(''))"
+  failed_when: false
+  when: _dbfacts.facts.reachable | default(false)
+
+# These require restarts of the right kind; gate on the *current* value so we
+# only change them when needed.
+- name: Toggle ARCHIVELOG mode (if differs from desired)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_SID={{ inst.name }}
+    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | tail -1
+    SET PAGES 0 FEEDBACK OFF
+    SELECT log_mode FROM v$database;
+    C
+    )"
+    want="{{ 'ARCHIVELOG' if (inst.archivelog | default(true)) else 'NOARCHIVELOG' }}"
+    if [ "${cur// /}" != "${want}" ]; then
+      "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'S'
+      SHUTDOWN IMMEDIATE;
+      STARTUP MOUNT;
+      ALTER DATABASE ARCHIVELOG;
+      ALTER DATABASE OPEN;
+      S
+      echo CHANGED
+    else
+      echo OK
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _archivelog
+  changed_when: "'CHANGED' in (_archivelog.stdout | default(''))"
+  failed_when: false
+  when: _dbfacts.facts.reachable | default(false)
+
+- name: Toggle FLASHBACK ON/OFF (if differs from desired)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_SID={{ inst.name }}
+    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | tail -1
+    SET PAGES 0 FEEDBACK OFF
+    SELECT flashback_on FROM v$database;
+    C
+    )"
+    want="{{ 'YES' if (inst.flashback | default(false)) else 'NO' }}"
+    if [ "${cur// /}" != "${want}" ]; then
+      "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'S'
+      ALTER DATABASE FLASHBACK ON;
+      S
+      echo CHANGED
+    else
+      echo OK
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _flashback
+  changed_when: "'CHANGED' in (_flashback.stdout | default(''))"
+  failed_when: false
+  when: _dbfacts.facts.reachable | default(false) and (inst.flashback | default(false))
+
+- name: Toggle FORCE LOGGING (if differs from desired)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_SID={{ inst.name }}
+    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | tail -1
+    SET PAGES 0 FEEDBACK OFF
+    SELECT force_logging FROM v$database;
+    C
+    )"
+    want="{{ 'YES' if (inst.force_logging | default(true)) else 'NO' }}"
+    if [ "${cur// /}" != "${want}" ]; then
+      "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'S'
+      ALTER DATABASE FORCE LOGGING;
+      S
+      echo CHANGED
+    else
+      echo OK
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _forcelog
+  changed_when: "'CHANGED' in (_forcelog.stdout | default(''))"
+  failed_when: false
+  when: _dbfacts.facts.reachable | default(false)

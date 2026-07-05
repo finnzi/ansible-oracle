@@ -1,0 +1,27 @@
+---
+# .yamllint — yamllint configuration for ansible-oracle.
+#
+# ansible-lint reads this for its yaml[...] rules. We relax line length for
+# the templated SQL heredocs and allow the box-drawing comment characters
+# used in section headers.
+
+extends: default
+
+rules:
+  line-length:
+    max: 220
+  comments:
+    require-starting-space: false
+  comments-indentation: disable
+  document-start:
+    present: true
+  truthy:
+    check-keys: false
+  # Flow-style mappings/lists ({ k: v }, [a, b]) are used intentionally in
+  # defaults for compact home/dir declarations. Allow both spaced and tight.
+  braces:
+    max-spaces-inside: 1
+    min-spaces-inside: 0
+  brackets:
+    max-spaces-inside: 1
+    min-spaces-inside: 0

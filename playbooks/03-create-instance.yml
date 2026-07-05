@@ -1,0 +1,9 @@
+---
+# playbooks/03-create-instance.yml — DBCA create + listener + runtime params
+# (sga/pga, archivelog, flashback, force logging, dedicated file paths).
+
+- name: Create database instances and listeners
+  hosts: oracle_db_hosts
+  become: true
+  roles:
+    - role: oracle_db_manage

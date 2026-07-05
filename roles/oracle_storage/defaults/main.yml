@@ -1,0 +1,28 @@
+---
+# defaults/main.yml for oracle_storage
+#
+# Per-instance directory layout. `oracle_instances` in inventory/group_vars/all.yml
+# is the authoritative list; these defaults only apply when running the role
+# without that var (e.g. unit-testing a single instance).
+
+oracle_user: oracle
+oracle_group: oinstall
+
+# Default instance shape — mirrors inventory/group_vars/all.yml `super`.
+oracle_instances_default:
+  - name: super
+    oracle_base: /super/app/oracle
+    dirs:
+      data:      /super/d01
+      archive:   /super/a01
+      flashback: /super/f01
+      redo:      /super/r01
+    db_homes:
+      - { suffix: db_home1, current: true }
+      - { suffix: db_home2, current: false }
+    gi_base: /grid
+    gi_homes:
+      - { suffix: 19c/gi_home1, current: true }
+
+# When inventory defines oracle_instances, it wins.
+oracle_instances: "{{ oracle_instances_default }}"

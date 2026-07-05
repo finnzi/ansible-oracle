@@ -1,0 +1,64 @@
+---
+# tasks/create-service.yml — create + start the client-facing service.
+# `inst` in scope. Uses DBMS_SERVICE so it works without Restart; also
+# registers via srvctl when Restart is available (idempotent).
+
+- name: Set service name
+  ansible.builtin.set_fact:
+    _svc_name: "{{ inst.service_name | default(inst.name ~ '_svc') }}"
+
+- name: Create + start the client service via DBMS_SERVICE (idempotent)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET SERVEROUTPUT ON
+    DECLARE
+      v_count NUMBER;
+    BEGIN
+      SELECT COUNT(*) INTO v_count FROM dba_services WHERE name = '{{ _svc_name }}';
+      IF v_count = 0 THEN
+        DBMS_SERVICE.CREATE_SERVICE(service_name => '{{ _svc_name }}', network_name => '{{ _svc_name }}');
+        DBMS_OUTPUT.PUT_LINE('CREATED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('EXISTS');
+      END IF;
+      BEGIN
+        DBMS_SERVICE.START_SERVICE(service_name => '{{ _svc_name }}');
+        DBMS_OUTPUT.PUT_LINE('STARTED');
+      EXCEPTION
+        WHEN OTHERS THEN
+          IF SQLCODE = -446 THEN DBMS_OUTPUT.PUT_LINE('ALREADY_RUNNING'); ELSE RAISE; END IF;
+      END;
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _svc_sql
+  changed_when: "'CREATED' in (_svc_sql.stdout | default('')) or 'STARTED' in (_svc_sql.stdout | default(''))"
+  failed_when: false
+
+# Register with Restart too, when available, so it survives crashes.
+- name: Srvctl add service (when Restart owns the DB)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" add service \
+      -db {{ inst.name }} \
+      -service {{ _svc_name }} \
+      -role PRIMARY \
+      -failovertype SELECT \
+      -failovermethod BASIC \
+      -notification TRUE
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_add_svc
+  changed_when: _srvctl_add_svc.rc == 0
+  failed_when: >-
+    _srvctl_add_svc.rc != 0 and 'already exists' not in (_srvctl_add_svc.stdout | default(''))
+  when: oracle_restart_available | bool

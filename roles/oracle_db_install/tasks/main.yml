@@ -1,0 +1,50 @@
+---
+# tasks/main.yml for oracle_db_install
+#
+# Install the Oracle 19c Database software (no DBCA here — that's
+# oracle_db_manage). One pass per declared home suffix per instance.
+# Out-of-place friendly: each home lives in its own directory so a future
+# patch can install a fresh home alongside the running one.
+
+# The base installer ships as a zip that, when unzipped directly into the
+# ORACLE_HOME, contains runInstaller. So we unzip into the home directory
+# and run it from there with a silent response file.
+
+- name: Resolve per-instance/per-home install targets
+  ansible.builtin.set_fact:
+    _install_targets: >-
+      {%- set out=[] -%}
+      {%- for inst in (oracle_instances | default([])) -%}
+        {%- for home in inst.db_homes -%}
+          {%- set _ = out.append({
+              'name':  inst.name,
+              'oracle_base': inst.oracle_base,
+              'home_suffix': home.suffix,
+              'home_path': inst.oracle_base ~ '/' ~ home.suffix,
+              'stage_dir': oracle_stage_dir,
+              'zip': oracle_install_files.db_zip}) -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Ensure oraInventory location exists
+  ansible.builtin.file:
+    path: "{{ oracle_inventory_loc }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+
+- name: Stage the installer zip is reachable (download/ bind-mount)
+  ansible.builtin.stat:
+    path: "{{ oracle_stage_dir }}/{{ oracle_install_files.db_zip }}"
+  register: _db_zip_stat
+  failed_when: not _db_zip_stat.stat.exists
+  when: _install_targets | length > 0
+
+- name: Per-home install loop
+  ansible.builtin.include_tasks: install-home.yml
+  loop: "{{ _install_targets }}"
+  loop_control:
+    loop_var: tgt
+    label: "{{ tgt.name }}:{{ tgt.home_suffix }}"

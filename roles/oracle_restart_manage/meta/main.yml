@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: ansible-oracle
+  description: Register DB instance + listener with Oracle Restart (srvctl add/start/enable)
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions: ["9"]
+dependencies: []

@@ -1,0 +1,24 @@
+---
+# defaults/main.yml for oracle_db_install
+#
+# Out-of-place silent install of the Oracle 19c Database base release into
+# /<instance>/app/oracle/<db_homeN>. Idempotent: we skip if the home already
+# has a working `bin/oracle` binary and a `.install_complete` marker.
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_instances: []
+
+oracle_stage_dir: /u01/stage
+oracle_install_files:
+  db_zip: "V982063-01-Oracle.19c.Database.Enterprise.Edition.zip"
+
+oracle_version: "19.3.0.0"
+oracle_inventory_loc: /opt/oracle/oraInventory
+oracle_inst_group: oinstall
+
+# Edition for the EE installer response.
+oracle_install_edition: EE
+
+# Memory for the installer itself; not the database SGA.
+oracle_install_inventory_pointer: /etc/oraInst.loc

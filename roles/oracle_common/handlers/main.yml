@@ -1,0 +1,8 @@
+---
+# handlers/main.yml for oracle_common
+
+- name: Reload sysctl
+  ansible.builtin.shell: sysctl --system >/dev/null
+  args:
+    executable: /bin/bash
+  changed_when: true

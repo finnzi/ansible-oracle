@@ -1,0 +1,48 @@
+---
+# defaults/main.yml for oracle_dataguard
+#
+# SCOPE: stubbed in the vertical slice. The interface below is the contract
+# for the Data Guard role. Fill it in to deliver:
+#   - Physical standby creation (RMAN DUPLICATE FROM ACTIVE DATABASE or
+#     backup-based duplicate).
+#   - Broker configuration (DGMGRL CREATE CONFIGURATION).
+#   - Standby kept in OPEN READ ONLY WITH APPLY (the explicit project
+#     requirement — NOT mounted).
+#   - Manual switchover (DGMGRL SWITCHOVER TO <standby>).
+#   - Automatic failover wiring (delegated to oracle_observer for FSFO).
+#
+# INTERFACE (consumed by playbooks/05-dataguard.yml):
+#   dg_enabled:       bool    — gate the whole role on the instance
+#   dg_role:          primary|standby
+#   dg_primary:       { host, port, service, db_unique_name }
+#   dg_standby:       { host, port, service, db_unique_name }
+#   dg_broker_config: <name>  — DGMGRL configuration name
+#   dg_protection_mode: MAXIMUM PERFORMANCE | MAXIMUM AVAILABILITY | MAXIMUM PROTECTION
+#   dg_action:        configure|switchover|failover|reconcile
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_instances: []
+
+# Role-wide gate (off in the standalone slice).
+dg_enabled: false
+
+dg_action: reconcile
+dg_broker_config: dg_super
+dg_protection_mode: MAXIMUM PERFORMANCE
+
+# SQL*Net connect identifiers the broker uses. Must resolve via tnsnames.ora
+# written by oracle_network on each node.
+dg_primary:
+  host: superdc1.domain.is
+  port: 1521
+  service: super_pri_dgb
+  db_unique_name: super_pri
+dg_standby:
+  host: superdc2.domain.is
+  port: 1521
+  service: super_sby_dgb
+  db_unique_name: super_sby
+
+# Whether to actually run the (unimplemented) DG actions.
+oracle_dataguard_enabled: false

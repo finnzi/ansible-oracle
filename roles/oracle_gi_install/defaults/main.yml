@@ -1,0 +1,30 @@
+---
+# defaults/main.yml for oracle_gi_install
+#
+# SCOPE: stubbed in the vertical slice. The interface is fixed so a future
+# engagement can fill in the Grid Infrastructure (Oracle Restart) silent
+# install without touching playbooks that consume this role.
+#
+# WHAT TO IMPLEMENT (next engagement):
+#   1. Unzip V982068-01-...Grid.Infrastructure.zip into /grid/19c/gi_homeN.
+#   2. Run gridSetup.sh -silent with a response file for a
+#      "CONFIGURE_GIREP_FOR_STANDALONE" (Oracle Restart) install, filesystem
+#      storage (no ASM), OCR/voting on /grid.
+#   3. Run orainstRoot.sh + root.sh.
+#   4. Mark the home with .install_complete for idempotency.
+# Until then, oracle_restart_manage detects that Restart is absent and
+# degrades gracefully (oracle_restart_required defaults to false in the slice).
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_gi_base: /grid
+oracle_gi_homes:
+  - { suffix: 19c/gi_home1, current: true }
+  - { suffix: 19c/gi_home2, current: false }
+
+oracle_install_files:
+  gi_zip: "V982068-01-Oracle.19c.Grid.Infrastructure.zip"
+oracle_stage_dir: /u01/stage
+
+# Whether to hard-fail if asked to actually install. Flip to true once filled in.
+oracle_gi_install_enabled: false

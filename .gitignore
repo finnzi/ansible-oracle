@@ -216,3 +216,25 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ── ansible-oracle project ────────────────────────────────────────────
+# Staged Oracle installers / patches (multi-GB; staged from ~/sources/oracle)
+/download/*
+!/download/.gitkeep
+
+# Generated/derived inventory (lab state). Keep group_vars, ignore live hosts file.
+/inventory/hosts.yml
+
+# Lab runtime state
+/lab/.lab-state
+/lab/state/
+
+# Oracle runtime artifacts that should never be committed
+*.ora.bak
+*.log.*
+
+# Secrets — never commit credentials
+/inventory/group_vars/all/secrets.yml
+/inventory/host_vars/*/vault.yml
+*.vault
+

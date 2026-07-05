@@ -1,0 +1,124 @@
+---
+# tasks/main.yml for oracle_network
+#
+# Per-instance listener configuration. We bind each instance's listener to its
+# dedicated VIP hostname (superdb.domain.is for standalone; superdc1/dc2 for
+# DG) and configure a STATIC SID_LIST entry. The research confirmed that
+# dynamic service registration can come back "blocked" inside containers, so
+# we add the static entry for reliability.
+#
+# The listener is started with lsnrctl here for the very first boot; once
+# Oracle Restart takes ownership (oracle_restart_manage), it owns reloads.
+
+- name: Resolve current ORACLE_HOME and listener VIP per instance
+  ansible.builtin.set_fact:
+    _net_instances: >-
+      {{
+        (oracle_instances | default([])) | map('combine',
+          {'_home': (item.db_homes | selectattr('current','equalto',true) | first | default(item.db_homes[0])).suffix,
+           '_net':  (item.listener_vip | default(item.name ~ 'db.' ~ 'domain.is')),
+           '_port': (item.listener_port | default(1521))})
+        | list
+      }}
+
+- name: Ensure ORACLE_HOME/network/admin exists per instance
+  ansible.builtin.file:
+    path: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}" }
+
+- name: Write listener.ora (static SID_LIST, bound to instance VIP)
+  ansible.builtin.template:
+    src: listener.ora.j2
+    dest: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin/listener.ora"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}" }
+  register: _listener_ora
+
+- name: Write sqlnet.ora defaults
+  ansible.builtin.copy:
+    dest: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin/sqlnet.ora"
+    content: |
+      # Managed by ansible-oracle / oracle_network
+      NAMES.DIRECTORY_PATH= (TNSNAMES, EZCONNECT)
+      SQLNET.INBOUND_CONNECT_TIMEOUT = 60
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}" }
+
+- name: Write tnsnames.ora with the client-facing service entry
+  ansible.builtin.template:
+    src: tnsnames.ora.j2
+    dest: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin/tnsnames.ora"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}" }
+
+# ── Bring the listener up idempotently ────────────────────────────────
+# Check status; if down, start it; if up and .ora changed, reload.
+- name: Check listener status (LISTENER_<INSTANCE>)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ inst.oracle_base }}/{{ inst._home }}
+    "$ORACLE_HOME/bin/lsnrctl" status LISTENER_{{ inst.name | upper }} 2>&1 || true
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}" }
+  register: _lsnr_status
+  changed_when: false
+
+- name: Start listener where it is down
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.inst.oracle_base }}/{{ item.inst._home }}
+    "$ORACLE_HOME/bin/lsnrctl" start LISTENER_{{ item.inst.name | upper }} 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  loop: >-
+    {%- set down=[] -%}
+    {%- for r in _lsnr_status.results -%}
+      {%- if 'TNS-' in r.stdout or 'no listener' in r.stdout | lower or r.rc != 0 -%}
+        {%- set _ = down.append({'inst': r.item}) -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ down }}
+  loop_control: { label: "{{ item.inst.name }}" }
+  register: _lsnr_start
+  changed_when: true
+  failed_when: >-
+    _lsnr_start.rc != 0 and 'TNS-' in _lsnr_start.stdout
+
+- name: Reload listener where it is up and .ora changed
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.inst.oracle_base }}/{{ item.inst._home }}
+    "$ORACLE_HOME/bin/lsnrctl" reload LISTENER_{{ item.inst.name | upper }} 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  loop: >-
+    {%- set reload=[] -%}
+    {%- for r in _lsnr_status.results -%}
+      {%- if r.rc == 0 -%}
+        {%- set _ = reload.append({'inst': r.item}) -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ reload }}
+  loop_control: { label: "{{ item.inst.name }}" }
+  register: _lsnr_reload
+  changed_when: false
+  failed_when: false

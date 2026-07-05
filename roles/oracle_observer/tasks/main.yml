@@ -1,0 +1,41 @@
+---
+# tasks/main.yml for oracle_observer
+#
+# STUB (vertical slice). Verifies the client zip is staged, then fails loudly
+# ONLY if explicitly enabled.
+
+- name: Verify the client installer zip is staged
+  ansible.builtin.stat:
+    path: "{{ oracle_stage_dir | default('/u01/stage') }}/{{ oracle_install_files.client_zip | default('V982064-01-Oracle.19c.Database.Client.zip') }}"
+  register: _client_zip
+
+- name: Report observer readiness
+  ansible.builtin.debug:
+    msg: >-
+      FSFO observer role scaffolded (slice). Client installer present:
+      {{ 'yes' if _client_zip.stat.exists else 'no' }}. To enable, install the
+      Oracle Client (Administrator) into {{ observer_client_home }}, materialise
+      TNS to both DG sites, then run
+      `dgmgrl -silent {{ observer_sysdg_user }}@{{ observer_dg_connect_identifier }}
+      "START OBSERVER IN BACKGROUND"` under a systemd unit.
+
+- name: Set oracle_observer_running fact (probe for an observer process)
+  ansible.builtin.shell: |
+    set -o pipefail
+    pgrep -fa 'dmobserver|Data Guard Broker Observer' 2>/dev/null || echo not_running
+  args: { executable: /bin/bash }
+  register: _obs_proc
+  changed_when: false
+  failed_when: false
+
+- name: Record observer status
+  ansible.builtin.set_fact:
+    oracle_observer_running: "{{ 'not_running' not in (_obs_proc.stdout | default('')) }}"
+
+- name: Not implemented — fail only if explicitly enabled
+  ansible.builtin.fail:
+    msg: >-
+      oracle_observer is scaffolded, not implemented, in this engagement.
+      Implement per defaults/main.yml INTERFACE, then set
+      oracle_observer_enabled: true.
+  when: oracle_observer_enabled | bool

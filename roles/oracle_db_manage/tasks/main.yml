@@ -1,0 +1,22 @@
+---
+# tasks/main.yml for oracle_db_manage
+#
+# Two-phase: (1) DBCA create if absent, idempotent via /etc/oratab entry;
+# (2) reconcile runtime parameters with oracle_session/sqlplus.
+
+- name: Resolve the current ORACLE_HOME per instance
+  ansible.builtin.set_fact:
+    _db_instances: >-
+      {{
+        (oracle_instances | default([])) | map('combine',
+          {'_home_path': (item.oracle_base ~ '/' ~
+             ((item.db_homes | selectattr('current','equalto',true) | first | default(item.db_homes[0])).suffix))})
+        | list
+      }}
+
+- name: Per-instance DBCA + reconcile loop
+  ansible.builtin.include_tasks: manage-instance.yml
+  loop: "{{ _db_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"

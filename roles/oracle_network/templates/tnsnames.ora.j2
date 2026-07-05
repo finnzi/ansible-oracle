@@ -1,0 +1,22 @@
+{# tnsnames.ora.j2 — client-facing connect descriptors. #}
+{# Managed by ansible-oracle / oracle_network. #}
+# Direct EZCONNECT-style alias for the client service that always points at
+# the current primary (oracle_service_manage creates the service).
+{{ inst.service_name | default(inst.name ~ '_svc') }} =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._net }})(PORT = {{ inst._port }}))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ inst.service_name | default(inst.name ~ '_svc') }})
+    )
+  )
+
+# The instance itself (useful for administration / sqlplus / as sysdba).
+{{ inst.name }} =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._net }})(PORT = {{ inst._port }}))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SID = {{ inst.name }})
+    )
+  )

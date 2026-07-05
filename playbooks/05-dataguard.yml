@@ -1,0 +1,10 @@
+---
+# playbooks/05-dataguard.yml — Data Guard broker config + switchover.
+# SCAFFOLDED. Run on the standby host after the slice lands DG; the role
+# gathers DG facts and reports readiness without acting.
+
+- name: Configure Data Guard — scaffolded
+  hosts: standby
+  become: true
+  roles:
+    - role: oracle_dataguard

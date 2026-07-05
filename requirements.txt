@@ -1,0 +1,23 @@
+# Python runtime for the ansible-oracle control node (Python 3.12+; developed on 3.14).
+# Create the venv with: ./scripts/bootstrap-venv.sh
+
+# Core automation engine. ansible-core (not the full meta-package) keeps the
+# install lean and dependency-bounded.
+ansible-core>=2.16,<2.19
+
+# Lint / sanity for the playbooks and roles.
+ansible-lint>=24.2
+
+# Thin Oracle client used by the custom modules and the pytest suite.
+# The PyPI package is named `oracledb` (the importable module is `oracledb`).
+# It runs in Thin mode by default (no Oracle client libs required on the
+# control node), which is exactly what we want for a lab.
+oracledb>=2.0
+
+# Required by several Ansible filters used in the roles.
+jmespath>=1.0
+netaddr>=0.10
+
+# ── Test suite ────────────────────────────────────────────────────────
+pytest>=8.0
+pytest-xdist>=3.5      # parallel test runs across the lab nodes

@@ -1,0 +1,14 @@
+---
+# inventory/group_vars/standby.yml
+#
+# Hosts in the [standby] group run a physical standby. Reserved for the Data
+# Guard slice (scaffolded); the vertical slice does not populate this group.
+# Kept here so the inventory contract is stable when DG lands.
+
+oracle_instance_overrides:
+  super:
+    listener_vip: "superdc2.domain.is"
+    dg_role: standby
+    db_unique_name: super_sby
+    # Requirement: standby must be OPEN READ ONLY WITH APPLY (not MOUNTED).
+    desired_open_mode: "READ ONLY WITH APPLY"
