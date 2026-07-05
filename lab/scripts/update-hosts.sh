@@ -47,16 +47,21 @@ block() {
 }
 
 # Strip any existing marked block from /etc/hosts on the host.
+# Uses sudo only if /etc/hosts isn't writable directly.
 strip_block() {
-  local tmp
-  tmp="$(mktemp)"
-  if sudo test -f /etc/hosts; then
-    sudo awk -v b="${HOSTS_MARKER_BEGIN}" -v e="${HOSTS_MARKER_END}" '
+  local tmp; tmp="$(mktemp)"
+  if [ -w /etc/hosts ]; then
+    SUDO=""
+  else
+    SUDO="sudo"
+  fi
+  if $SUDO test -f /etc/hosts; then
+    $SUDO awk -v b="${HOSTS_MARKER_BEGIN}" -v e="${HOSTS_MARKER_END}" '
       $0==b {ind=1; next}
       $0==e {ind=0; next}
       !ind {print}
-    ' /etc/hosts > "${tmp}" || cp /etc/hosts "${tmp}"
-    sudo cp "${tmp}" /etc/hosts
+    ' /etc/hosts > "${tmp}" 2>/dev/null || cp /etc/hosts "${tmp}" 2>/dev/null || true
+    $SUDO cp "${tmp}" /etc/hosts 2>/dev/null || true
   fi
   rm -f "${tmp}"
 }
@@ -67,8 +72,32 @@ if [ "${MODE}" = "clean" ]; then
   exit 0
 fi
 
-log "Updating /etc/hosts (mode=${MODE}) — may prompt for sudo"
+log "Updating /etc/hosts (mode=${MODE})"
+# Detect whether we have a working sudo (passwordless) or direct write access.
+if [ -w /etc/hosts ]; then
+  SUDO=""
+elif sudo -n true 2>/dev/null; then
+  SUDO="sudo"
+else
+  # No passwordless sudo and no direct write. Fall back to a transient
+  # privileged container to edit the host's /etc/hosts (a standard lab
+  # bootstrap trick when the control node lacks passwordless sudo).
+  if command -v docker >/dev/null 2>&1; then
+    log "No passwordless sudo — using a transient privileged container to edit /etc/hosts"
+    block_text="$(block "${MODE}")"
+    docker run --rm --privileged -v /etc/hosts:/etc/hosts:rw alpine sh -c "
+      awk '/${HOSTS_MARKER_BEGIN}/{f=1;next} /${HOSTS_MARKER_END}/{f=0;next} !f' /etc/hosts > /tmp/h
+      cat /tmp/h > /etc/hosts
+      printf '%s\n' '$(printf "%s\n" "${block_text}" | sed "s/'/'\\\\''/g")' >> /etc/hosts
+    " || warn "docker fallback failed; add this block to /etc/hosts manually:" \
+              && block "${MODE}" | sed 's/^/    /' >&2
+    exit 0
+  fi
+  warn "Cannot write /etc/hosts (need root or docker). Add this block manually:"
+  block "${MODE}" | sed 's/^/    /' >&2
+  exit 0
+fi
 strip_block
-block "${MODE}" | sudo tee -a /etc/hosts >/dev/null
+block "${MODE}" | $SUDO tee -a /etc/hosts >/dev/null
 log "/etc/hosts updated:"
-sudo sed -n "/${HOSTS_MARKER_BEGIN}/,/${HOSTS_MARKER_END}/p" /etc/hosts | sed 's/^/    /' >&2
+$SUDO sed -n "/${HOSTS_MARKER_BEGIN}/,/${HOSTS_MARKER_END}/p" /etc/hosts 2>/dev/null | sed 's/^/    /' >&2

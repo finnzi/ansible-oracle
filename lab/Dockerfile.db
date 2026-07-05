@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 #
-# lab/Dockerfile.db — Oracle Linux 9 base for Oracle Database + Oracle Restart
+# lab/Dockerfile.db — Oracle Linux base for Oracle Database + Oracle Restart
 # (Grid Infrastructure standalone) nodes in the lab.
 #
 # Why systemd? Oracle Restart's ohasd/cssd expect an init system as PID 1.
@@ -9,24 +9,32 @@
 # and the oracle-database-preinstall-19c package. This is a lab-only image —
 # see lab/README.md for the security implications.
 #
-# Base image: full oraclelinux:9 (NOT slim — slim ships no systemd).
+# Base image: oraclelinux:7-slim, with systemd + python3.9 (for Ansible).
+#
+# OL version note (important): the 19.3 base installer (2019) is certified on
+# OL7 but NOT on newer OL8.x/OL9/OL10 minor releases — it NPEs in
+# supportedOSCheck and its linker fails against modern glibc/binutils, and the
+# -applyRU path does not complete in this offline lab. So the lab base is OL7,
+# where 19.3 installs cleanly with NO workarounds (no CV_ASSUME_DISTID, no
+# applyRU). The 19.31 RU is applied AFTER install via oracle_patch (standby-
+# first detection is real; apply is the next engagement's work). OL8/OL9/OL10
+# support is documented in lab/README.md.
 
-FROM oraclelinux:9
+FROM oraclelinux:7-slim
 
-# Build args let us rebuild without editing the file.
 ARG ORACLE_PREINSTALL_RPM=oracle-database-preinstall-19c
 
-# ── 1. Systemd-in-container essentials ─────────────────────────────────
-# Install systemd and a passthrough init. We also need sshd for Ansible (the
-# playbooks connect over SSH, not docker exec) and a working sudo.
-RUN dnf -y update && \
-    dnf -y install \
+# ── 1. Systemd + base tooling ─────────────────────────────────────────
+# OL7 slim ships yum (not dnf). Enable ol7_addons for the preinstall RPM.
+RUN yum install -y oracle-epel-release-el7 && \
+    yum-config-manager --enable ol7_addons ol7_optional_latest 2>/dev/null || true && \
+    yum -y install \
         systemd \
         systemd-sysv \
         openssh-server \
         openssh-clients \
         sudo \
-        python3 \
+        initscripts \
         which \
         tar \
         gzip \
@@ -34,9 +42,16 @@ RUN dnf -y update && \
         net-tools \
         bind-utils \
         procps-ng \
-        iproute \
-        initscripts \
-    && dnf clean all
+        openssl-devel \
+        libffi-devel \
+        bzip2-devel \
+        zlib-devel \
+        wget \
+        make \
+        gcc \
+        kernel-headers \
+        kernel-devel \
+    && yum clean all
 
 # Neutralise units that don't belong in a container so systemd boots cleanly.
 RUN systemctl mask \
@@ -49,41 +64,54 @@ RUN systemctl mask \
         systemd-resolved.service \
         systemd-networkd.service \
         firewalld.service \
+        dbus-org.freedesktop.NetworkManager.service \
     || true
 
-# ── 2. SSH for Ansible ─────────────────────────────────────────────────
+# Make systemd actually boot to multi-user (where sshd lives) and ensure the
+# D-Bus / machine-id substrate exists so systemctl works inside the container.
+RUN systemctl set-default multi-user.target && \
+    systemctl enable sshd.service && \
+    systemd-machine-id-setup 2>/dev/null || true && \
+    mkdir -p /run/systemd/system /var/log/journal
+
+# ── 2. Python 3.9 from source (for Ansible) ───────────────────────────
+# OL7's python3 is 3.6, too old for ansible-core's modules. We build CPython
+# 3.9 from source (a one-time ~3min compile) so Ansible's interpreter
+# discovery finds /usr/local/bin/python3 = 3.9.
+ARG PY_VER=3.9.21
+RUN cd /tmp && \
+    wget -q https://www.python.org/ftp/python/${PY_VER}/Python-${PY_VER}.tgz && \
+    tar xzf Python-${PY_VER}.tgz && \
+    cd Python-${PY_VER} && \
+    ./configure --enable-optimizations=no --prefix=/usr/local >/tmp/py_configure.log 2>&1 && \
+    make -j"$(nproc)" -s >/tmp/py_make.log 2>&1 && \
+    make altinstall -s >/tmp/py_install.log 2>&1 && \
+    ln -sf /usr/local/bin/python3.9 /usr/local/bin/python3 && \
+    ln -sf /usr/local/bin/python3.9 /usr/bin/python3.9 && \
+    cd / && rm -rf /tmp/Python-${PY_VER}* && \
+    /usr/local/bin/python3.9 -m ensurepip && \
+    /usr/local/bin/python3.9 -m pip install --upgrade pip && \
+    python3 --version
+
+# ── 3. SSH for Ansible ─────────────────────────────────────────────────
 RUN ssh-keygen -A && \
     sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
     sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     mkdir -p /root/.ssh && chmod 700 /root/.ssh
-
-# Pre-seed an authorized_keys for the lab root. The public key is written at
-# build time from a build arg; default is empty (lab-up.sh injects it).
 ARG LAB_PUBKEY=""
-RUN if [ -n "$LAB_PUBKEY" ]; then \
-        echo "$LAB_PUBKEY" > /root/.ssh/authorized_keys; \
-    fi
+RUN if [ -n "$LAB_PUBKEY" ]; then echo "$LAB_PUBKEY" > /root/.ssh/authorized_keys; fi
 RUN chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 
-# Passwordless sudo for the oracle user (created by the preinstall RPM, but
-# we add a fallback sudoers entry for the playbooks that run as oracle).
 RUN echo "oracle ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/oracle && chmod 0440 /etc/sudoers.d/oracle
 
-# ── 3. Oracle preinstall ───────────────────────────────────────────────
+# ── 4. Oracle preinstall ───────────────────────────────────────────────
 # Sets kernel params, limits, hugepages, creates the oracle user/groups.
-# This is the official Oracle Linux RPM; it pulls the right deps for 19c.
-RUN dnf -y install ${ORACLE_PREINSTALL_RPM} || \
-    echo "WARN: oracle-database-preinstall-19c not available from default repos; " \
-         "the oracle_common role will apply equivalent settings." && \
-    dnf clean all
+RUN yum -y install ${ORACLE_PREINSTALL_RPM} || \
+    echo "WARN: oracle-database-preinstall-19c not installable; oracle_common applies equivalent settings."
+RUN yum clean all
 
-# ── 4. Stage mount points for the per-instance directory tree ──────────
-# /super/{app,d01,a01,f01,r01} and /grid are bind-mounted at runtime in
-# docker-compose so data survives container rebuilds. Create the parents.
+# ── 5. Stage mount points for the per-instance directory tree ──────────
 RUN mkdir -p /super/app/oracle /super/d01 /super/a01 /super/f01 /super/r01 /grid /u01/stage && \
     chown -R oracle:oinstall /super /grid /u01
 
-# ── 5. Default command: systemd as PID 1 ───────────────────────────────
-# CMD [ "/usr/sbin/init" ]  — composed via compose `command:` to keep this
-# image reusable. lab/docker-compose.yml sets it explicitly.
 CMD ["/usr/sbin/init"]

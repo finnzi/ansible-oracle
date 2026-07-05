@@ -10,19 +10,21 @@
 # ORACLE_HOME, contains runInstaller. So we unzip into the home directory
 # and run it from there with a silent response file.
 
-- name: Resolve per-instance/per-home install targets
+- name: Resolve per-instance/per-home install targets (current homes only)
   ansible.builtin.set_fact:
     _install_targets: >-
       {%- set out=[] -%}
       {%- for inst in (oracle_instances | default([])) -%}
         {%- for home in inst.db_homes -%}
-          {%- set _ = out.append({
-              'name':  inst.name,
-              'oracle_base': inst.oracle_base,
-              'home_suffix': home.suffix,
-              'home_path': inst.oracle_base ~ '/' ~ home.suffix,
-              'stage_dir': oracle_stage_dir,
-              'zip': oracle_install_files.db_zip}) -%}
+          {%- if home.current | default(false) | bool -%}
+            {%- set _ = out.append({
+                'name':  inst.name,
+                'oracle_base': inst.oracle_base,
+                'home_suffix': home.suffix,
+                'home_path': inst.oracle_base ~ '/' ~ home.suffix,
+                'stage_dir': oracle_stage_dir,
+                'zip': oracle_install_files.db_zip}) -%}
+          {%- endif -%}
         {%- endfor -%}
       {%- endfor -%}
       {{ out }}

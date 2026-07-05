@@ -1,6 +1,10 @@
 ---
 # tasks/install-home.yml — install one Oracle home (out-of-place).
 # `tgt` is in scope: name, oracle_base, home_suffix, home_path, stage_dir, zip.
+#
+# Note: the installer zip lives under the read-only stage_dir (bind mount in
+# the lab). We put writable per-home staging (response file, logs) under the
+# oracle home's parent, which is always writable.
 
 - name: Idempotency marker — is this home already installed?
   ansible.builtin.stat:
@@ -15,9 +19,13 @@
     group: "{{ oracle_group }}"
     mode: "0775"
 
-- name: Stage a per-home staging area for the unzip
+- name: Writable per-home staging area (not under the read-only stage mount)
+  ansible.builtin.set_fact:
+    _home_stage: "{{ tgt.oracle_base }}/.stage_{{ tgt.home_suffix }}"
+
+- name: Create per-home staging area
   ansible.builtin.file:
-    path: "{{ tgt.stage_dir }}/{{ tgt.name }}_{{ tgt.home_suffix }}"
+    path: "{{ _home_stage }}"
     state: directory
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
@@ -35,10 +43,22 @@
   become_user: "{{ oracle_user }}"
   when: not _marker.stat.exists
 
+- name: Upgrade bundled OPatch (extract p6880880 over ORACLE_HOME)
+  ansible.builtin.unarchive:
+    src: "{{ tgt.stage_dir }}/{{ (oracle_patch_files.opatch_zip | default('p6880880_190000_Linux-x86-64.zip')) }}"
+    dest: "{{ tgt.home_path }}"
+    remote_src: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    creates: "{{ tgt.home_path }}/OPatch/opatch.pl"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: not _marker.stat.exists
+
 - name: Write silent installer response file (db_install.rsp)
   ansible.builtin.template:
     src: db_install.rsp.j2
-    dest: "{{ tgt.stage_dir }}/{{ tgt.name }}_{{ tgt.home_suffix }}/db_install.rsp"
+    dest: "{{ _home_stage }}/db_install.rsp"
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0644"
@@ -55,26 +75,79 @@
     group: root
   when: not _marker.stat.exists
 
-- name: Run runInstaller silently (this is slow — many minutes)
+# ── OS-family-specific install path ───────────────────────────────────
+# OL7: 19.3 is certified; plain install works.
+# OL8/OL9/OL10: 19.3 (2019) is NOT certified — it NPEs in supportedOSCheck
+# and its linker fails against modern glibc/binutils. On those families we
+# pass CV_ASSUME_DISTID=OL7 to clear the prereq engine and -applyRU the
+# staged 19.31 RU so the home links against the patched toolchain. If the
+# applyRU path is unavailable (offline lab), the install will fail at the
+# link step; that gap is reported, not silently swallowed.
+
+- name: Detect OS family for install-path selection
+  ansible.builtin.set_fact:
+    _install_apply_ru: >-
+      {{ (ansible_distribution_major_version | default('7')) not in ['7'] }}
+
+- name: Run runInstaller — OL7 certified path (plain install)
   ansible.builtin.shell: |
     set -o pipefail
     cd {{ tgt.home_path }}
-    ./runInstaller -silent -force -waitforcompletion \
-      -responseFile {{ tgt.stage_dir }}/{{ tgt.name }}_{{ tgt.home_suffix }}/db_install.rsp \
-      -invPtrLoc /etc/oraInst.loc \
-      ORACLE_BASE={{ tgt.oracle_base }} \
-      ORACLE_HOME={{ tgt.home_path }} \
-      oracle.install.db.ConfigureLaterOption=true
+    ./runInstaller -silent -force -waitforcompletion -noconfig \
+      -ignorePrereqFailure \
+      -responseFile {{ _home_stage }}/db_install.rsp
   args:
     executable: /bin/bash
   become: true
   become_user: "{{ oracle_user }}"
   register: _installer
-  when: not _marker.stat.exists
-  changed_when: _installer.rc == 0
-  # Installer returns non-zero for some soft warnings; treat success codes only.
+  when:
+    - not _marker.stat.exists
+    - not _install_apply_ru | bool
+  changed_when: _installer.rc == 0 or 'Successfully Setup Software' in (_installer.stdout | default(''))
   failed_when: >-
     _installer.rc != 0 and 'Successfully Setup Software' not in (_installer.stdout | default(''))
+
+- name: Run runInstaller — OL8+ path (applyRU to bridge the certification gap)
+  ansible.builtin.shell: |
+    set -o pipefail
+    cd {{ tgt.home_path }}
+    ./runInstaller -silent -force -waitforcompletion -noconfig \
+      -ignorePrereqFailure -ignoreInternalDriverError \
+      -applyRU {{ tgt.stage_dir }}/{{ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip')) }} \
+      -responseFile {{ _home_stage }}/db_install.rsp
+  args:
+    executable: /bin/bash
+  environment:
+    CV_ASSUME_DISTID: OL7
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _installer_ru
+  when:
+    - not _marker.stat.exists
+    - _install_apply_ru | bool
+  changed_when: _installer_ru.rc == 0 or 'Successfully Setup Software' in (_installer_ru.stdout | default(''))
+  failed_when: >-
+    _installer_ru.rc != 0 and 'Successfully Setup Software' not in (_installer_ru.stdout | default(''))
+  # The OL8+ applyRU path is known to be flaky in offline labs (the installer's
+  # InstallerPatchJob can exit without applying when it cannot reach Oracle
+  # Support metadata). Surface a clear message in that case rather than retry.
+  ignore_errors: "{{ oracle_install_allow_ol8_gap | default(true) | bool }}"
+
+- name: Report OL8+ install gap when applyRU did not succeed
+  ansible.builtin.fail:
+    msg: >-
+      Oracle 19.3 base install could not complete on {{ ansible_distribution }}
+      {{ ansible_distribution_version }} (the 19.3 linker is not certified on
+      this OS and the -applyRU bridge did not apply the staged 19.31 RU in this
+      offline lab). The home at {{ tgt.home_path }} is staged but its binaries
+      are not linked. To complete the install, either (a) run the lab on OL7,
+      (b) stage a pre-patched 19.x gold image, or (c) provide network access so
+      the installer can resolve applyRU metadata. See lab/README.md.
+  when:
+    - not _marker.stat.exists
+    - _install_apply_ru | bool
+    - _installer_ru is failed or (_installer_ru.rc | default(1)) != 0
 
 - name: Run root scripts (orainstRoot.sh + root.sh)
   ansible.builtin.shell: |
@@ -85,7 +158,9 @@
     {{ tgt.home_path }}/root.sh -silent
   args:
     executable: /bin/bash
-  when: not _marker.stat.exists and _installer is success
+  when:
+    - not _marker.stat.exists
+    - (_installer is success) or (_installer_ru is success and (_installer_ru.rc | default(1)) == 0)
   changed_when: true
 
 - name: Drop the idempotency marker
@@ -95,4 +170,6 @@
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0644"
-  when: not _marker.stat.exists
+  when:
+    - not _marker.stat.exists
+    - (_installer is success) or (_installer_ru is success and (_installer_ru.rc | default(1)) == 0)

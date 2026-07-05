@@ -41,22 +41,37 @@
     group: root
     validate: /usr/sbin/visudo -csf %s
 
-- name: Ensure /etc/oradata and stage dirs exist
+- name: Ensure /u01 base dir exists (owned by oracle)
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: /u01
     state: directory
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0775"
-  loop:
-    - /u01
-    - "{{ oracle_stage_dir | default('/u01/stage') }}"
+
+- name: Ensure the stage dir exists (best-effort; may be a read-only bind mount)
+  ansible.builtin.file:
+    path: "{{ oracle_stage_dir | default('/u01/stage') }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  # In the lab this path is a read-only bind mount of ../download; tolerate that.
+  failed_when: false
 
 # ── 4. sysctl ─────────────────────────────────────────────────────────
 # Write the desired parameters to /etc/sysctl.d/99-oracle.conf and reload.
 # Implemented with shell (not ansible.posix.sysctl) to keep the repo free of
 # external collection dependencies. Idempotent: the copy task reports changed
 # only when the file content differs; the reload is gated on that change.
+- name: Ensure /etc/sysctl.d exists
+  ansible.builtin.file:
+    path: /etc/sysctl.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Render Oracle sysctl file
   ansible.builtin.copy:
     dest: /etc/sysctl.d/99-oracle.conf

@@ -42,7 +42,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.db
-    image: ansible-oracle/db:ol9
+    image: ansible-oracle/db:ol8
     hostname: superdb1
     domainname: domain.is
     command: ["/usr/sbin/init"]
@@ -54,8 +54,10 @@ services:
     volumes:
       # cgroups v2 — systemd needs this mounted read-write inside the container.
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
-      # The staged installers (bind-mounted from the host ./download dir).
-      - ../download:/u01/stage:ro
+      # The staged installers: bind-mount the host's sources dir read-only so
+      # the multi-GB zips don't need to be copied. ${SOURCES_DIR} is set by
+      # lab/scripts/lab-up.sh (defaults to ~/sources/oracle).
+      - ${SOURCES_DIR:-/dev/null}:/u01/stage:ro
       # Per-instance tree.
       - super1_app:/super/app
       - super1_data:/super/d01
@@ -74,7 +76,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.db
-    image: ansible-oracle/db:ol9
+    image: ansible-oracle/db:ol8
     hostname: superdb2
     domainname: domain.is
     command: ["/usr/sbin/init"]
@@ -85,7 +87,7 @@ services:
       - /tmp
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
-      - ../download:/u01/stage:ro
+      - ${SOURCES_DIR:-/dev/null}:/u01/stage:ro
       - super2_app:/super/app
       - super2_data:/super/d01
       - super2_arch:/super/a01
@@ -113,7 +115,7 @@ services:
       - /tmp
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
-      - ../download:/u01/stage:ro
+      - ${SOURCES_DIR:-/dev/null}:/u01/stage:ro
     networks:
       labnet:
         ipv4_address: 172.28.0.13

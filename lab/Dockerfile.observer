@@ -6,10 +6,11 @@
 #
 # The observer needs only: an Oracle Client (Administrator) install + a
 # systemd unit running `dgmgrl ... START OBSERVER IN BACKGROUND`. It does NOT
-# need Grid Infrastructure or a running database. So we use the slim base and
-# systemd (lighter than the DB node but still init-managed for the unit).
+# need Grid Infrastructure or a running database. We use the full oraclelinux:9
+# base (not slim) so `dnf` and `systemd` are available without extra steps —
+# the size difference is immaterial for a lab node.
 
-FROM oraclelinux:9-slim
+FROM oraclelinux:9
 
 RUN dnf -y update && \
     dnf -y install \
@@ -51,6 +52,7 @@ RUN chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true
 # Observer software tree (client install target).
 RUN mkdir -p /observer/app/oracle/client_home1 /u01/stage && \
     groupadd -g 54321 oinstall 2>/dev/null || true && \
+    groupadd -g 54322 dba 2>/dev/null || true && \
     useradd -u 54321 -g oinstall -G dba oracle 2>/dev/null || true && \
     chown -R oracle:oinstall /observer /u01 && \
     echo "oracle ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/oracle && \

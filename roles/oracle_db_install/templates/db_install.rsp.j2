@@ -1,6 +1,7 @@
-{# db_install.rsp.j2 — silent response file for the 19c Database installer. #}
+{# db_install.rsp.j2 — silent response file for the Oracle 19c Database installer. #}
 {# Managed by ansible-oracle / oracle_db_install. #}
-# Software-only install; DBCA is run separately by oracle_db_manage.
+{# Only the variables valid for the 19c response schema are used (see the #}
+{# installer's db_install.rsp template). Software-only install — DBCA runs later. #}
 oracle.install.responseFileVersion=/oracle/install/rspfmt_dbinstall_response_schema_v19.0.0
 oracle.install.option=INSTALL_DB_SWONLY
 ORACLE_HOSTNAME={{ ansible_hostname }}
@@ -16,8 +17,6 @@ oracle.install.db.OSBACKUPDBA_GROUP=backupdba
 oracle.install.db.OSDGDBA_GROUP=dgdba
 oracle.install.db.OSKMDBA_GROUP=kmdba
 oracle.install.db.OSRACDBA_GROUP=dba
-oracle.install.db.root.config.executeRootScript=false
-oracle.install.db.config.starterdb.type=GENERAL_PURPOSE
-oracle.install.db.ConfigureLaterOption=true
+oracle.install.db.rootconfig.executeRootScript=false
 SECURITY_UPDATES_VIA_MYORACLESUPPORT=false
 DECLINE_SECURITY_UPDATES=true

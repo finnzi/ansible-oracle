@@ -49,8 +49,10 @@ def test_kernel_params_applied(docker_exec):
     # Spot-check a representative Oracle-recommended sysctl value.
     r = docker_exec("sysctl kernel.sem")
     assert r.returncode == 0, r.stderr
+    # sysctl renders SEM arrays with tabs or spaces; normalise before checking.
+    normalised = " ".join(r.stdout.split())
     # kernel.sem should be the Oracle-recommended "1024 32000 100 128".
-    assert "1024 32000 100 128" in r.stdout, f"kernel.sem not set: {r.stdout}"
+    assert "1024 32000 100 128" in normalised, f"kernel.sem not set: {r.stdout}"
 
 
 def test_oracle_limits_configured(docker_exec):
