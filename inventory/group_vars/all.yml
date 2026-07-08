@@ -31,7 +31,8 @@ oracle_patch_files:
   db_ru_zip: "p39062931_190000_Linux-x86-64.zip"   # OJVM 19.31 + DB RU 19.31
   gi_ru_zip: "p39062956_190000_Linux-x86-64.zip"   # OJVM 19.31 + GI RU 19.31
 
-# Where the containers see the staged installers (bind-mounted from ./download).
+# Where the KVM lab VMs see the staged installers. lab-up.sh mounts
+# ~/sources/oracle read-only at this path through libvirt.
 oracle_stage_dir: "/u01/stage"
 
 # ── OS user / groups ──────────────────────────────────────────────────

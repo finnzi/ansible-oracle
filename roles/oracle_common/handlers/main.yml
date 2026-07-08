@@ -3,9 +3,8 @@
 
 - name: Reload sysctl
   ansible.builtin.shell: |
-    # Apply each sysctl key individually so that one un-settable key (some
-    # net.core.* values are not writable even in a privileged container) does
-    # not abort the rest. kernel.sem and the Oracle-required values DO apply.
+    # Apply each sysctl key individually so that one un-settable key does not
+    # abort the rest. kernel.sem and the Oracle-required values DO apply.
     set -o pipefail
     rc=0
     while read -r key val; do

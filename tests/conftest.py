@@ -1,14 +1,4 @@
-"""
-pytest configuration and fixtures for the ansible-oracle test suite.
-
-The suite runs on the control host and reaches the lab containers over the
-published listener port and the /etc/hosts entries written by
-lab/scripts/update-hosts.sh. Connection details come from environment
-variables with sensible lab defaults.
-
-Tests 01-04 + the standby-first parser unit test are GREEN in the vertical
-slice. Tests 05-07 are skipped cleanly until the corresponding roles land.
-"""
+"""pytest configuration and fixtures for the ansible-oracle test suite."""
 from __future__ import annotations
 
 import os
@@ -34,7 +24,8 @@ DB_SID = _env("ORACLE_TEST_SID", "super")
 SYS_USER = _env("ORACLE_TEST_USER", "system")
 SYS_PASSWORD = _env("ORACLE_TEST_PASSWORD", "SysPassword1_")
 SSH_USER = _env("ORACLE_TEST_SSH_USER", "root")
-SSH_HOST = _env("ORACLE_TEST_SSH_HOST", "superdb1")  # docker exec name
+SSH_HOST = _env("ORACLE_TEST_SSH_HOST", "192.168.87.11")
+SSH_KEY = _env("ORACLE_TEST_SSH_KEY", os.path.expanduser("~/.ssh/lab_oracle"))
 
 
 def pytest_configure(config):
@@ -100,20 +91,30 @@ def db_connection(oracledb, db_conn_kwargs):
         pass
 
 
-# ── Docker exec helper ─────────────────────────────────────────────────
+# ── Remote shell helper ────────────────────────────────────────────────
 @pytest.fixture(scope="session")
-def docker_exec():
-    """Run a command inside the superdb1 container via docker exec."""
+def lab_exec():
+    """Run a shell command on the primary lab VM over SSH."""
     import subprocess
 
     def _run(cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
-        full = ["docker", "exec", SSH_HOST, "bash", "-lc", cmd]
+        full = [
+            "ssh",
+            "-i", SSH_KEY,
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "ConnectTimeout=5",
+            "-o", "BatchMode=yes",
+            f"{SSH_USER}@{SSH_HOST}",
+            "bash",
+            "-lc",
+            cmd,
+        ]
         return subprocess.run(full, capture_output=True, text=True, timeout=timeout)
 
-    # Skip the suite cleanly if the container isn't there.
     probe = _run("true")
     if probe.returncode != 0:
-        pytest.skip(f"docker exec into {SSH_HOST} failed; is the lab up? {probe.stderr}")
+        pytest.skip(f"SSH to {SSH_USER}@{SSH_HOST} failed; is the KVM lab up? {probe.stderr}")
     return _run
 
 

@@ -8,8 +8,7 @@ LISTENER_{{ inst.name | upper }} =
     )
   )
 
-# Static SID_LIST so the listener answers even before PMON registers
-# (dynamic registration can be flaky in containers).
+# Static SID_LIST so the listener answers even before PMON registers.
 SID_LIST_LISTENER_{{ inst.name | upper }} =
   (SID_LIST =
     (SID_DESC =

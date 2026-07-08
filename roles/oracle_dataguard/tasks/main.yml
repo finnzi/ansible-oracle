@@ -27,7 +27,7 @@
 
 - name: Set oracle_dataguard_configured fact
   ansible.builtin.set_fact:
-    oracle_dataguard_configured: "{{ _dg_facts.facts.database_role | default('PRIMARY') in ['PHYSICAL STANDBY','LOGICAL STANDBY','SNAPSHOT STANDBY'] }}"
+    oracle_dataguard_configured: "{{ _dg_facts.facts.database_role | default('PRIMARY') in ['PHYSICAL STANDBY', 'LOGICAL STANDBY', 'SNAPSHOT STANDBY'] }}"
   when: oracle_instances | length > 0
 
 - name: Not implemented — fail only if DG is explicitly requested

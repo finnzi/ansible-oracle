@@ -18,14 +18,14 @@
 
 - name: Set oracle_gi_installed fact (probe for gridSetup/srvctl)
   ansible.builtin.stat:
-    path: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current','equalto',true) | first).suffix }}/bin/srvctl"
+    path: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current', 'equalto', true) | first).suffix }}/bin/srvctl"
   register: _gi_srvctl
   failed_when: false
 
 - name: Record whether Restart is installed
   ansible.builtin.set_fact:
     oracle_gi_installed: "{{ _gi_srvctl.stat.exists }}"
-    oracle_gi_home: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current','equalto',true) | first).suffix }}"
+    oracle_gi_home: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current', 'equalto', true) | first).suffix }}"
 
 - name: Not implemented in this slice — fail only if explicitly enabled
   ansible.builtin.fail:

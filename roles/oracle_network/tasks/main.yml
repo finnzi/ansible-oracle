@@ -4,7 +4,7 @@
 # Per-instance listener configuration. We bind each instance's listener to its
 # dedicated VIP hostname (superdb.domain.is for standalone; superdc1/dc2 for
 # DG) and configure a STATIC SID_LIST entry. The research confirmed that
-# dynamic service registration can come back "blocked" inside containers, so
+# dynamic service registration can come back "blocked" in constrained labs, so
 # we add the static entry for reliability.
 #
 # The listener is started with lsnrctl here for the very first boot; once
@@ -89,7 +89,7 @@
   become: true
   become_user: "{{ oracle_user }}"
   loop: >-
-    {%- set down=[] -%}
+    {%- set down = [] -%}
     {%- for r in _lsnr_status.results -%}
       {%- if 'TNS-' in r.stdout or 'no listener' in r.stdout | lower or r.rc != 0 -%}
         {%- set _ = down.append({'inst': r.item}) -%}
@@ -111,7 +111,7 @@
   become: true
   become_user: "{{ oracle_user }}"
   loop: >-
-    {%- set reload=[] -%}
+    {%- set reload = [] -%}
     {%- for r in _lsnr_status.results -%}
       {%- if r.rc == 0 -%}
         {%- set _ = reload.append({'inst': r.item}) -%}

@@ -60,15 +60,15 @@ def test_db_unique_name(db_connection):
     assert row[0].lower() == "super", f"unexpected db_unique_name: {row[0]}"
 
 
-def test_dedicated_data_path_used(docker_exec):
+def test_dedicated_data_path_used(lab_exec):
     """Data files must live under /super/d01 (the dedicated data dir)."""
     # Skip cleanly if the oracle binary isn't linked (OL8+ install gap) so the
     # suite reports the gap honestly instead of erroring on sqlplus.
-    probe = docker_exec("stat -c '%s' /super/app/oracle/db_home1/bin/sqlplus 2>/dev/null || echo 0")
+    probe = lab_exec("stat -c '%s' /super/app/oracle/db_home1/bin/sqlplus 2>/dev/null || echo 0")
     size = int((probe.stdout or "0").strip().splitlines()[-1] or "0")
     if size == 0:
         pytest.skip("sqlplus not linked (OL8+ install gap); DB instance not created.")
-    r = docker_exec(
+    r = lab_exec(
         "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF\n"

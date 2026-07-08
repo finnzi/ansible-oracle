@@ -9,8 +9,8 @@ oracle_group: oinstall
 oracle_primary_group_role: dba
 oracle_roles: [dba, oper, backupdba, dgdba, kmdba]
 
-# The preinstall RPM usually sets these but the lab containers may not have it
-# (the Dockerfile guards the install). The role is idempotent regardless.
+# The preinstall RPM usually sets these but a lab image may not have it. The
+# role is idempotent regardless.
 oracle_uid: 54321
 oracle_gid: 54321
 

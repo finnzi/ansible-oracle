@@ -10,7 +10,7 @@
 #   ./update-hosts.sh --dg      # switch to Data Guard hostnames
 #   ./update-hosts.sh --clean   # remove the block entirely
 #
-# Requires sudo to write /etc/hosts.
+# Requires direct write access or passwordless sudo to write /etc/hosts.
 
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
@@ -33,7 +33,7 @@ block() {
       echo "${IP_SUPERDB1}  superdb.domain.is superdb"
       # Short-name aliases the playbooks/tests also use.
       echo "${IP_SUPERDB1}  superdb1"
-      echo "${IP_SUPERDB2}  superdb2.domain.is superdb2 superdb2"
+      echo "${IP_SUPERDB2}  superdb2.domain.is superdb2"
       echo "${IP_OBSERVER}  observer.domain.is observer"
       ;;
     dataguard)
@@ -52,8 +52,12 @@ strip_block() {
   local tmp; tmp="$(mktemp)"
   if [ -w /etc/hosts ]; then
     SUDO=""
-  else
+  elif sudo -n true 2>/dev/null; then
     SUDO="sudo"
+  else
+    cp /etc/hosts "${tmp}" 2>/dev/null || true
+    rm -f "${tmp}"
+    return 1
   fi
   if $SUDO test -f /etc/hosts; then
     $SUDO awk -v b="${HOSTS_MARKER_BEGIN}" -v e="${HOSTS_MARKER_END}" '
@@ -79,21 +83,7 @@ if [ -w /etc/hosts ]; then
 elif sudo -n true 2>/dev/null; then
   SUDO="sudo"
 else
-  # No passwordless sudo and no direct write. Fall back to a transient
-  # privileged container to edit the host's /etc/hosts (a standard lab
-  # bootstrap trick when the control node lacks passwordless sudo).
-  if command -v docker >/dev/null 2>&1; then
-    log "No passwordless sudo — using a transient privileged container to edit /etc/hosts"
-    block_text="$(block "${MODE}")"
-    docker run --rm --privileged -v /etc/hosts:/etc/hosts:rw alpine sh -c "
-      awk '/${HOSTS_MARKER_BEGIN}/{f=1;next} /${HOSTS_MARKER_END}/{f=0;next} !f' /etc/hosts > /tmp/h
-      cat /tmp/h > /etc/hosts
-      printf '%s\n' '$(printf "%s\n" "${block_text}" | sed "s/'/'\\\\''/g")' >> /etc/hosts
-    " || warn "docker fallback failed; add this block to /etc/hosts manually:" \
-              && block "${MODE}" | sed 's/^/    /' >&2
-    exit 0
-  fi
-  warn "Cannot write /etc/hosts (need root or docker). Add this block manually:"
+  warn "Cannot write /etc/hosts (need root or passwordless sudo). Add this block manually:"
   block "${MODE}" | sed 's/^/    /' >&2
   exit 0
 fi

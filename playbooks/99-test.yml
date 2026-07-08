@@ -1,7 +1,7 @@
 ---
 # playbooks/99-test.yml — run the pytest suite against the lab.
 # Delegates the test command to localhost (the control node), which reaches
-# the containers over the published listener port + /etc/hosts entries.
+# the KVM lab over the listener port + /etc/hosts entries.
 
 - name: Run the ansible-oracle test suite
   hosts: localhost

@@ -1,125 +1,107 @@
 # ansible-oracle
 
-Ansible playbooks and roles for managing Oracle 19c databases on Oracle Linux
-9: single-instance and Data Guard configurations, Oracle Restart (Grid
-Infrastructure standalone), out-of-place home patching, and a Docker-based lab
-to test the whole thing end to end.
+Ansible playbooks and roles for managing Oracle 19c databases on Oracle Linux:
+single-instance and Data Guard configurations, Oracle Restart, out-of-place
+home patching, and a KVM/libvirt lab for testing the automation end to end.
 
-## Status: vertical slice
+## Current Status
 
-This repository is delivered as a **complete, runnable vertical slice**:
+This repository is a vertical slice plus scaffolding. The lab has been moved
+away from privileged containers and now provisions three KVM VMs from Oracle
+Linux cloud images:
 
-- ✅ **Lab** — three systemd-enabled Oracle Linux 9 containers (2 DB nodes + 1
-  observer), fixed IPs, `/etc/hosts` entries, no DNS required.
-- ✅ **OS prep** — oracle user/groups, sysctl, limits, the per-instance
-  directory tree (`/<inst>/{app,d01,a01,f01,r01}`, `/grid`).
-- ✅ **DB software install** — silent out-of-place 19c install.
-- ✅ **Instance + listener** — DBCA create, dedicated VIP listener with static
-  SID_LIST, runtime params (sga/pga, archivelog, flashback, force logging),
-  dedicated file paths for data/archive/flashback/redo.
-- ✅ **Client service** — a dedicated `super_svc` service that always points at
-  the current primary.
-- ✅ **Standby-first patch detection** — `patch_standbyfirst_info` module
-  parses the patch README and reports Data Guard Standby-First eligibility
-  (the auto-detect-from-release-notes requirement).
-- ✅ **Test suite** — pytest, green for the slice (OS, install, instance,
-  Restart, parser unit tests).
+- `superdb1` - primary or standalone DB node
+- `superdb2` - future Data Guard standby
+- `observer` - future Fast-Start Failover observer
 
-Scaffolded (interfaces fixed, apply deferred to a later engagement):
+Implemented:
 
-- 🟡 **Oracle Restart (Grid) install** — `oracle_gi_install`. Restart
-  registration in `oracle_restart_manage` detects absence and degrades
-  gracefully; the Restart test skips honestly rather than fakes a pass.
-- 🟡 **Data Guard** — `oracle_dataguard` (physical standby, broker, READ ONLY
-  WITH APPLY, manual switchover).
-- 🟡 **FSFO observer** — `oracle_observer` (client install + dgmgrl START
-  OBSERVER IN BACKGROUND under systemd).
-- 🟡 **Patch apply** — `oracle_patch` (detection is real; apply is stubbed).
+- OS prep roles for Oracle users, groups, limits, sysctl, sudoers, and the
+  per-instance filesystem layout.
+- DB home install, instance, listener, Restart registration, service, Data
+  Guard, observer, and patching role interfaces.
+- Standby-first patch eligibility parser with unit coverage.
+- SSH-based pytest helpers that run against the KVM lab VMs.
+
+Still scaffolded or not yet proven end to end:
+
+- Oracle Restart/Grid installation.
+- Data Guard creation, broker configuration, READ ONLY WITH APPLY, and
+  switchover.
+- FSFO observer installation.
+- Actual patch application and dual-home switch.
 
 ## Quickstart
 
+Install host prerequisites first. Package names vary by distribution, but the
+lab expects `virsh`, `virt-install`, `qemu-img`, `cloud-localds`, `curl`, and a
+working system libvirt daemon.
+
 ```bash
-# 1. One-time: SSH key so Ansible can reach the containers as root.
+# One-time: key used for root SSH into the lab VMs.
 ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 
-# 2. Python venv (uses the host's Python 3.14).
+# Python venv for Ansible and pytest.
 ./scripts/bootstrap-venv.sh
 source .venv/bin/activate
 
-# 3. Bring up the lab (builds images, stages installers from ~/sources/oracle,
-#    generates inventory/hosts.yml, updates /etc/hosts).
-cd lab && ./scripts/build-images.sh && ./scripts/lab-up.sh && cd ..
+# Optional: pick OL10 instead of OL9.
+# export LAB_OS_VERSION=10
 
-# 4. Run the umbrella playbook (prep -> install -> create -> register -> test).
+# Optional: pin a known Oracle Linux KVM qcow2 image URL.
+# export ORACLE_LINUX_IMAGE_URL=https://yum.oracle.com/templates/OracleLinux/...
+
+# Bring up the KVM lab. This creates inventory/hosts.yml and updates /etc/hosts
+# if the current user can write it directly or via passwordless sudo.
+./lab/scripts/lab-up.sh
+
+# Run the umbrella playbook.
 ansible-playbook playbooks/site.yml
 
-# 5. Run the test suite on its own.
+# Run pytest against the lab.
 ./scripts/run-tests.sh
 ```
 
-## Repository layout
+Oracle installers and patches are expected under `~/sources/oracle` by default
+and are mounted read-only into the VMs at `/u01/stage`. Override with
+`SOURCES_DIR=/path/to/oracle/sources`.
 
-```
-lab/              Docker lab (3 OL9 systemd containers) + bring-up scripts
-inventory/        group_vars + a generated hosts.yml (gitignored)
-playbooks/        site.yml + numbered 00-07 + 99-test
-roles/            oracle_common, oracle_storage, oracle_network,
-                  oracle_db_install, oracle_db_manage,
-                  oracle_restart_manage, oracle_service_manage,
-                  oracle_gi_install*, oracle_dataguard*,
-                  oracle_observer*, oracle_patch*   (* = scaffolded)
+## Repository Layout
+
+```text
+lab/              KVM/libvirt lab scripts and docs
+inventory/        group_vars plus generated hosts.yml
+playbooks/        site.yml plus numbered playbooks 00-07 and 99-test
+roles/            Oracle OS, storage, install, network, Restart, DG, observer,
+                  service, and patch roles
 library/          custom modules: patch_standbyfirst_info, oracle_db_facts,
                   oracle_session
-tests/            pytest suite (conftest + test_01..07 + parser unit test)
+tests/            pytest suite
 scripts/          bootstrap-venv.sh, run-tests.sh
-download/         staged Oracle installers (gitignored; symlinked from ~/sources/oracle)
+download/         reserved staging directory; large Oracle media is gitignored
 ```
 
-See [`lab/README.md`](lab/README.md) for lab specifics and [`library/README.md`](library/README.md)
-for the custom modules.
+See [lab/README.md](lab/README.md) for KVM lab details.
 
-## How the project's requirements map to the code
+## Requirement Map
 
 | Requirement | Where |
 |---|---|
-| Single-instance **and** Data Guard | `oracle_db_manage` (single); `oracle_dataguard` (DG, scaffolded) |
-| Oracle Restart support | `oracle_gi_install` (install), `oracle_restart_manage` (register) |
-| Patch DB homes **and** Grid homes | `oracle_patch` (DB apply real-detection; apply stubbed); GI via same role `oracle_patch_target: grid` |
-| Dedicated file paths (home/data/arch/flash/redo) | `inventory/group_vars/all.yml` `oracle_instances[*].dirs`; `oracle_storage`; `oracle_db_manage` DBCA response |
-| Flashback/archivelog/redo toggles | `oracle_instances[*].{archivelog,flashback,force_logging}`; reconciled in `oracle_db_manage` |
-| DG → multiple machines | `inventory/hosts.example.yml` `[primary]` + `[standby]`; `oracle_dataguard` |
-| DG broker (FSFO) third server | `inventory/group_vars/observer.yml`; `oracle_observer` |
-| Auto + manual switchover | `oracle_dataguard` `dg_action: switchover` (scaffolded) |
-| Dedicated listener IP per node | `oracle_network`; `lab/scripts/update-hosts.sh` (`superdc1`/`superdc2`/`superdb`) |
-| Standby READ ONLY WITH APPLY | `inventory/group_vars/standby.yml` `desired_open_mode`; `oracle_dataguard` |
-| Standalone dedicated listener IP | `oracle_network` (`superdb.domain.is`) |
-| Multiple instances per machine | `oracle_instances` is a list (super, duper, fluff, …); every role loops it |
-| Tunable sga/pga + settings | `oracle_instances[*].memory`; `oracle_db_manage` reconciliation |
-| Idempotent | every role gathers facts / probes before acting |
-| Oracle home paths `/super/app/oracle/db_homeN` | `oracle_instances[*].db_homes` |
-| Grid paths `/grid/19c/gi_homeN` | `oracle_instances[*].gi_homes` |
-| Register instance with Restart | `oracle_restart_manage` (`srvctl add database/instance/listener`) |
-| Dedicated client service | `oracle_service_manage` (`super_svc`) |
-| Tests for Restart/DG/switchover | `tests/test_04_restart.py` (green/skips-honestly); `test_05_dataguard.py` (skipped until DG) |
-| Patch single + dual home | `oracle_patch` `oracle_patch_mode: inplace\|oop_dual` |
-| Greenfield + brownfield | install roles are idempotent; `oracle_db_facts` lets manage roles detect pre-existing DBs |
-| Standby-first patching (auto-detect) | `library/patch_standbyfirst_info.py` + unit tests; consumed by `oracle_patch` |
-| Switch Oracle homes (dual-home) | `oracle_patch` (scaffolded): `srvctl modify database -oraclehome` |
-| Lab in containers | `lab/` |
-| `/etc/hosts` updates (no DNS) | `lab/scripts/update-hosts.sh` |
-| Per-instance dir layout `/<inst>/{app,f01,r01,d01,a01}` | `oracle_storage`; `inventory/group_vars/all.yml` |
-| Oracle Linux 9 (10 on roadmap) | `lab/Dockerfile.db` `FROM oraclelinux:9` |
-| No ASM — filesystem only | `oracle_db_manage` `storageType=FS`; no ASM roles |
-| `.venv` for Python | `scripts/bootstrap-venv.sh` |
-| Scripts to build containers | `lab/scripts/build-images.sh`, `lab-up.sh` |
-
-## Caveats
-
-- Oracle Restart inside privileged Docker containers is a **lab-only
-  affordance** and officially unsupported by Oracle. See `lab/README.md`.
-- The 19.3 base install + DBCA on a container is slow (tens of minutes); the
-  test suite uses generous timeouts.
-- OL10 is on the roadmap; the Dockerfiles target OL9 today.
+| Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard` scaffold |
+| Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage` |
+| Patch DB homes and Grid homes | `oracle_patch` |
+| Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
+| Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
+| Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG/observer roles |
+| Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
+| Multiple instances per host | `oracle_instances` list |
+| Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
+| Dedicated client service | `oracle_service_manage` |
+| Standby-first patch detection | `library/patch_standbyfirst_info.py` |
+| KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
+| Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
+| No ASM | filesystem paths only; no ASM roles |
+| Python venv | `scripts/bootstrap-venv.sh` |
 
 ## License
 

@@ -34,14 +34,14 @@ def test_standby_is_read_only_with_apply(db_connection):
     )
 
 
-def test_dgmgrrl_configuration_healthy(docker_exec):
+def test_dgmgrrl_configuration_healthy():
     pytest.skip(
         "DGMGRL broker health assertion: requires Data Guard (scaffolded). "
         "Will run `dgmgrl ... SHOW CONFIGURATION`."
     )
 
 
-def test_manual_switchover(docker_exec):
+def test_manual_switchover():
     pytest.skip(
         "Manual switchover assertion: requires Data Guard (scaffolded). "
         "Will run `dgmgrl ... SWITCHOVER TO super_sby` and assert role swap."

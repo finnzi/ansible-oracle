@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scripts/run-tests.sh — run the pytest suite against the lab.
+# scripts/run-tests.sh — run the pytest suite against the KVM lab.
 #
 # Honours pytest args; defaults to the tests/ directory. The venv is preferred
 # if present.
@@ -24,7 +24,9 @@ export ORACLE_TEST_SERVICE="${ORACLE_TEST_SERVICE:-super_svc}"
 export ORACLE_TEST_SID="${ORACLE_TEST_SID:-super}"
 export ORACLE_TEST_USER="${ORACLE_TEST_USER:-system}"
 export ORACLE_TEST_PASSWORD="${ORACLE_TEST_PASSWORD:-SysPassword1_}"
-export ORACLE_TEST_SSH_HOST="${ORACLE_TEST_SSH_HOST:-superdb1}"
+export ORACLE_TEST_SSH_HOST="${ORACLE_TEST_SSH_HOST:-192.168.87.11}"
+export ORACLE_TEST_SSH_USER="${ORACLE_TEST_SSH_USER:-root}"
+export ORACLE_TEST_SSH_KEY="${ORACLE_TEST_SSH_KEY:-$HOME/.ssh/lab_oracle}"
 
 echo "[test] Using ${PYTEST}"
 echo "[test] Target: ${ORACLE_TEST_HOST}:${ORACLE_TEST_PORT} service=${ORACLE_TEST_SERVICE}"
