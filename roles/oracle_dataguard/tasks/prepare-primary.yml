@@ -1,0 +1,150 @@
+---
+# tasks/prepare-primary.yml - safe primary-side prerequisites for Data Guard.
+# `inst` is one element of oracle_instances, after host overrides.
+
+- name: Resolve current ORACLE_HOME for Data Guard primary prep
+  ansible.builtin.set_fact:
+    _dg_home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+    _dg_redo_dir: "{{ inst.dirs.redo }}"
+    _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
+
+- name: Read primary Data Guard prerequisites
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF
+    SELECT db_unique_name || '|' || log_mode || '|' || force_logging
+      FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_primary_facts
+  changed_when: false
+  failed_when: >-
+    _dg_primary_facts.rc != 0 or
+    '|' not in (_dg_primary_facts.stdout | default('')) or
+    'ORA-' in (_dg_primary_facts.stdout | default('')) or
+    'SP2-' in (_dg_primary_facts.stdout | default(''))
+
+- name: Record primary Data Guard fact fields
+  ansible.builtin.set_fact:
+    _dg_primary_fields: "{{ (_dg_primary_facts.stdout | trim).split('|') }}"
+    _dg_primary_unique_name: "{{ ((_dg_primary_facts.stdout | trim).split('|'))[0] }}"
+
+- name: Fail when primary is not in ARCHIVELOG mode
+  ansible.builtin.fail:
+    msg: "{{ inst.name }} must be in ARCHIVELOG mode before Data Guard preparation."
+  when: _dg_primary_fields[1] != "ARCHIVELOG"
+
+- name: Fail when primary is not FORCE LOGGING
+  ansible.builtin.fail:
+    msg: "{{ inst.name }} must have FORCE LOGGING enabled before Data Guard preparation."
+  when: _dg_primary_fields[2] != "YES"
+
+- name: Configure primary Data Guard initialization parameters
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET SERVEROUTPUT ON FEEDBACK OFF
+    DECLARE
+      PROCEDURE set_param(p_name VARCHAR2, p_value VARCHAR2) IS
+        v_current VARCHAR2(4000);
+      BEGIN
+        SELECT value INTO v_current FROM v$parameter WHERE name = lower(p_name);
+        IF NVL(v_current, ' ') != p_value THEN
+          EXECUTE IMMEDIATE 'ALTER SYSTEM SET ' || p_name || '=''' ||
+            REPLACE(p_value, '''', '''''') || ''' SCOPE=BOTH SID=''*''';
+          DBMS_OUTPUT.PUT_LINE('CHANGED ' || p_name);
+        ELSE
+          DBMS_OUTPUT.PUT_LINE('OK ' || p_name);
+        END IF;
+      END;
+      PROCEDURE set_bool_param(p_name VARCHAR2, p_value VARCHAR2) IS
+        v_current VARCHAR2(4000);
+      BEGIN
+        SELECT value INTO v_current FROM v$parameter WHERE name = lower(p_name);
+        IF UPPER(NVL(v_current, 'FALSE')) != UPPER(p_value) THEN
+          EXECUTE IMMEDIATE 'ALTER SYSTEM SET ' || p_name || '=' ||
+            UPPER(p_value) || ' SCOPE=BOTH SID=''*''';
+          DBMS_OUTPUT.PUT_LINE('CHANGED ' || p_name);
+        ELSE
+          DBMS_OUTPUT.PUT_LINE('OK ' || p_name);
+        END IF;
+      END;
+    BEGIN
+      set_param('standby_file_management', 'AUTO');
+      set_bool_param('dg_broker_start', 'TRUE');
+      set_param('log_archive_config',
+        'DG_CONFIG=({{ _dg_primary_unique_name }},{{ _dg_standby_unique_name }})');
+      set_param('fal_server', '{{ _dg_standby_unique_name }}_dgb');
+      set_param('fal_client', '{{ _dg_primary_unique_name }}_dgb');
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_params
+  changed_when: "'CHANGED ' in (_dg_params.stdout | default(''))"
+  failed_when: >-
+    _dg_params.rc != 0 or
+    'ORA-' in (_dg_params.stdout | default('')) or
+    'SP2-' in (_dg_params.stdout | default('')) or
+    'PLS-' in (_dg_params.stdout | default(''))
+
+- name: Ensure standby redo logs exist on the primary
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET SERVEROUTPUT ON FEEDBACK OFF
+    DECLARE
+      v_have NUMBER;
+      v_need NUMBER;
+      v_group NUMBER;
+      v_size_mb NUMBER;
+      v_path VARCHAR2(512);
+    BEGIN
+      SELECT COUNT(*) + 1 INTO v_need FROM v$log WHERE thread# = 1;
+      SELECT CEIL(MAX(bytes) / 1048576) INTO v_size_mb FROM v$log WHERE thread# = 1;
+      SELECT COUNT(*) INTO v_have FROM v$standby_log WHERE thread# = 1;
+      SELECT NVL(MAX(group#), 0) + 1 INTO v_group
+        FROM (
+          SELECT group# FROM v$log
+          UNION ALL
+          SELECT group# FROM v$standby_log
+        );
+
+      WHILE v_have < v_need LOOP
+        v_path := '{{ _dg_redo_dir }}/standby_redo_g' || v_group || '.log';
+        EXECUTE IMMEDIATE
+          'ALTER DATABASE ADD STANDBY LOGFILE THREAD 1 GROUP ' || v_group ||
+          ' (''' || v_path || ''') SIZE ' || v_size_mb || 'M';
+        DBMS_OUTPUT.PUT_LINE('ADDED standby redo group ' || v_group);
+        v_have := v_have + 1;
+        v_group := v_group + 1;
+      END LOOP;
+      DBMS_OUTPUT.PUT_LINE('STANDBY_REDO_COUNT=' || v_have);
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_redo
+  changed_when: "'ADDED standby redo group' in (_dg_standby_redo.stdout | default(''))"
+  failed_when: >-
+    _dg_standby_redo.rc != 0 or
+    'ORA-' in (_dg_standby_redo.stdout | default('')) or
+    'SP2-' in (_dg_standby_redo.stdout | default('')) or
+    'PLS-' in (_dg_standby_redo.stdout | default(''))

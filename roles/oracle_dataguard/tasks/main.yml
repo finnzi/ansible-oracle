@@ -1,9 +1,23 @@
 ---
 # tasks/main.yml for oracle_dataguard
 #
-# STUB (vertical slice). Gathers the live DG facts (so the test suite can
-# assert "skipped because DG not configured") and asserts the interface
-# contract, then fails loudly ONLY if a real DG action is requested.
+# Data Guard orchestration. The full physical-standby/broker path is still
+# scaffolded, but this role now includes a real primary preparation step used
+# before RMAN duplicate.
+
+- name: Resolve Data Guard instances
+  ansible.builtin.set_fact:
+    _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+
+- name: Prepare primary database for Data Guard
+  ansible.builtin.include_tasks: prepare-primary.yml
+  loop: "{{ _dg_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  when:
+    - oracle_dataguard_prepare_primary | bool
+    - "'primary' in group_names"
 
 - name: Read live DB facts (so we can report role/open-mode)
   oracle_db_facts:
@@ -15,17 +29,16 @@
     role: sysdg
   register: _dg_facts
   failed_when: false
-  vars:
-    _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
   when: _dg_instances | length > 0
 
 - name: Report DG readiness
   ansible.builtin.debug:
     msg: >-
-      Data Guard role scaffolded (slice). Live DB role:
+      Data Guard role partially implemented. Live DB role:
       {{ _dg_facts.facts.database_role | default('unknown') }}; open mode:
       {{ _dg_facts.facts.open_mode | default('unknown') }}. Set dg_enabled=true
-      and oracle_dataguard_enabled=true on the standby host to materialise it.
+      and oracle_dataguard_enabled=true after the primary/standby duplicate
+      path is implemented.
 
 - name: Set oracle_dataguard_configured fact
   ansible.builtin.set_fact:
@@ -36,8 +49,10 @@
   ansible.builtin.fail:
     msg: >-
       oracle_dataguard is scaffolded, not implemented, in this engagement.
-      To deliver DG, implement (per defaults/main.yml INTERFACE):
-      RMAN active duplicate to create the standby; DGMGRL CREATE CONFIGURATION
+      Primary preparation is implemented through
+      oracle_dataguard_prepare_primary=true. To deliver full DG, implement
+      (per defaults/main.yml INTERFACE): RMAN active duplicate to create the
+      standby; DGMGRL CREATE CONFIGURATION
       with primary + standby; DGMGRL EDIT CONFIGURATION SET PROTECTION MODE AS
       MAXAVAILABILITY when dg_protection_mode={{ dg_protection_mode }};
       EDIT DATABASE <sby> SET STATE='READ ONLY WITH APPLY';

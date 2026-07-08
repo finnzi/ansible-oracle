@@ -12,5 +12,5 @@ observer_client_home: /observer/app/oracle/client_home1
 
 # How the observer connects to the broker. TNS aliases to both sites are
 # materialised by oracle_observer (scaffolded).
-observer_dg_connect_identifier: super_pri_dgb
+observer_dg_connect_identifier: super_dgb
 observer_sysdg_user: dgmonitor

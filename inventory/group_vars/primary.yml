@@ -15,4 +15,4 @@ oracle_instance_overrides:
     listener_vip: "superdc1.domain.is"
     dg_role: primary
     # db_unique_name must differ between primary and standby in a DG config.
-    db_unique_name: super_pri
+    db_unique_name: super

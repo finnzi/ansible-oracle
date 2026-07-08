@@ -61,6 +61,9 @@ The supported lab path is now KVM/libvirt:
     and waiting for SQL readiness.
   - Oracle Restart/Grid install on `superdb2`, with the DB home present and no
     accidental standalone database created.
+  - Primary-side Data Guard preparation on `superdb1`: `dg_broker_start=TRUE`,
+    `standby_file_management=AUTO`, FAL/DG config parameters set, and standby
+    redo logs created under `/super/r01`.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - Primary/standby listener aliases `superdc1.domain.is` and

@@ -25,7 +25,7 @@ def test_overrides_are_dormant_for_standalone_instances():
     overrides = {
         "super": {
             "listener_vip": "superdc1.domain.is",
-            "db_unique_name": "super_pri",
+            "db_unique_name": "super",
         }
     }
 

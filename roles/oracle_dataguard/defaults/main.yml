@@ -37,8 +37,8 @@ dg_protection_mode: MAXIMUM AVAILABILITY
 dg_primary:
   host: superdc1.domain.is
   port: 1521
-  service: super_pri_dgb
-  db_unique_name: super_pri
+  service: super_dgb
+  db_unique_name: super
 dg_standby:
   host: superdc2.domain.is
   port: 1521
@@ -47,3 +47,8 @@ dg_standby:
 
 # Whether to actually run the (unimplemented) DG actions.
 oracle_dataguard_enabled: false
+
+# Incremental preparation that is safe before the standby exists. This enables
+# primary-side prerequisites needed by RMAN duplicate and broker setup without
+# creating or switching a standby.
+oracle_dataguard_prepare_primary: false

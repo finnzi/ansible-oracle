@@ -14,7 +14,7 @@
 #   observer_enabled:         bool
 #   observer_oracle_base:     /observer/app/oracle
 #   observer_client_home:     /observer/app/oracle/client_home1
-#   observer_dg_connect_identifier: super_pri_dgb
+#   observer_dg_connect_identifier: super_dgb
 #   observer_sysdg_user:      dgmonitor
 #   observer_sysdg_password:  (vaulted)
 
@@ -24,7 +24,7 @@ oracle_group: oinstall
 observer_enabled: false
 observer_oracle_base: /observer/app/oracle
 observer_client_home: /observer/app/oracle/client_home1
-observer_dg_connect_identifier: super_pri_dgb
+observer_dg_connect_identifier: super_dgb
 observer_sysdg_user: dgmonitor
 observer_sysdg_password: ""  # vault in real envs
 

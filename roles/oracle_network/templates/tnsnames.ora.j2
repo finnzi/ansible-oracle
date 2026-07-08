@@ -34,7 +34,7 @@
 # Data Guard broker connect identifiers. Each database host needs both site
 # aliases so DGMGRL can create, inspect, and switchover the configuration.
 {% set dg_domain = lab_domain | default('domain.is') %}
-{% set dg_primary_unique = inst.dg_primary_db_unique_name | default(inst.name ~ '_pri') %}
+{% set dg_primary_unique = inst.dg_primary_db_unique_name | default(inst.name) %}
 {% set dg_standby_unique = inst.dg_standby_db_unique_name | default(inst.name ~ '_sby') %}
 {% set dg_sites = [
   {'alias': dg_primary_unique ~ '_dgb', 'host': inst.name ~ 'dc1.' ~ dg_domain, 'service_name': dg_primary_unique ~ '_DGMGRL'},
