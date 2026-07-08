@@ -27,6 +27,7 @@ SYS_PASSWORD = _env("ORACLE_TEST_PASSWORD", "SysPassword1_")
 SSH_USER = _env("ORACLE_TEST_SSH_USER", "root")
 SSH_HOST = _env("ORACLE_TEST_SSH_HOST", "192.168.87.11")
 STANDBY_SSH_HOST = _env("ORACLE_TEST_STANDBY_SSH_HOST", "192.168.87.12")
+OBSERVER_SSH_HOST = _env("ORACLE_TEST_OBSERVER_SSH_HOST", "192.168.87.13")
 SSH_KEY = _env("ORACLE_TEST_SSH_KEY", os.path.expanduser("~/.ssh/lab_oracle"))
 
 
@@ -133,6 +134,19 @@ def standby_exec():
     if probe.returncode != 0:
         pytest.skip(
             f"SSH to {SSH_USER}@{STANDBY_SSH_HOST} failed; is the KVM lab up? "
+            f"{probe.stderr}"
+        )
+    return _run
+
+
+@pytest.fixture(scope="session")
+def observer_exec():
+    """Run a shell command on the observer lab VM over SSH."""
+    _run = _ssh_runner(OBSERVER_SSH_HOST, SSH_USER, SSH_KEY)
+    probe = _run("true")
+    if probe.returncode != 0:
+        pytest.skip(
+            f"SSH to {SSH_USER}@{OBSERVER_SSH_HOST} failed; is the KVM lab up? "
             f"{probe.stderr}"
         )
     return _run

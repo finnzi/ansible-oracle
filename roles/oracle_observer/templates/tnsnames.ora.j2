@@ -1,0 +1,20 @@
+# tnsnames.ora - observer-side Data Guard broker aliases.
+# Managed by ansible-oracle / oracle_observer.
+
+{{ observer_dg_connect_identifier }} =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_primary.host | default('superdc1.domain.is') }})(PORT = {{ dg_primary.port | default(1521) }}))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ dg_primary.db_unique_name | default('super') }}_DGMGRL)
+    )
+  )
+
+{{ observer_dg_standby_connect_identifier }} =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_standby.host | default('superdc2.domain.is') }})(PORT = {{ dg_standby.port | default(1521) }}))
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ dg_standby.db_unique_name | default('super_sby') }}_DGMGRL)
+    )
+  )

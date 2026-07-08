@@ -1,9 +1,12 @@
 ---
 # playbooks/06-observer.yml — FSFO observer on the third node.
-# SCAFFOLDED. Installs nothing yet; reports readiness.
+# Installs the observer-side Oracle Client and validates DGMGRL connectivity.
+# FSFO enable/start remains gated behind oracle_observer_enabled.
 
-- name: Configure FSFO observer — scaffolded
+- name: Configure FSFO observer client
   hosts: observer
   become: true
+  vars:
+    oracle_observer_install_client: true
   roles:
     - role: oracle_observer

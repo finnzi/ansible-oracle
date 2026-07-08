@@ -1,25 +1,257 @@
 ---
 # tasks/main.yml for oracle_observer
 #
-# STUB (vertical slice). Verifies the client zip is staged, then fails loudly
-# ONLY if explicitly enabled.
+# Installs the Oracle Client Administrator home on the third node and writes
+# the TNS aliases needed for Data Guard broker / future FSFO observer work.
+
+- name: Resolve observer install paths
+  ansible.builtin.set_fact:
+    _observer_client_zip: "{{ oracle_stage_dir | default('/u01/stage') }}/{{ oracle_install_files.client_zip | default('V982064-01-Oracle.19c.Database.Client.zip') }}"
+    _observer_stage_dir: "{{ observer_stage_dir }}"
+    _observer_client_image_dir: "{{ observer_stage_dir }}/client"
+    _observer_response_file: "{{ observer_stage_dir }}/client_install.rsp"
 
 - name: Verify the client installer zip is staged
   ansible.builtin.stat:
-    path: "{{ oracle_stage_dir | default('/u01/stage') }}/{{ oracle_install_files.client_zip | default('V982064-01-Oracle.19c.Database.Client.zip') }}"
+    path: "{{ _observer_client_zip }}"
   register: _client_zip
 
-- name: Report observer readiness
-  ansible.builtin.debug:
-    msg: >-
-      FSFO observer role scaffolded (slice). Client installer present:
-      {{ 'yes' if _client_zip.stat.exists else 'no' }}. To enable, install the
-      Oracle Client (Administrator) into {{ observer_client_home }}, materialise
-      TNS to both DG sites, then run
-      `dgmgrl -silent {{ observer_sysdg_user }}@{{ observer_dg_connect_identifier }}
-      "START OBSERVER IN BACKGROUND"` under a systemd unit.
+- name: Fail when observer client install is enabled but media is missing
+  ansible.builtin.fail:
+    msg: "Oracle Client installer missing: {{ _observer_client_zip }}"
+  when:
+    - oracle_observer_install_client | bool
+    - not _client_zip.stat.exists
 
-- name: Set oracle_observer_running fact (probe for an observer process)
+- name: Check observer client install marker
+  ansible.builtin.stat:
+    path: "{{ observer_client_home }}/.install_complete"
+  register: _observer_client_marker
+
+- name: Check observer client DGMGRL binary
+  ansible.builtin.stat:
+    path: "{{ observer_client_home }}/bin/dgmgrl"
+  register: _observer_dgmgrl
+
+- name: Check observer client home path
+  ansible.builtin.stat:
+    path: "{{ observer_client_home }}"
+  register: _observer_client_home_path
+
+- name: Remove incomplete observer client home left by a failed installer run
+  ansible.builtin.file:
+    path: "{{ observer_client_home }}"
+    state: absent
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_recreate_incomplete_home | bool
+    - not _observer_client_marker.stat.exists
+    - _observer_client_home_path.stat.exists
+    - not _observer_dgmgrl.stat.exists
+
+- name: Ensure observer directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop:
+    - "{{ observer_oracle_base }}"
+    - "{{ observer_client_home }}"
+    - "{{ _observer_stage_dir }}"
+    - "{{ observer_config_dir }}"
+    - "{{ oracle_inventory_loc }}"
+  when: oracle_observer_install_client | bool
+
+- name: Check OL9 nonshared pthread archive compatibility path
+  ansible.builtin.stat:
+    path: /usr/lib64/libpthread_nonshared.a
+  register: _observer_libpthread_nonshared
+  when: oracle_observer_install_client | bool
+
+- name: Check OL9 libc nonshared archive
+  ansible.builtin.stat:
+    path: /usr/lib64/libc_nonshared.a
+  register: _observer_libc_nonshared
+  when: oracle_observer_install_client | bool
+
+- name: Link OL9 libc nonshared archive for Oracle 19.3 client linker
+  ansible.builtin.file:
+    src: /usr/lib64/libc_nonshared.a
+    dest: /usr/lib64/libpthread_nonshared.a
+    state: link
+    owner: root
+    group: root
+  when:
+    - oracle_observer_install_client | bool
+    - observer_create_ol9_linker_compat_symlink | bool
+    - ansible_os_family == "RedHat"
+    - ansible_distribution_major_version in ["9", "10"]
+    - not _observer_libpthread_nonshared.stat.exists
+    - _observer_libc_nonshared.stat.exists
+
+- name: Unpack Oracle Client installer image
+  ansible.builtin.unarchive:
+    src: "{{ _observer_client_zip }}"
+    dest: "{{ _observer_stage_dir }}"
+    remote_src: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    creates: "{{ _observer_client_image_dir }}/runInstaller"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when:
+    - oracle_observer_install_client | bool
+    - not _observer_client_marker.stat.exists
+    - not _observer_dgmgrl.stat.exists
+
+- name: Write observer client silent response file
+  ansible.builtin.template:
+    src: client_install.rsp.j2
+    dest: "{{ _observer_response_file }}"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when:
+    - oracle_observer_install_client | bool
+    - not _observer_client_marker.stat.exists
+
+- name: Write oraInst.loc pointer for observer client installer
+  ansible.builtin.copy:
+    dest: /etc/oraInst.loc
+    content: |
+      inventory_loc={{ oracle_inventory_loc }}
+      inst_group={{ oracle_inst_group | default(oracle_group) }}
+    owner: root
+    group: root
+    mode: "0644"
+  when:
+    - oracle_observer_install_client | bool
+    - not _observer_client_marker.stat.exists
+
+- name: Run Oracle Client installer for observer
+  ansible.builtin.shell: |
+    set -o pipefail
+    cd {{ _observer_client_image_dir | quote }}
+    ./runInstaller -silent -force -waitforcompletion \
+      -ignorePrereqFailure -ignoreInternalDriverError \
+      -responseFile {{ _observer_response_file | quote }}
+  args: { executable: /bin/bash }
+  environment:
+    CV_ASSUME_DISTID: OL7
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _observer_client_install
+  changed_when: >-
+    _observer_client_install.rc == 0 or
+    'Successfully Setup Software' in (_observer_client_install.stdout | default(''))
+  failed_when: >-
+    _observer_client_install.rc != 0 and
+    'Successfully Setup Software' not in (_observer_client_install.stdout | default(''))
+  when:
+    - oracle_observer_install_client | bool
+    - not _observer_client_marker.stat.exists
+    - not _observer_dgmgrl.stat.exists
+
+- name: Run observer client root scripts
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [ -x {{ oracle_inventory_loc }}/orainstRoot.sh ]; then
+      {{ oracle_inventory_loc }}/orainstRoot.sh
+    fi
+    if [ -x {{ observer_client_home }}/root.sh ]; then
+      {{ observer_client_home }}/root.sh -silent
+    fi
+  args: { executable: /bin/bash }
+  changed_when: true
+  when:
+    - oracle_observer_install_client | bool
+    - not _observer_client_marker.stat.exists
+    - _observer_client_install is changed
+
+- name: Drop observer client install marker
+  ansible.builtin.file:
+    path: "{{ observer_client_home }}/.install_complete"
+    state: touch
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when:
+    - oracle_observer_install_client | bool
+    - not _observer_client_marker.stat.exists
+    - _observer_dgmgrl.stat.exists or (_observer_client_install is changed)
+
+- name: Ensure observer can resolve lab Data Guard host aliases
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE-ORACLE DATAGUARD HOSTS"
+    block: |
+      {% for host in oracle_lab_guest_hosts | default([]) %}
+      {% if 'dataguard' in (host.modes | default([])) %}
+      {{ host.ip }} {{ host.names }}
+      {% endif %}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  when: oracle_observer_install_client | bool
+
+- name: Write observer tnsnames.ora for Data Guard broker aliases
+  ansible.builtin.template:
+    src: tnsnames.ora.j2
+    dest: "{{ observer_config_dir }}/tnsnames.ora"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when: oracle_observer_install_client | bool
+
+- name: Write observer sqlnet.ora defaults
+  ansible.builtin.copy:
+    dest: "{{ observer_config_dir }}/sqlnet.ora"
+    content: |
+      # Managed by ansible-oracle / oracle_observer
+      NAMES.DIRECTORY_PATH = (TNSNAMES, EZCONNECT)
+      SQLNET.AUTHENTICATION_SERVICES = (NONE)
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when: oracle_observer_install_client | bool
+
+- name: Validate observer DGMGRL can inspect Data Guard broker
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ observer_client_home }}
+    export TNS_ADMIN={{ observer_config_dir }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ observer_dg_connect_identifier }}" <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _observer_dgmgrl_show
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: >-
+    _observer_dgmgrl_show.rc == 0 and
+    'Configuration -' in (_observer_dgmgrl_show.stdout | default('')) and
+    'Protection Mode: MaxAvailability' in (_observer_dgmgrl_show.stdout | default('')) and
+    'SUCCESS' in (_observer_dgmgrl_show.stdout | default('')) and
+    'ORA-' not in (_observer_dgmgrl_show.stdout | default('')) and
+    'Error:' not in (_observer_dgmgrl_show.stdout | default(''))
+  failed_when: >-
+    _observer_dgmgrl_show.rc != 0 or
+    'Configuration -' not in (_observer_dgmgrl_show.stdout | default('')) or
+    'Protection Mode: MaxAvailability' not in (_observer_dgmgrl_show.stdout | default('')) or
+    'SUCCESS' not in (_observer_dgmgrl_show.stdout | default('')) or
+    'ORA-' in (_observer_dgmgrl_show.stdout | default('')) or
+    'Error:' in (_observer_dgmgrl_show.stdout | default(''))
+  no_log: true
+  when: oracle_observer_install_client | bool
+
+- name: Probe observer process
   ansible.builtin.shell: |
     set -o pipefail
     pgrep -fa 'dmobserver|Data Guard Broker Observer' 2>/dev/null || echo not_running
@@ -30,12 +262,15 @@
 
 - name: Record observer status
   ansible.builtin.set_fact:
+    oracle_observer_client_installed: "{{ _observer_dgmgrl.stat.exists or (_observer_client_install is defined and _observer_client_install is changed) }}"
     oracle_observer_running: "{{ 'not_running' not in (_obs_proc.stdout | default('')) }}"
 
-- name: Not implemented — fail only if explicitly enabled
+- name: Not implemented - fail only if FSFO observer lifecycle is explicitly enabled
   ansible.builtin.fail:
     msg: >-
-      oracle_observer is scaffolded, not implemented, in this engagement.
-      Implement per defaults/main.yml INTERFACE, then set
-      oracle_observer_enabled: true.
+      oracle_observer_enabled=true is reserved for the full FSFO lifecycle.
+      The observer client home and broker connectivity are implemented. Keep
+      oracle_observer_enabled=false until dedicated SYSDG user management,
+      ENABLE FAST_START FAILOVER, and systemd observer process ownership are
+      implemented.
   when: oracle_observer_enabled | bool

@@ -51,7 +51,7 @@ The supported lab path is now KVM/libvirt:
 - Live KVM lab boot and standalone database slice on this host:
   - `superdb1` primary/standalone DB host.
   - `superdb2` prepared DB host for the future standby.
-  - `observer` VM reserved for FSFO observer work.
+  - `observer` VM used as the FSFO observer candidate.
   - DB home install with OPatch/RU handling.
   - DBCA-created `super` database under `/super`.
   - Listener and `super_svc` client service reachable from the control host.
@@ -76,6 +76,9 @@ The supported lab path is now KVM/libvirt:
   - Manual broker switchover has been verified in both directions:
     `super` -> `super_sby` -> `super`, with the resulting standby reopened
     `READ ONLY WITH APPLY`.
+  - Observer-node Oracle Client Administrator home and broker TNS aliases are
+    managed by `oracle_observer`; DGMGRL `SHOW CONFIGURATION` is verified from
+    the third KVM VM.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
@@ -91,7 +94,7 @@ The supported lab path is now KVM/libvirt:
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
-- Data Guard FSFO.
+- Data Guard FSFO enable/start lifecycle and observer systemd ownership.
 - Actual patch apply and dual-home switch.
 
 ## Host Findings From This Run

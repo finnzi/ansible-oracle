@@ -1,0 +1,11 @@
+{# client_install.rsp.j2 - silent response for Oracle 19c Client. #}
+{# Managed by ansible-oracle / oracle_observer. #}
+oracle.install.responseFileVersion=/oracle/install/rspfmt_clientinstall_response_schema_v19.0.0
+UNIX_GROUP_NAME={{ oracle_group }}
+INVENTORY_LOCATION={{ oracle_inventory_loc }}
+ORACLE_HOME={{ observer_client_home }}
+ORACLE_BASE={{ observer_oracle_base }}
+oracle.install.client.installType={{ observer_install_type }}
+oracle.install.client.customComponents=
+oracle.install.client.schedulerAgentHostName=
+oracle.install.client.schedulerAgentPortNumber=

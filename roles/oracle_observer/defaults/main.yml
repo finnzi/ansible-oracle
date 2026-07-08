@@ -1,14 +1,9 @@
 ---
 # defaults/main.yml for oracle_observer
 #
-# SCOPE: stubbed in the vertical slice. Deliver, in a future engagement:
-#   1. Silent install of the Oracle Client (Administrator) into
-#      observer_oracle_base/.../client_homeN from the V982064 client zip.
-#   2. Materialise TNS aliases to BOTH primary and standby (the observer
-#      must reach both — the FSFO design hinges on it).
-#   3. Create a dedicated SYSDG user (observer_sysdg_user) on each DB.
-#   4. `dgmgrl -silent sysdg@<cfg> "START OBSERVER IN BACKGROUND;"` wrapped
-#      in a systemd unit (oracle-fsfo-observer.service) that auto-restarts.
+# SCOPE: installs the observer-side Oracle Client home and broker network
+# configuration. FSFO enable/start is still explicitly gated until the role also
+# owns the dedicated SYSDG user and observer lifecycle.
 #
 # INTERFACE (consumed by playbooks/06-observer.yml):
 #   observer_enabled:         bool
@@ -20,13 +15,28 @@
 
 oracle_user: oracle
 oracle_group: oinstall
+oracle_inventory_loc: /opt/oracle/oraInventory
+oracle_inst_group: oinstall
 
 observer_enabled: false
 observer_oracle_base: /observer/app/oracle
 observer_client_home: /observer/app/oracle/client_home1
 observer_dg_connect_identifier: super_dgb
+observer_dg_standby_connect_identifier: super_sby_dgb
 observer_sysdg_user: dgmonitor
 observer_sysdg_password: ""  # vault in real envs
+observer_install_type: Administrator
+observer_config_dir: "{{ observer_client_home }}/network/admin"
+observer_stage_dir: "{{ observer_oracle_base }}/.stage_client_home1"
 
-# Actually run the (unimplemented) install/start.
+# Install the Oracle Client home and write observer-side network config.
+oracle_observer_install_client: false
+oracle_observer_recreate_incomplete_home: true
+# Oracle 19.3's client linker still asks for libpthread_nonshared.a on modern
+# Oracle Linux, while OL9 provides the needed nonshared objects through
+# libc_nonshared.a. Keep this explicit and overridable because it mutates
+# /usr/lib64 on the observer node.
+observer_create_ol9_linker_compat_symlink: true
+
+# Reserved for the next slice: enable FSFO and manage the observer process.
 oracle_observer_enabled: false

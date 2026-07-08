@@ -1,10 +1,11 @@
 ---
 galaxy_info:
   author: ansible-oracle
-  description: FSFO observer node (client install + dgmgrl START OBSERVER) — scaffolded stub
+  description: FSFO observer node Oracle Client and broker connectivity
   license: MIT
   min_ansible_version: "2.16"
   platforms:
     - name: EL
       versions: ["9"]
-dependencies: []
+dependencies:
+  - role: oracle_common
