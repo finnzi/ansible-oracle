@@ -42,13 +42,30 @@ The supported lab path is now KVM/libvirt:
   network/listener, DB create/manage, Restart, Data Guard, observer, service,
   and patching.
 - Standby-first patch parser and its unit tests.
+- Live KVM lab boot and standalone database slice on this host:
+  - `superdb1` primary/standalone DB host.
+  - `superdb2` prepared DB host for the future standby.
+  - `observer` VM reserved for FSFO observer work.
+  - DB home install with OPatch/RU handling.
+  - DBCA-created `super` database under `/super`.
+  - Listener and `super_svc` client service reachable from the control host.
+  - ARCHIVELOG and FORCE LOGGING enabled.
+- Data Guard preparation:
+  - Primary/standby listener aliases `superdc1.domain.is` and
+    `superdc2.domain.is` are represented in lab host maps.
+  - Per-host instance overrides are wired but remain dormant until
+    `dataguard: true`, preserving standalone behavior.
+  - Static `_DGMGRL` listener service and broker TNS alias rendering are ready
+    for the physical standby/broker slice.
 
 ## Not Yet Proven End To End
 
-- A live KVM lab boot on this host.
-- Full `playbooks/site.yml` convergence on the VMs.
-- Oracle binary install, DBCA instance creation, listener/service checks,
-  Restart registration, Data Guard, observer, and patch apply.
+- Full `playbooks/site.yml` including scaffolded Grid/Data Guard/observer/patch
+  stages.
+- Oracle Restart/Grid installation and crash-restart ownership.
+- Physical standby creation, Data Guard broker configuration, MAXIMUM
+  AVAILABILITY enforcement, read-only apply, switchover, and FSFO.
+- Actual patch apply and dual-home switch.
 
 ## Host Findings From This Run
 

@@ -14,12 +14,12 @@
   ansible.builtin.set_fact:
     _net_instances: >-
       {%- set out = [] -%}
-      {%- for inst in (oracle_instances | default([])) -%}
+      {%- for inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}))) -%}
         {%- if 'standby' not in group_names or (inst.dataguard | default(false) | bool) -%}
           {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
           {%- set _ = out.append(inst | combine({
             '_home': current_home.suffix,
-            '_net':  (inst.listener_vip | default(inst.name ~ 'db.' ~ 'domain.is')),
+            '_net':  (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))),
             '_port': (inst.listener_port | default(1521))})) -%}
         {%- endif -%}
       {%- endfor -%}

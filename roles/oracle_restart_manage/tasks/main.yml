@@ -45,7 +45,7 @@
 # ── Register each instance + its listener with Restart ─────────────────
 - name: Register instance, listener, and start them under Restart
   ansible.builtin.include_tasks: register-instance.yml
-  loop: "{{ oracle_instances | default([]) }}"
+  loop: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"

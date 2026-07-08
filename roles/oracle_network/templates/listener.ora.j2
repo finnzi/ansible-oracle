@@ -16,6 +16,13 @@ SID_LIST_LISTENER_{{ inst.name | upper }} =
       (ORACLE_HOME = {{ inst.oracle_base }}/{{ inst._home }})
       (SID_NAME = {{ inst.name }})
     )
+{% if inst.dataguard | default(false) | bool %}
+    (SID_DESC =
+      (GLOBAL_DBNAME = {{ inst.db_unique_name | default(inst.name) }}_DGMGRL)
+      (ORACLE_HOME = {{ inst.oracle_base }}/{{ inst._home }})
+      (SID_NAME = {{ inst.name }})
+    )
+{% endif %}
   )
 
 # Administrative connection helper

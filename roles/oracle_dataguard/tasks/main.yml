@@ -7,15 +7,17 @@
 
 - name: Read live DB facts (so we can report role/open-mode)
   oracle_db_facts:
-    service_name: "{{ (oracle_instances | first).service_name | default((oracle_instances | first).name) }}"
-    host: "{{ (oracle_instances | first).listener_vip | default('superdb.domain.is') }}"
-    port: "{{ (oracle_instances | first).listener_port | default(1521) }}"
+    service_name: "{{ (_dg_instances | first).service_name | default((_dg_instances | first).name) }}"
+    host: "{{ (_dg_instances | first).listener_vip | default('superdb.domain.is') }}"
+    port: "{{ (_dg_instances | first).listener_port | default(1521) }}"
     username: system
     password: "{{ oracle_lab_system_password | default('SysPassword1_') }}"
     role: sysdg
   register: _dg_facts
   failed_when: false
-  when: oracle_instances | length > 0
+  vars:
+    _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+  when: _dg_instances | length > 0
 
 - name: Report DG readiness
   ansible.builtin.debug:
@@ -28,7 +30,7 @@
 - name: Set oracle_dataguard_configured fact
   ansible.builtin.set_fact:
     oracle_dataguard_configured: "{{ _dg_facts.facts.database_role | default('PRIMARY') in ['PHYSICAL STANDBY', 'LOGICAL STANDBY', 'SNAPSHOT STANDBY'] }}"
-  when: oracle_instances | length > 0
+  when: _dg_facts is defined
 
 - name: Not implemented — fail only if DG is explicitly requested
   ansible.builtin.fail:

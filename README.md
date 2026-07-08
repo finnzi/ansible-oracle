@@ -18,8 +18,11 @@ Implemented:
 
 - OS prep roles for Oracle users, groups, limits, sysctl, sudoers, and the
   per-instance filesystem layout.
-- DB home install, instance, listener, Restart registration, service, Data
-  Guard, observer, and patching role interfaces.
+- DB home install, standalone instance creation, listener, and `super_svc`
+  service verified in the KVM lab.
+- Restart registration, Data Guard, observer, and patching role interfaces.
+- Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
+  listener services, and broker TNS aliases.
 - Standby-first patch eligibility parser with unit coverage.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
@@ -111,7 +114,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Patch DB homes and Grid homes | `oracle_patch` |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
-| Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG/observer roles |
+| Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |
 | Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
 | Multiple instances per host | `oracle_instances` list |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
