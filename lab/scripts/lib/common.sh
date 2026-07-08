@@ -52,6 +52,15 @@ check_cmd() {
   command -v "$1" >/dev/null 2>&1
 }
 
+group_list_has() {
+  local wanted="$1" group
+  shift
+  for group in "$@"; do
+    [ "${group}" = "${wanted}" ] && return 0
+  done
+  return 1
+}
+
 virsh_cmd() {
   virsh --connect "${VIRSH_URI}" "$@"
 }
@@ -328,6 +337,37 @@ lab_preflight_commands() {
   return "${missing}"
 }
 
+lab_preflight_libvirt_groups() {
+  local active_groups rc=0
+
+  [ "${VIRSH_URI}" = "qemu:///system" ] || return 0
+  [ "$(id -u)" -ne 0 ] || return 0
+
+  read -r -a active_groups <<< "${LAB_ACTIVE_GROUPS:-$(id -nG 2>/dev/null || true)}"
+
+  if group_list_has libvirt "${active_groups[@]}"; then
+    log "active group present: libvirt"
+  else
+    warn "current shell is not in the active libvirt group."
+    warn "Run: sudo usermod -aG libvirt,kvm \$USER"
+    warn "Then log out and back in before running lab-up.sh."
+    rc=1
+  fi
+
+  if group_list_has kvm "${active_groups[@]}"; then
+    log "active group present: kvm"
+  else
+    warn "current shell is not in the active kvm group."
+    warn "Add it with libvirt if direct KVM access is needed: sudo usermod -aG libvirt,kvm \$USER"
+    rc=1
+  fi
+
+  if [ "${rc}" -ne 0 ]; then
+    warn "Group membership is advisory; the libvirt connection check below is authoritative."
+  fi
+  return 0
+}
+
 lab_preflight_libvirt() {
   if timeout 8 virsh --connect "${VIRSH_URI}" list --all >/dev/null 2>&1; then
     log "libvirt reachable: ${VIRSH_URI}"
@@ -416,6 +456,7 @@ lab_preflight_all() {
   local rc=0
   lab_preflight_commands || rc=1
   lab_preflight_session_network_note
+  lab_preflight_libvirt_groups
   lab_preflight_libvirt || rc=1
   lab_preflight_ssh_key || rc=1
   lab_preflight_sources || rc=1

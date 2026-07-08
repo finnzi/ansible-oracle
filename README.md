@@ -51,15 +51,19 @@ source .venv/bin/activate
 # Optional: pin a known Oracle Linux KVM qcow2 image URL.
 # export ORACLE_LINUX_IMAGE_URL=https://yum.oracle.com/templates/OracleLinux/...
 
+# On Fedora, this installs/starts libvirt and stages Oracle media for system QEMU.
+# If it adds your user to libvirt/kvm groups, log out and back in before continuing.
+./lab/scripts/prepare-host-fedora.sh
+
+# Manual equivalent for the group step:
+# sudo usermod -aG libvirt,kvm "$USER"
+# Then log out and back in before continuing.
+
 # Check host prerequisites before creating any lab state.
 ./lab/scripts/preflight.sh
 
 # Optional: render and validate libvirt XML/cloud-init artifacts offline.
 ./lab/scripts/render-config.sh --validate
-
-# On Fedora, this installs/starts libvirt and stages Oracle media for system QEMU.
-# If it adds your user to libvirt/kvm groups, log out and back in before continuing.
-./lab/scripts/prepare-host-fedora.sh
 
 # Bring up the KVM lab. This creates inventory/hosts.yml and updates /etc/hosts
 # if the current user can write it directly or via passwordless sudo.

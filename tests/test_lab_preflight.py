@@ -116,6 +116,49 @@ def test_allow_missing_media_keeps_os_only_lab_possible(tmp_path: Path):
     assert "LAB_ALLOW_MISSING_MEDIA=1" in result.stderr
 
 
+def test_preflight_libvirt_groups_passes_with_active_libvirt_group():
+    result = run_common(
+        "lab_preflight_libvirt_groups",
+        {
+            "LAB_ACTIVE_GROUPS": "finnur libvirt kvm",
+            "VIRSH_URI": "qemu:///system",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "active group present: libvirt" in result.stderr
+
+
+def test_preflight_libvirt_groups_warns_without_active_libvirt_group():
+    result = run_common(
+        "lab_preflight_libvirt_groups",
+        {
+            "LAB_ACTIVE_GROUPS": "finnur kvm",
+            "VIRSH_URI": "qemu:///system",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "current shell is not in the active libvirt group" in result.stderr
+    assert "sudo usermod -aG libvirt,kvm $USER" in result.stderr
+    assert "Group membership is advisory" in result.stderr
+
+
+def test_preflight_libvirt_groups_warns_without_active_kvm_group():
+    result = run_common(
+        "lab_preflight_libvirt_groups",
+        {
+            "LAB_ACTIVE_GROUPS": "finnur libvirt",
+            "VIRSH_URI": "qemu:///system",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "active group present: libvirt" in result.stderr
+    assert "current shell is not in the active kvm group" in result.stderr
+    assert "Group membership is advisory" in result.stderr
+
+
 def test_prepare_host_fedora_help_is_safe():
     result = run_lab_script("prepare-host-fedora.sh", "--help")
 

@@ -36,8 +36,15 @@ the relevant groups, and then logging out/in:
 ./lab/scripts/prepare-host-fedora.sh
 ```
 
+The manual equivalent for the group step is:
+
+```bash
+sudo usermod -aG libvirt,kvm "$USER"
+```
+
 If the script changes your group membership, log out and back in before running
-`lab-up.sh`.
+`lab-up.sh`. `id` must show `libvirt` in the current shell before
+`qemu:///system` is likely to work without sudo on the default Fedora setup.
 
 `qemu:///session` is not the default because session libvirt cannot create the
 bridged/NAT lab network on this host without elevated privileges. The lab needs
@@ -106,6 +113,9 @@ If your libvirt setup grants QEMU access another way, set
 ```bash
 # Create the SSH key used by cloud-init for root login.
 ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
+
+# Fedora host setup, including libvirt/kvm groups and media staging.
+./lab/scripts/prepare-host-fedora.sh
 
 # Check host prerequisites without creating networks, disks, or VMs.
 ./lab/scripts/preflight.sh
