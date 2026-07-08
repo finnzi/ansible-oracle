@@ -48,6 +48,10 @@ require_cmd() {
   command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
 }
 
+check_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
 virsh_cmd() {
   virsh --connect "${VIRSH_URI}" "$@"
 }
@@ -135,6 +139,94 @@ path_world_accessible_for_9p() {
       return 1
     fi
   done
+}
+
+lab_required_commands() {
+  printf '%s\n' virsh qemu-img genisoimage timeout ssh curl
+}
+
+lab_preflight_commands() {
+  local missing=0 cmd
+  while read -r cmd; do
+    if check_cmd "${cmd}"; then
+      log "found command: ${cmd}"
+    else
+      warn "missing command: ${cmd}"
+      missing=1
+    fi
+  done < <(lab_required_commands)
+  return "${missing}"
+}
+
+lab_preflight_libvirt() {
+  if timeout 8 virsh --connect "${VIRSH_URI}" list --all >/dev/null 2>&1; then
+    log "libvirt reachable: ${VIRSH_URI}"
+    return 0
+  fi
+
+  warn "cannot access libvirt at ${VIRSH_URI}"
+  warn "Fedora setup usually needs:"
+  warn "  sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage"
+  warn "  sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket"
+  warn "  sudo usermod -aG libvirt,kvm \$USER"
+  warn "Then log out and back in so group membership applies."
+  return 1
+}
+
+lab_preflight_session_network_note() {
+  if [ "${VIRSH_URI}" = "qemu:///session" ]; then
+    warn "VIRSH_URI=qemu:///session is not recommended for this lab."
+    warn "The lab needs a NAT/bridge network with fixed DHCP leases; session libvirt often cannot create that network."
+  fi
+}
+
+lab_preflight_ssh_key() {
+  if [ -f "$(ssh_pubkey_file)" ]; then
+    log "SSH public key present: $(ssh_pubkey_file)"
+    return 0
+  fi
+
+  warn "SSH public key missing: $(ssh_pubkey_file)"
+  warn "Create it with: ssh-keygen -t ed25519 -f $(ssh_key_file) -N ''"
+  return 1
+}
+
+lab_preflight_sources() {
+  if [ ! -d "${SOURCES_DIR}" ]; then
+    warn "SOURCES_DIR not found: ${SOURCES_DIR}"
+    warn "Oracle installs will fail until the media from ~/sources/oracle is staged or SOURCES_DIR is overridden."
+    return 0
+  fi
+
+  log "Oracle media directory present: ${SOURCES_DIR}"
+  if [ "${VIRSH_URI}" = "qemu:///system" ] \
+      && [ "${LAB_SKIP_SOURCE_ACCESS_CHECK:-0}" != "1" ] \
+      && ! path_world_accessible_for_9p "${SOURCES_DIR}"; then
+    warn "SOURCES_DIR is not traversable/readable by an unprivileged system QEMU process: ${SOURCES_DIR}"
+    warn "Move or bind-mount the media to a libvirt-readable path, for example:"
+    warn "  sudo mkdir -p /var/lib/libvirt/ansible-oracle-sources"
+    warn "  sudo rsync -a --info=progress2 ${SOURCES_DIR}/ /var/lib/libvirt/ansible-oracle-sources/"
+    warn "  sudo chmod -R a+rX /var/lib/libvirt/ansible-oracle-sources"
+    warn "  SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources ./lab/scripts/lab-up.sh"
+    warn "Set LAB_SKIP_SOURCE_ACCESS_CHECK=1 only if your libvirt setup grants QEMU access another way."
+    return 1
+  fi
+
+  return 0
+}
+
+lab_preflight_all() {
+  local rc=0
+  lab_preflight_commands || rc=1
+  lab_preflight_session_network_note
+  lab_preflight_libvirt || rc=1
+  lab_preflight_ssh_key || rc=1
+  lab_preflight_sources || rc=1
+  return "${rc}"
+}
+
+lab_require_preflight() {
+  lab_preflight_all || die "KVM lab preflight failed. Run ./lab/scripts/preflight.sh for details."
 }
 
 discover_oracle_linux_image_url() {

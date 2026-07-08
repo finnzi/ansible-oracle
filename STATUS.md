@@ -26,6 +26,7 @@ The supported lab path is now KVM/libvirt:
 ## Implemented Pieces
 
 - KVM lab scripts:
+  - `lab/scripts/preflight.sh`
   - `lab/scripts/fetch-base-image.sh`
   - `lab/scripts/lab-up.sh`
   - `lab/scripts/lab-down.sh`

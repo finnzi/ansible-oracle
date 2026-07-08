@@ -51,6 +51,9 @@ source .venv/bin/activate
 # Optional: pin a known Oracle Linux KVM qcow2 image URL.
 # export ORACLE_LINUX_IMAGE_URL=https://yum.oracle.com/templates/OracleLinux/...
 
+# Check host prerequisites before creating any lab state.
+./lab/scripts/preflight.sh
+
 # Bring up the KVM lab. This creates inventory/hosts.yml and updates /etc/hosts
 # if the current user can write it directly or via passwordless sudo.
 ./lab/scripts/lab-up.sh

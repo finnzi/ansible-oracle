@@ -11,14 +11,7 @@
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 
-require_cmd virsh
-require_cmd qemu-img
-require_cmd genisoimage
-require_cmd timeout
-
-if ! timeout 8 virsh --connect "${VIRSH_URI}" list --all >/dev/null 2>&1; then
-  die "Cannot access libvirt at ${VIRSH_URI}. For Fedora, install/start libvirt and run this from a user allowed to manage system VMs, for example: sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage; sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket; sudo usermod -aG libvirt,kvm \$USER; then log out/in. You can also set VIRSH_URI if you use a different libvirt connection."
-fi
+lab_require_preflight
 
 mkdir -p "${IMAGE_DIR}" "${VM_DIR}" "${SEED_DIR}" "${EMPTY_STAGE_DIR}" "${DOWNLOAD_DIR}"
 touch "${DOWNLOAD_DIR}/.gitkeep"
@@ -35,11 +28,6 @@ if [ ! -d "${SOURCES_DIR}" ]; then
 else
   STAGE_MOUNT_SOURCE="${SOURCES_DIR}"
   log "Installer sources: ${SOURCES_DIR} (mounted read-only at /u01/stage)"
-  if [ "${VIRSH_URI}" = "qemu:///system" ] \
-      && [ "${LAB_SKIP_SOURCE_ACCESS_CHECK:-0}" != "1" ] \
-      && ! path_world_accessible_for_9p "${SOURCES_DIR}"; then
-    die "SOURCES_DIR=${SOURCES_DIR} is not traversable/readable by an unprivileged system QEMU process. Move or bind-mount the Oracle media to a libvirt-readable path such as /var/lib/libvirt/ansible-oracle-sources, set SOURCES_DIR to that path, or set LAB_SKIP_SOURCE_ACCESS_CHECK=1 if your libvirt QEMU process can read it through another mechanism."
-  fi
 fi
 
 if [ ! -f "${BASE_IMAGE}" ]; then

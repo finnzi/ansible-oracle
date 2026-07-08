@@ -95,6 +95,9 @@ If your libvirt setup grants QEMU access another way, set
 # Create the SSH key used by cloud-init for root login.
 ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 
+# Check host prerequisites without creating networks, disks, or VMs.
+./lab/scripts/preflight.sh
+
 # Bring up or start the lab.
 ./lab/scripts/lab-up.sh
 
@@ -112,6 +115,9 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 `inventory/hosts.example.yml` and writes a marked `/etc/hosts` block if direct
 write access or passwordless sudo is available. If not, it prints the block to
 add manually.
+
+`lab-up.sh` runs the same preflight checks first. Use `preflight.sh` directly
+when preparing a host or debugging permissions.
 
 ## Notes
 
