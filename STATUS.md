@@ -73,6 +73,9 @@ The supported lab path is now KVM/libvirt:
     under `/super/r01`.
   - Data Guard broker configuration `dg_super`, with protection mode and level
     at `MAXIMUM AVAILABILITY` and the standby open `READ ONLY WITH APPLY`.
+  - Manual broker switchover has been verified in both directions:
+    `super` -> `super_sby` -> `super`, with the resulting standby reopened
+    `READ ONLY WITH APPLY`.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
@@ -88,7 +91,7 @@ The supported lab path is now KVM/libvirt:
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
-- Data Guard switchover and FSFO.
+- Data Guard FSFO.
 - Actual patch apply and dual-home switch.
 
 ## Host Findings From This Run

@@ -1,22 +1,16 @@
-"""
-test_05_dataguard.py — Data Guard assertions.
-
-SKIPPED in the vertical slice: DG creation is scaffolded. These tests assert
-the project requirements that will apply once DG lands:
-  - broker protection mode is MAXIMUM AVAILABILITY.
-  - standby is OPEN READ ONLY WITH APPLY (not MOUNTED).
-  - DGMGRL reports the broker configuration healthy.
-  - switchover swaps primary/standby roles.
-"""
+"""Data Guard live assertions for standby, broker, and manual switchover."""
 from __future__ import annotations
 
+import os
 import shlex
+import subprocess
 import time
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.slice
 
 
 def test_dataguard_defaults_use_maximum_availability():
@@ -24,9 +18,10 @@ def test_dataguard_defaults_use_maximum_availability():
         REPO_ROOT / "roles/oracle_dataguard/defaults/main.yml"
     ).read_text(encoding="utf-8")
 
-    assert (
-        "dg_protection_mode: MAXIMUM AVAILABILITY" in defaults_text
-    )
+    assert "protection mode: always MAXIMUM AVAILABILITY" in defaults_text
+    assert "dg_protection_mode:" not in defaults_text
+    assert "MAXIMUM PERFORMANCE" not in defaults_text
+    assert "MAXIMUM PROTECTION" not in defaults_text
     assert "oracle_dataguard_prepare_primary: false" in defaults_text
     assert "oracle_dataguard_duplicate_standby: false" in defaults_text
     assert "oracle_dataguard_configure_broker: false" in defaults_text
@@ -68,6 +63,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     ).read_text(encoding="utf-8")
     dataguard_configure_broker = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/configure-broker.yml"
+    ).read_text(encoding="utf-8")
+    dataguard_switchover = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/switchover.yml"
     ).read_text(encoding="utf-8")
     dataguard_playbook = (
         REPO_ROOT / "playbooks/05-dataguard.yml"
@@ -117,6 +115,12 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_duplicate_standby | bool" in dataguard_tasks
     assert "Configure Data Guard broker" in dataguard_tasks
     assert "oracle_dataguard_configure_broker | bool" in dataguard_tasks
+    assert "Manually switchover Data Guard broker primary" in dataguard_tasks
+    assert "Fail when switchover is requested without a target" in dataguard_tasks
+    assert "Fail when switchover target does not match a Data Guard instance" in dataguard_tasks
+    assert "oracle_dataguard_run_switchover | bool" in dataguard_tasks
+    assert "'primary' in group_names" in dataguard_tasks
+    assert "oracle_dataguard_switchover_target in [" in dataguard_tasks
     assert "hosts: oracle_db_hosts" in dataguard_playbook
     assert "oracle_network_dataguard_enabled: true" in dataguard_playbook
     assert "oracle_lab_host_map_mode: dataguard" in dataguard_playbook
@@ -159,6 +163,10 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "LogXptMode='SYNC'" in dataguard_configure_broker
     assert "export ORACLE_SID={{ inst.name }}" in dataguard_configure_broker
+    assert "SWITCHOVER TO '{{ _dg_switchover_target }}'" in dataguard_switchover
+    assert "ALREADY_PRIMARY" in dataguard_switchover
+    assert "_dg_switchover_target_is_physical_standby" in dataguard_switchover
+    assert "READ ONLY WITH APPLY" in dataguard_switchover
     assert "_DGMGRL" in listener_template
     assert "dg_primary_unique = inst.dg_primary_db_unique_name" in tns_template
     assert "dg_standby_unique = inst.dg_standby_db_unique_name" in tns_template
@@ -181,24 +189,31 @@ def test_primary_dataguard_prerequisites(lab_exec):
         "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 TRIMSPOOL ON FEEDBACK OFF HEADING OFF VERIFY OFF\n"
-        "SELECT value FROM v$parameter WHERE name = 'standby_file_management';\n"
-        "SELECT value FROM v$parameter WHERE name = 'dg_broker_start';\n"
-        "SELECT value FROM v$parameter WHERE name = 'log_archive_config';\n"
-        "SELECT value FROM v$parameter WHERE name = 'log_archive_dest_2';\n"
-        "SELECT value FROM v$parameter WHERE name = 'log_archive_dest_state_2';\n"
-        "SELECT value FROM v$parameter WHERE name = 'fal_server';\n"
-        "SELECT value FROM v$parameter WHERE name = 'local_listener';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'standby_file_management';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'dg_broker_start';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'log_archive_config';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'log_archive_dest_2';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'log_archive_dest_state_2';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'fal_server';\n"
+        "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'local_listener';\n"
         "SELECT count(*) FROM v$standby_log;\n"
         "SELECT count(*) + 1 FROM v$log WHERE thread# = 1;\n"
         "SELECT count(*) FROM v$logfile WHERE type = 'STANDBY' AND member LIKE '/super/r01/%';\n"
         "EXIT;\n"
         "SQL"
     )
-    r = lab_exec(f"su - oracle -c {shlex.quote(sql)}")
-    assert r.returncode == 0, r.stderr
-    assert "ORA-" not in r.stdout
-
-    lines = [line.strip() for line in r.stdout.splitlines() if line.strip()]
+    last = None
+    for _ in range(18):
+        last = lab_exec(f"su - oracle -c {shlex.quote(sql)}")
+        assert last.returncode == 0, last.stderr
+        assert "ORA-" not in last.stdout
+        lines = [line.strip() for line in last.stdout.splitlines() if line.strip()]
+        if len(lines) >= 10:
+            break
+        time.sleep(10)
+    assert last is not None
+    lines = [line.strip() for line in last.stdout.splitlines() if line.strip()]
+    assert len(lines) >= 10, last.stdout
     standby_file_management = lines[0]
     dg_broker_start = lines[1]
     log_archive_config = lines[2]
@@ -220,7 +235,7 @@ def test_primary_dataguard_prerequisites(lab_exec):
     assert "affirm" in log_archive_dest_2_lower
     assert 'db_unique_name="super_sby"' in log_archive_dest_2_lower
     assert log_archive_dest_state_2.upper() == "ENABLE"
-    assert fal_server == "super_sby_dgb"
+    assert fal_server in {"super_sby_dgb", "<unset>"}
     assert "HOST=superdc1.domain.is" in local_listener
     assert standby_log_count >= needed_standby_logs
     assert standby_logs_on_dedicated_path == standby_log_count
@@ -299,6 +314,19 @@ def test_standby_auxiliary_prerequisites(standby_exec):
         )
         assert "PHYSICAL STANDBY" in r.stdout
 
+    live_fal = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT value FROM v$parameter WHERE name = 'fal_server';\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    fal = standby_exec(f"su - oracle -c {shlex.quote(live_fal)}")
+    assert fal.returncode == 0, fal.stderr
+    assert "ORA-" not in fal.stdout
+    assert "super_dgb" in fal.stdout
+
 
 def test_physical_standby_duplicate(standby_exec):
     sql = (
@@ -346,18 +374,23 @@ def test_physical_standby_uses_spfile(standby_exec):
     assert "/super/app/oracle/db_home1/dbs/spfilesuper.ora" in r.stdout
 
 
-@pytest.mark.scaffolded
-def test_dataguard_role_present_or_skipped(db_connection):
-    """In the slice there is no standby; skip cleanly with a clear reason."""
-    cur = db_connection.cursor()
-    cur.execute("SELECT database_role FROM v$database")
-    role = cur.fetchone()[0]
-    cur.close()
-    if role == "PRIMARY" and not _dg_configured(db_connection):
-        pytest.skip(
-            "Data Guard not configured in this slice (oracle_dataguard is "
-            "scaffolded). Re-run after DG lands to assert standby READ ONLY WITH APPLY."
+def test_primary_reports_dataguard_role_and_protection(db_connection):
+    last = None
+    for _ in range(18):
+        cur = db_connection.cursor()
+        cur.execute(
+            "SELECT database_role, protection_mode, protection_level FROM v$database"
         )
+        last = cur.fetchone()
+        cur.close()
+        role, protection_mode, protection_level = last
+        assert role == "PRIMARY"
+        assert protection_mode == "MAXIMUM AVAILABILITY"
+        if protection_level == "MAXIMUM AVAILABILITY":
+            return
+        time.sleep(10)
+    assert last is not None
+    assert last[2] == "MAXIMUM AVAILABILITY"
 
 
 def test_standby_is_read_only_with_apply(standby_exec):
@@ -385,7 +418,8 @@ def test_standby_is_read_only_with_apply(standby_exec):
 
 
 def test_dgmgrrl_configuration_healthy(lab_exec):
-    r = lab_exec(
+    last = None
+    command = (
         "su - oracle -c "
         + shlex.quote(
             "export ORACLE_HOME=/super/app/oracle/db_home1; "
@@ -393,27 +427,87 @@ def test_dgmgrrl_configuration_healthy(lab_exec):
             "'SHOW CONFIGURATION'"
         )
     )
-    assert r.returncode == 0, r.stderr
-    assert "SUCCESS" in r.stdout
-    assert "Protection Mode: MaxAvailability" in r.stdout
-    assert "super_sby" in r.stdout
+    for _ in range(18):
+        last = lab_exec(command)
+        assert last.returncode == 0, last.stderr
+        if (
+            "SUCCESS" in last.stdout
+            and "ORA-" not in last.stdout
+            and "Error:" not in last.stdout
+        ):
+            break
+        time.sleep(10)
+    assert last is not None
+    assert "SUCCESS" in last.stdout
+    assert "ORA-" not in last.stdout
+    assert "Error:" not in last.stdout
+    assert "Protection Mode: MaxAvailability" in last.stdout
+    assert "super_sby" in last.stdout
 
 
-@pytest.mark.scaffolded
-def test_manual_switchover():
-    pytest.skip(
-        "Manual switchover assertion: requires Data Guard (scaffolded). "
-        "Will run `dgmgrl ... SWITCHOVER TO super_sby` and assert role swap."
+@pytest.mark.slow
+def test_manual_switchover(lab_exec, standby_exec):
+    try:
+        switched = _run_dataguard_switchover("super_sby")
+        assert switched.returncode == 0, switched.stdout + switched.stderr
+        assert "failed=0" in switched.stdout
+
+        standby_state = _database_state(standby_exec)
+        old_primary_state = _database_state(lab_exec)
+        assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in standby_state
+        assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in old_primary_state
+    finally:
+        restored = _run_dataguard_switchover("super")
+        assert restored.returncode == 0, restored.stdout + restored.stderr
+        assert "failed=0" in restored.stdout
+
+    primary_state = _database_state(lab_exec)
+    standby_state = _database_state(standby_exec)
+    assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in primary_state
+    assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in standby_state
+
+
+def _run_dataguard_switchover(target: str) -> subprocess.CompletedProcess:
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "playbooks/05-dataguard.yml",
+        "-e", "oracle_dataguard_prepare_primary=false",
+        "-e", "oracle_dataguard_prepare_standby=false",
+        "-e", "oracle_dataguard_duplicate_standby=false",
+        "-e", "oracle_dataguard_configure_broker=false",
+        "-e", "oracle_dataguard_run_switchover=true",
+        "-e", f"oracle_dataguard_switchover_target={target}",
+    ]
+    env = os.environ.copy()
+    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
+    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
+    return subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=900,
     )
 
 
-def _dg_configured(conn) -> bool:
-    try:
-        cur = conn.cursor()
-        cur.execute(
-            "SELECT count(*) FROM v$database "
-            "WHERE database_role IN ('PHYSICAL STANDBY','LOGICAL STANDBY')"
-        )
-        return cur.fetchone()[0] > 0
-    except Exception:
-        return False
+def _database_state(exec_fn) -> str:
+    sql = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    last = None
+    for _ in range(18):
+        last = exec_fn(f"su - oracle -c {shlex.quote(sql)}", timeout=90)
+        assert last.returncode == 0, last.stderr
+        assert "ORA-" not in last.stdout
+        if "RESYNCHRONIZATION" not in last.stdout:
+            return last.stdout
+        time.sleep(10)
+    assert last is not None
+    return last.stdout

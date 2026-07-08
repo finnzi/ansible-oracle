@@ -31,6 +31,8 @@ Implemented:
 - Data Guard broker configuration `dg_super`, with SYNC transport,
   `MAXIMUM AVAILABILITY` protection mode/protection level, and the standby open
   `READ ONLY WITH APPLY`.
+- Manual broker switchover, verified by switching from `super` to `super_sby`
+  and back while preserving `READ ONLY WITH APPLY`.
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.
@@ -44,7 +46,7 @@ Implemented:
 
 Still scaffolded or not yet proven end to end:
 
-- Data Guard switchover and failover workflows.
+- Data Guard automatic failover workflow.
 - FSFO observer installation.
 - Actual patch application and dual-home switch.
 
@@ -123,7 +125,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 
 | Requirement | Where |
 |---|---|
-| Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard` scaffold |
+| Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO observer remains scaffolded |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
 | Patch DB homes and Grid homes | `oracle_patch` |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |

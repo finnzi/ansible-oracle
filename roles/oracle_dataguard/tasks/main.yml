@@ -1,13 +1,50 @@
 ---
 # tasks/main.yml for oracle_dataguard
 #
-# Data Guard orchestration. The full physical-standby/broker path is still
-# scaffolded, but this role now includes a real primary preparation step used
-# before RMAN duplicate.
+# Data Guard orchestration for primary prep, physical standby duplicate,
+# broker configuration, and opt-in manual switchover.
 
 - name: Resolve Data Guard instances
   ansible.builtin.set_fact:
     _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) }}"
+
+- name: Mark Data Guard switchover target as matched
+  ansible.builtin.set_fact:
+    _dg_switchover_target_matched: true
+  loop: "{{ _dg_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  run_once: true
+  when:
+    - oracle_dataguard_run_switchover | bool
+    - oracle_dataguard_switchover_target | length > 0
+    - "'primary' in group_names"
+    - oracle_dataguard_switchover_target in [
+        inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)),
+        inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby'))
+      ]
+
+- name: Fail when switchover is requested without a target
+  ansible.builtin.fail:
+    msg: oracle_dataguard_switchover_target is required when oracle_dataguard_run_switchover=true.
+  run_once: true
+  when:
+    - oracle_dataguard_run_switchover | bool
+    - oracle_dataguard_switchover_target | length == 0
+    - "'primary' in group_names"
+
+- name: Fail when switchover target does not match a Data Guard instance
+  ansible.builtin.fail:
+    msg: >-
+      oracle_dataguard_switchover_target={{ oracle_dataguard_switchover_target }}
+      does not match any configured Data Guard primary or standby unique name.
+  run_once: true
+  when:
+    - oracle_dataguard_run_switchover | bool
+    - oracle_dataguard_switchover_target | length > 0
+    - "'primary' in group_names"
+    - not (_dg_switchover_target_matched | default(false) | bool)
 
 - name: Prepare primary database for Data Guard
   ansible.builtin.include_tasks: prepare-primary.yml
@@ -49,6 +86,22 @@
     - oracle_dataguard_configure_broker | bool
     - "'primary' in group_names"
 
+- name: Manually switchover Data Guard broker primary
+  ansible.builtin.include_tasks: switchover.yml
+  loop: "{{ _dg_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  run_once: true
+  when:
+    - oracle_dataguard_run_switchover | bool
+    - oracle_dataguard_switchover_target | length > 0
+    - "'primary' in group_names"
+    - oracle_dataguard_switchover_target in [
+        inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)),
+        inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby'))
+      ]
+
 - name: Read live DB facts (so we can report role/open-mode)
   oracle_db_facts:
     service_name: "{{ (_dg_instances | first).service_name | default((_dg_instances | first).name) }}"
@@ -78,16 +131,12 @@
 - name: Not implemented — fail only if DG is explicitly requested
   ansible.builtin.fail:
     msg: >-
-      oracle_dataguard is scaffolded, not implemented, in this engagement.
-      Primary preparation is implemented through
-      oracle_dataguard_prepare_primary=true. To deliver full DG, implement
-      (per defaults/main.yml INTERFACE): RMAN active duplicate to create the
-      standby; DGMGRL CREATE CONFIGURATION
-      with primary + standby; DGMGRL EDIT CONFIGURATION SET PROTECTION MODE AS
-      MAXAVAILABILITY when dg_protection_mode={{ dg_protection_mode }};
-      EDIT DATABASE <sby> SET STATE='READ ONLY WITH APPLY';
-      DGMGRL SWITCHOVER for manual switchovers. Then set
-      oracle_dataguard_enabled: true.
+      oracle_dataguard_enabled=true is reserved for the full Data Guard
+      lifecycle. Primary prep, physical standby duplicate, broker
+      configuration, Maximum Availability, READ ONLY WITH APPLY, and manual
+      switchover are implemented through their explicit gates. Keep
+      oracle_dataguard_enabled=false until FSFO/automatic failover and observer
+      lifecycle are implemented.
   when:
     - dg_enabled | bool
     - oracle_dataguard_enabled | bool
