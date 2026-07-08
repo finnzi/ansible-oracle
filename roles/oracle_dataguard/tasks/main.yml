@@ -36,7 +36,9 @@
       oracle_dataguard is scaffolded, not implemented, in this engagement.
       To deliver DG, implement (per defaults/main.yml INTERFACE):
       RMAN active duplicate to create the standby; DGMGRL CREATE CONFIGURATION
-      with primary + standby; EDIT DATABASE <sby> SET STATE='READ ONLY WITH APPLY';
+      with primary + standby; DGMGRL EDIT CONFIGURATION SET PROTECTION MODE AS
+      MAXAVAILABILITY when dg_protection_mode={{ dg_protection_mode }};
+      EDIT DATABASE <sby> SET STATE='READ ONLY WITH APPLY';
       DGMGRL SWITCHOVER for manual switchovers. Then set
       oracle_dataguard_enabled: true.
   when:

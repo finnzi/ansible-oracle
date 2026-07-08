@@ -6,6 +6,7 @@
 #   - Physical standby creation (RMAN DUPLICATE FROM ACTIVE DATABASE or
 #     backup-based duplicate).
 #   - Broker configuration (DGMGRL CREATE CONFIGURATION).
+#   - Broker protection mode set to MAXIMUM AVAILABILITY.
 #   - Standby kept in OPEN READ ONLY WITH APPLY (the explicit project
 #     requirement — NOT mounted).
 #   - Manual switchover (DGMGRL SWITCHOVER TO <standby>).
@@ -29,7 +30,7 @@ dg_enabled: false
 
 dg_action: reconcile
 dg_broker_config: dg_super
-dg_protection_mode: MAXIMUM PERFORMANCE
+dg_protection_mode: MAXIMUM AVAILABILITY
 
 # SQL*Net connect identifiers the broker uses. Must resolve via tnsnames.ora
 # written by oracle_network on each node.

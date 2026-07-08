@@ -27,7 +27,7 @@ Still scaffolded or not yet proven end to end:
 
 - Oracle Restart/Grid installation.
 - Data Guard creation, broker configuration, READ ONLY WITH APPLY, and
-  switchover.
+  switchover. Data Guard broker protection mode must be MAXIMUM AVAILABILITY.
 - FSFO observer installation.
 - Actual patch application and dual-home switch.
 
