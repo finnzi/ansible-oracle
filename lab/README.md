@@ -110,6 +110,9 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 # Check host prerequisites without creating networks, disks, or VMs.
 ./lab/scripts/preflight.sh
 
+# Render and validate libvirt XML/cloud-init artifacts without starting VMs.
+./lab/scripts/render-config.sh --validate
+
 # Bring up or start the lab.
 ./lab/scripts/lab-up.sh
 

@@ -56,6 +56,23 @@ virsh_cmd() {
   virsh --connect "${VIRSH_URI}" "$@"
 }
 
+lab_prepare_state_dirs() {
+  mkdir -p "${IMAGE_DIR}" "${VM_DIR}" "${SEED_DIR}" "${EMPTY_STAGE_DIR}" "${DOWNLOAD_DIR}"
+  touch "${DOWNLOAD_DIR}/.gitkeep"
+}
+
+lab_pubkey() {
+  cat "$(ssh_pubkey_file)"
+}
+
+lab_stage_mount_source() {
+  if [ -d "${SOURCES_DIR}" ]; then
+    printf '%s\n' "${SOURCES_DIR}"
+  else
+    printf '%s\n' "${EMPTY_STAGE_DIR}"
+  fi
+}
+
 vm_name() {
   printf '%s-%s\n' "${LAB_NAME}" "$1"
 }
@@ -138,6 +155,148 @@ path_world_accessible_for_9p() {
     if (( (other & required) != required )); then
       return 1
     fi
+  done
+}
+
+write_network_xml() {
+  local net_xml="${LAB_STATE_DIR}/network.xml"
+  cat > "${net_xml}" <<EOF
+<network>
+  <name>${LAB_NETWORK_NAME}</name>
+  <bridge name='${LAB_BRIDGE_NAME}' stp='on' delay='0'/>
+  <forward mode='nat'/>
+  <domain name='${LAB_DOMAIN}' localOnly='yes'/>
+  <ip address='${LAB_NET_PREFIX}.1' netmask='255.255.255.0'>
+    <dhcp>
+      <range start='${LAB_NET_PREFIX}.100' end='${LAB_NET_PREFIX}.254'/>
+      <host mac='$(vm_mac superdb1)' name='superdb1' ip='${IP_SUPERDB1}'/>
+      <host mac='$(vm_mac superdb2)' name='superdb2' ip='${IP_SUPERDB2}'/>
+      <host mac='$(vm_mac observer)' name='observer' ip='${IP_OBSERVER}'/>
+    </dhcp>
+  </ip>
+</network>
+EOF
+  printf '%s\n' "${net_xml}"
+}
+
+write_seed() {
+  local short="$1" user_data meta_data
+  user_data="${SEED_DIR}/${short}-user-data"
+  meta_data="${SEED_DIR}/${short}-meta-data"
+  cat > "${user_data}" <<EOF
+#cloud-config
+preserve_hostname: false
+hostname: ${short}
+fqdn: ${short}.${LAB_DOMAIN}
+manage_etc_hosts: true
+disable_root: false
+ssh_pwauth: false
+users:
+  - default
+  - name: root
+    ssh_authorized_keys:
+      - $(lab_pubkey)
+write_files:
+  - path: /etc/ssh/sshd_config.d/01-ansible-oracle-root-login.conf
+    permissions: '0644'
+    content: |
+      PermitRootLogin prohibit-password
+runcmd:
+  - [ mkdir, -p, /u01/stage, /super/app/oracle, /super/d01, /super/a01, /super/f01, /super/r01, /grid ]
+  - [ sh, -lc, "grep -q '^u01_stage ' /etc/fstab || echo 'u01_stage /u01/stage 9p trans=virtio,version=9p2000.L,ro,nofail,_netdev 0 0' >> /etc/fstab" ]
+  - [ sh, -lc, "modprobe 9pnet_virtio || true" ]
+  - [ sh, -lc, "mount /u01/stage || true" ]
+  - [ systemctl, enable, --now, sshd ]
+  - [ systemctl, restart, sshd ]
+EOF
+  cat > "${meta_data}" <<EOF
+instance-id: ${LAB_NAME}-${short}
+local-hostname: ${short}
+EOF
+  rm -f "${SEED_DIR}/${short}.iso"
+  genisoimage \
+    -quiet \
+    -output "${SEED_DIR}/${short}.iso" \
+    -volid cidata \
+    -joliet \
+    -rock \
+    -graft-points \
+    "user-data=${user_data}" \
+    "meta-data=${meta_data}"
+}
+
+write_domain_xml() {
+  local short="$1" name disk seed domain_xml stage_mount_source
+  name="$(vm_name "${short}")"
+  disk="${VM_DIR}/${short}.qcow2"
+  seed="${SEED_DIR}/${short}.iso"
+  domain_xml="${VM_DIR}/${short}.xml"
+  stage_mount_source="$(lab_stage_mount_source)"
+
+  cat > "${domain_xml}" <<EOF
+<domain type='kvm'>
+  <name>${name}</name>
+  <memory unit='MiB'>$(vm_memory "${short}")</memory>
+  <currentMemory unit='MiB'>$(vm_memory "${short}")</currentMemory>
+  <vcpu placement='static'>$(vm_vcpus "${short}")</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough' check='none'/>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='${disk}'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='${seed}'/>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+    </disk>
+    <interface type='network'>
+      <mac address='$(vm_mac "${short}")'/>
+      <source network='${LAB_NETWORK_NAME}'/>
+      <model type='virtio'/>
+    </interface>
+    <filesystem type='mount' accessmode='mapped'>
+      <source dir='${stage_mount_source}'/>
+      <target dir='u01_stage'/>
+    </filesystem>
+    <serial type='pty'>
+      <target port='0'/>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+    <graphics type='vnc' listen='127.0.0.1' autoport='yes'/>
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+    </rng>
+  </devices>
+</domain>
+EOF
+  printf '%s\n' "${domain_xml}"
+}
+
+lab_render_config() {
+  local svc
+  lab_prepare_state_dirs
+  write_network_xml >/dev/null
+  for svc in superdb1 superdb2 observer; do
+    write_seed "${svc}"
+    write_domain_xml "${svc}" >/dev/null
   done
 }
 

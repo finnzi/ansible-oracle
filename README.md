@@ -54,6 +54,9 @@ source .venv/bin/activate
 # Check host prerequisites before creating any lab state.
 ./lab/scripts/preflight.sh
 
+# Optional: render and validate libvirt XML/cloud-init artifacts offline.
+./lab/scripts/render-config.sh --validate
+
 # On Fedora, this installs/starts libvirt and stages Oracle media for system QEMU.
 # If it adds your user to libvirt/kvm groups, log out and back in before continuing.
 ./lab/scripts/prepare-host-fedora.sh

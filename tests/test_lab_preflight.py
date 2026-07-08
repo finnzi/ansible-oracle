@@ -129,3 +129,42 @@ def test_prepare_host_fedora_rejects_unknown_options():
 
     assert result.returncode == 1
     assert "Unknown option: --bogus" in result.stderr
+
+
+def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
+    key_path = tmp_path / "lab_oracle"
+    keygen = subprocess.run(
+        ["ssh-keygen", "-t", "ed25519", "-f", str(key_path), "-N", ""],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert keygen.returncode == 0, keygen.stderr
+
+    state_dir = tmp_path / "state"
+    result = run_lab_script(
+        "render-config.sh",
+        "--validate",
+        env={
+            "LAB_STATE_DIR": str(state_dir),
+            "ORACLE_LAB_SSH_KEY": str(key_path),
+            "SOURCES_DIR": str(tmp_path / "missing-sources"),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (state_dir / "network.xml").is_file()
+    assert (state_dir / "vms/superdb1.xml").is_file()
+    assert (state_dir / "vms/superdb2.xml").is_file()
+    assert (state_dir / "vms/observer.xml").is_file()
+    assert (state_dir / "seed/superdb1.iso").is_file()
+
+    iso_listing = subprocess.run(
+        ["isoinfo", "-J", "-i", str(state_dir / "seed/superdb1.iso"), "-f"],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert iso_listing.returncode == 0, iso_listing.stderr
+    assert "/user-data" in iso_listing.stdout
+    assert "/meta-data" in iso_listing.stdout

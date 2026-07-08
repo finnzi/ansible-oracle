@@ -28,6 +28,7 @@ The supported lab path is now KVM/libvirt:
 - KVM lab scripts:
   - `lab/scripts/preflight.sh`
   - `lab/scripts/prepare-host-fedora.sh`
+  - `lab/scripts/render-config.sh`
   - `lab/scripts/fetch-base-image.sh`
   - `lab/scripts/lab-up.sh`
   - `lab/scripts/lab-down.sh`
