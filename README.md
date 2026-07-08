@@ -34,8 +34,8 @@ Still scaffolded or not yet proven end to end:
 ## Quickstart
 
 Install host prerequisites first. Package names vary by distribution, but the
-lab expects `virsh`, `virt-install`, `qemu-img`, `cloud-localds`, `curl`, and a
-working system libvirt daemon.
+lab expects `virsh`, `qemu-img`, `genisoimage`, `curl`, and a working system
+libvirt daemon.
 
 ```bash
 # One-time: key used for root SSH into the lab VMs.

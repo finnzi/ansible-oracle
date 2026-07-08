@@ -12,9 +12,13 @@ set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 
 require_cmd virsh
-require_cmd virt-install
 require_cmd qemu-img
-require_cmd cloud-localds
+require_cmd genisoimage
+require_cmd timeout
+
+if ! timeout 8 virsh --connect "${VIRSH_URI}" list --all >/dev/null 2>&1; then
+  die "Cannot access libvirt at ${VIRSH_URI}. For Fedora, install/start libvirt and run this from a user allowed to manage system VMs, for example: sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage; sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket; sudo usermod -aG libvirt,kvm \$USER; then log out/in. You can also set VIRSH_URI if you use a different libvirt connection."
+fi
 
 mkdir -p "${IMAGE_DIR}" "${VM_DIR}" "${SEED_DIR}" "${EMPTY_STAGE_DIR}" "${DOWNLOAD_DIR}"
 touch "${DOWNLOAD_DIR}/.gitkeep"
@@ -31,6 +35,11 @@ if [ ! -d "${SOURCES_DIR}" ]; then
 else
   STAGE_MOUNT_SOURCE="${SOURCES_DIR}"
   log "Installer sources: ${SOURCES_DIR} (mounted read-only at /u01/stage)"
+  if [ "${VIRSH_URI}" = "qemu:///system" ] \
+      && [ "${LAB_SKIP_SOURCE_ACCESS_CHECK:-0}" != "1" ] \
+      && ! path_world_accessible_for_9p "${SOURCES_DIR}"; then
+    die "SOURCES_DIR=${SOURCES_DIR} is not traversable/readable by an unprivileged system QEMU process. Move or bind-mount the Oracle media to a libvirt-readable path such as /var/lib/libvirt/ansible-oracle-sources, set SOURCES_DIR to that path, or set LAB_SKIP_SOURCE_ACCESS_CHECK=1 if your libvirt QEMU process can read it through another mechanism."
+  fi
 fi
 
 if [ ! -f "${BASE_IMAGE}" ]; then
@@ -102,7 +111,79 @@ instance-id: ${LAB_NAME}-${short}
 local-hostname: ${short}
 EOF
   rm -f "${SEED_DIR}/${short}.iso"
-  cloud-localds "${SEED_DIR}/${short}.iso" "${user_data}" "${meta_data}"
+  genisoimage \
+    -quiet \
+    -output "${SEED_DIR}/${short}.iso" \
+    -volid cidata \
+    -joliet \
+    -rock \
+    -graft-points \
+    "user-data=${user_data}" \
+    "meta-data=${meta_data}"
+}
+
+write_domain_xml() {
+  local short="$1" name disk seed domain_xml
+  name="$(vm_name "${short}")"
+  disk="${VM_DIR}/${short}.qcow2"
+  seed="${SEED_DIR}/${short}.iso"
+  domain_xml="${VM_DIR}/${short}.xml"
+
+  cat > "${domain_xml}" <<EOF
+<domain type='kvm'>
+  <name>${name}</name>
+  <memory unit='MiB'>$(vm_memory "${short}")</memory>
+  <currentMemory unit='MiB'>$(vm_memory "${short}")</currentMemory>
+  <vcpu placement='static'>$(vm_vcpus "${short}")</vcpu>
+  <os>
+    <type arch='x86_64' machine='pc'>hvm</type>
+    <boot dev='hd'/>
+  </os>
+  <features>
+    <acpi/>
+    <apic/>
+  </features>
+  <cpu mode='host-passthrough' check='none'/>
+  <clock offset='utc'/>
+  <on_poweroff>destroy</on_poweroff>
+  <on_reboot>restart</on_reboot>
+  <on_crash>restart</on_crash>
+  <devices>
+    <emulator>/usr/bin/qemu-system-x86_64</emulator>
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='${disk}'/>
+      <target dev='vda' bus='virtio'/>
+    </disk>
+    <disk type='file' device='cdrom'>
+      <driver name='qemu' type='raw'/>
+      <source file='${seed}'/>
+      <target dev='sda' bus='sata'/>
+      <readonly/>
+    </disk>
+    <interface type='network'>
+      <mac address='$(vm_mac "${short}")'/>
+      <source network='${LAB_NETWORK_NAME}'/>
+      <model type='virtio'/>
+    </interface>
+    <filesystem type='mount' accessmode='mapped'>
+      <source dir='${STAGE_MOUNT_SOURCE}'/>
+      <target dir='u01_stage'/>
+    </filesystem>
+    <serial type='pty'>
+      <target port='0'/>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+    <graphics type='vnc' listen='127.0.0.1' autoport='yes'/>
+    <rng model='virtio'>
+      <backend model='random'>/dev/urandom</backend>
+    </rng>
+  </devices>
+</domain>
+EOF
+  printf '%s\n' "${domain_xml}"
 }
 
 ensure_vm() {
@@ -121,21 +202,8 @@ ensure_vm() {
 
   if ! virsh_cmd dominfo "${name}" >/dev/null 2>&1; then
     log "Importing VM ${name}"
-    virt_install_cmd \
-      --name "${name}" \
-      --memory "$(vm_memory "${short}")" \
-      --vcpus "$(vm_vcpus "${short}")" \
-      --import \
-      --os-variant generic \
-      --disk "path=${disk},format=qcow2,bus=virtio" \
-      --disk "path=${seed},device=cdrom" \
-      --filesystem "type=mount,source=${STAGE_MOUNT_SOURCE},target=u01_stage,accessmode=mapped" \
-      --network "network=${LAB_NETWORK_NAME},mac=$(vm_mac "${short}"),model=virtio" \
-      --graphics none \
-      --console pty,target.type=serial \
-      --noautoconsole \
-      --boot hd \
-      --events on_reboot=restart >/dev/null
+    virsh_cmd define "$(write_domain_xml "${short}")" >/dev/null
+    virsh_cmd start "${name}" >/dev/null
   elif ! virsh_cmd domstate "${name}" | grep -q running; then
     log "Starting VM ${name}"
     virsh_cmd start "${name}" >/dev/null

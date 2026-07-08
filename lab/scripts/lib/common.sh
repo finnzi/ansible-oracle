@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# lab/scripts/lib/common.sh — shared helpers for the KVM/libvirt lab tooling.
+# Sourced by fetch-base-image.sh / lab-up.sh / lab-down.sh / update-hosts.sh.
+# Not executable on purpose.
+
+set -euo pipefail
+
+# Resolve repo + lab dirs regardless of where the caller is.
+# BASH_SOURCE here is lab/scripts/lib/common.sh, so the lab dir is two levels up.
+LAB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_DIR="$(cd "${LAB_DIR}/.." && pwd)"
+DOWNLOAD_DIR="${REPO_DIR}/download"
+INVENTORY_DIR="${REPO_DIR}/inventory"
+SOURCES_DIR="${SOURCES_DIR:-${HOME}/sources/oracle}"
+
+# KVM/libvirt lab state.
+LAB_STATE_DIR="${LAB_STATE_DIR:-${LAB_DIR}/state}"
+IMAGE_DIR="${LAB_STATE_DIR}/images"
+VM_DIR="${LAB_STATE_DIR}/vms"
+SEED_DIR="${LAB_STATE_DIR}/seed"
+EMPTY_STAGE_DIR="${LAB_STATE_DIR}/empty-stage"
+
+LAB_NAME="${LAB_NAME:-ansible-oracle-lab}"
+LAB_NETWORK_NAME="${LAB_NETWORK_NAME:-ansible-oracle-lab}"
+LAB_BRIDGE_NAME="${LAB_BRIDGE_NAME:-virbr-oracle}"
+LAB_DOMAIN="${LAB_DOMAIN:-domain.is}"
+LAB_OS_VERSION="${LAB_OS_VERSION:-9}"
+LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-120G}"
+LAB_DB_MEMORY_MIB="${LAB_DB_MEMORY_MIB:-12288}"
+LAB_OBSERVER_MEMORY_MIB="${LAB_OBSERVER_MEMORY_MIB:-4096}"
+LAB_DB_VCPUS="${LAB_DB_VCPUS:-4}"
+LAB_OBSERVER_VCPUS="${LAB_OBSERVER_VCPUS:-2}"
+VIRSH_URI="${VIRSH_URI:-qemu:///system}"
+
+BASE_IMAGE="${ORACLE_LINUX_BASE_IMAGE:-${IMAGE_DIR}/OracleLinux-${LAB_OS_VERSION}-x86_64-kvm.qcow2}"
+
+# Lab network conventions (must match inventory/hosts.example.yml).
+LAB_NET_PREFIX="${LAB_NET_PREFIX:-192.168.87}"
+IP_SUPERDB1="${LAB_NET_PREFIX}.11"
+IP_SUPERDB2="${LAB_NET_PREFIX}.12"
+IP_OBSERVER="${LAB_NET_PREFIX}.13"
+
+log()  { printf '\033[1;34m[lab]\033[0m %s\n' "$*" >&2; }
+warn() { printf '\033[1;33m[lab warn]\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[1;31m[lab error]\033[0m %s\n' "$*" >&2; exit 1; }
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+virsh_cmd() {
+  virsh --connect "${VIRSH_URI}" "$@"
+}
+
+vm_name() {
+  printf '%s-%s\n' "${LAB_NAME}" "$1"
+}
+
+vm_mac() {
+  case "$1" in
+    superdb1) echo "52:54:00:87:00:11" ;;
+    superdb2) echo "52:54:00:87:00:12" ;;
+    observer) echo "52:54:00:87:00:13" ;;
+    *) die "Unknown VM: $1" ;;
+  esac
+}
+
+vm_ip() {
+  case "$1" in
+    superdb1) echo "${IP_SUPERDB1}" ;;
+    superdb2) echo "${IP_SUPERDB2}" ;;
+    observer) echo "${IP_OBSERVER}" ;;
+    *) die "Unknown VM: $1" ;;
+  esac
+}
+
+vm_memory() {
+  case "$1" in
+    superdb1|superdb2) echo "${LAB_DB_MEMORY_MIB}" ;;
+    observer) echo "${LAB_OBSERVER_MEMORY_MIB}" ;;
+    *) die "Unknown VM: $1" ;;
+  esac
+}
+
+vm_vcpus() {
+  case "$1" in
+    superdb1|superdb2) echo "${LAB_DB_VCPUS}" ;;
+    observer) echo "${LAB_OBSERVER_VCPUS}" ;;
+    *) die "Unknown VM: $1" ;;
+  esac
+}
+
+ssh_key_file() {
+  printf '%s\n' "${ORACLE_LAB_SSH_KEY:-${HOME}/.ssh/lab_oracle}"
+}
+
+ssh_pubkey_file() {
+  printf '%s.pub\n' "$(ssh_key_file)"
+}
+
+ssh_opts() {
+  printf '%s\n' \
+    "-i" "$(ssh_key_file)" \
+    "-o" "StrictHostKeyChecking=no" \
+    "-o" "UserKnownHostsFile=/dev/null" \
+    "-o" "ConnectTimeout=5" \
+    "-o" "BatchMode=yes"
+}
+
+# Wait until SSH on a VM is accepting connections (used after lab-up).
+wait_for_ssh() {
+  local host_ip="$1" tries=0
+  while ! ssh $(ssh_opts) "root@${host_ip}" true 2>/dev/null; do
+    tries=$((tries+1))
+    [ "${tries}" -ge 120 ] && { warn "SSH to ${host_ip} did not come up in 10m"; return 1; }
+    sleep 5
+  done
+}
+
+path_world_accessible_for_9p() {
+  local real="$1" cur="" part mode other required
+  real="$(readlink -f "${real}")" || return 1
+  [ -n "${real}" ] || return 1
+
+  IFS=/ read -r -a parts <<< "${real#/}"
+  for part in "${parts[@]}"; do
+    cur="${cur}/${part}"
+    mode="$(stat -c '%a' "${cur}" 2>/dev/null)" || return 1
+    other=$((mode % 10))
+    required=1
+    if [ "${cur}" = "${real}" ]; then
+      required=5
+    fi
+    if (( (other & required) != required )); then
+      return 1
+    fi
+  done
+}
+
+discover_oracle_linux_image_url() {
+  require_cmd curl
+  local root="https://yum.oracle.com/templates/OracleLinux/OL${LAB_OS_VERSION}"
+  local update page arch file
+  page="$(curl -fsSL "${root}/" 2>/dev/null || true)"
+  update="$(printf '%s\n' "${page}" | grep -Eo 'href="u[0-9]+/' | sed -E 's/^href="(u[0-9]+).*/\1/' | sort -V | tail -1)"
+  [ -n "${update}" ] || die "Could not discover an OL${LAB_OS_VERSION} update directory at ${root}/. Set ORACLE_LINUX_IMAGE_URL explicitly."
+
+  arch="${root}/${update}/x86_64"
+  page="$(curl -fsSL "${arch}/" 2>/dev/null || true)"
+  file="$(printf '%s\n' "${page}" | grep -Eo "OL${LAB_OS_VERSION}U[0-9]+_x86_64-kvm-b[0-9]+\\.qcow2" | sort -V | tail -1)"
+  [ -n "${file}" ] || die "Could not discover a KVM qcow2 image at ${arch}/. Set ORACLE_LINUX_IMAGE_URL explicitly."
+
+  printf '%s/%s\n' "${arch}" "${file}"
+}
+
+HOSTS_MARKER_BEGIN="# ansible-oracle lab begin"
+HOSTS_MARKER_END="# ansible-oracle lab end"

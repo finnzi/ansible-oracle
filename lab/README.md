@@ -20,15 +20,27 @@ DHCP leases for the VM MAC addresses.
 Install the equivalent of these packages for your distribution:
 
 - `libvirt` / `libvirtd`
-- `virt-install`
 - `qemu-img`
-- `cloud-image-utils` or another package that provides `cloud-localds`
+- `genisoimage`
 - `curl`
 - OpenSSH client
 
-The scripts use `qemu:///system`. Your user must either have libvirt access or
-you must run the scripts in an environment where `virsh --connect qemu:///system`
-works.
+The scripts use `qemu:///system` because the lab needs a bridged/NAT libvirt
+network with fixed DHCP leases. Your user must have permission to manage system
+libvirt domains and networks. On Fedora, that usually means installing the
+libvirt/QEMU packages, starting the modular libvirt sockets, adding your user to
+the relevant groups, and then logging out/in:
+
+```bash
+sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage
+sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket
+sudo usermod -aG libvirt,kvm "$USER"
+```
+
+`qemu:///session` is not the default because session libvirt cannot create the
+bridged/NAT lab network on this host without elevated privileges. The lab needs
+system libvirt so `superdb1`, `superdb2`, and `observer` can keep stable
+addresses that the inventory and `/etc/hosts` block agree on.
 
 ## Images
 
@@ -61,6 +73,21 @@ and cloud-init seed ISOs are stored under `lab/state/`.
 Oracle installers and patches are expected under `~/sources/oracle`. Set
 `SOURCES_DIR` to override this. The directory is mounted read-only into every VM
 at `/u01/stage` through a libvirt filesystem mount.
+
+With system libvirt, the QEMU process usually runs as an unprivileged service
+user. If your home directory is private (`0700`), QEMU may not be able to
+traverse `~/sources/oracle`. In that case, put the media somewhere libvirt can
+read it and point `SOURCES_DIR` there, for example:
+
+```bash
+sudo mkdir -p /var/lib/libvirt/ansible-oracle-sources
+sudo rsync -a --info=progress2 ~/sources/oracle/ /var/lib/libvirt/ansible-oracle-sources/
+sudo chmod -R a+rX /var/lib/libvirt/ansible-oracle-sources
+SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources ./lab/scripts/lab-up.sh
+```
+
+If your libvirt setup grants QEMU access another way, set
+`LAB_SKIP_SOURCE_ACCESS_CHECK=1`.
 
 ## Commands
 

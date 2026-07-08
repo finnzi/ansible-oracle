@@ -228,6 +228,8 @@ __marimo__/
 # Lab runtime state
 /lab/.lab-state
 /lab/state/
+!/lab/scripts/lib/
+!/lab/scripts/lib/common.sh
 
 # Oracle runtime artifacts that should never be committed
 *.ora.bak
@@ -237,4 +239,3 @@ __marimo__/
 /inventory/group_vars/all/secrets.yml
 /inventory/host_vars/*/vault.yml
 *.vault
-

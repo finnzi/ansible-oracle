@@ -44,6 +44,21 @@ The supported lab path is now KVM/libvirt:
 - Oracle binary install, DBCA instance creation, listener/service checks,
   Restart registration, Data Guard, observer, and patch apply.
 
+## Host Findings From This Run
+
+- `virsh` and QEMU are installed.
+- `virt-install` and `cloud-localds` are not installed; the lab no longer
+  depends on them after switching to direct libvirt XML and `genisoimage`.
+- `qemu:///session` can connect, but a session libvirt NAT/bridge network cannot
+  start on this host (`Operation not permitted`). The lab therefore targets
+  `qemu:///system`.
+- `/home/finnur` is private (`0700`), so system QEMU is unlikely to read
+  `~/sources/oracle` through a 9p mount. The lab now checks this and asks for a
+  libvirt-readable `SOURCES_DIR`.
+- `sudo` is not available non-interactively here, so package installation and
+  libvirt group/service changes need to be done by the user outside this agent
+  session.
+
 ## Useful Commands
 
 ```bash
