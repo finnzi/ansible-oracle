@@ -41,6 +41,7 @@ oracle_group: oinstall
 oracle_roles:
   - dba
   - oper
+  - asmadmin
   - backupdba
   - dgdba       # SYSDG — Data Guard broker
   - kmdba

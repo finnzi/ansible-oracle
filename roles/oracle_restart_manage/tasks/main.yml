@@ -42,6 +42,31 @@
     - not oracle_restart_available
     - oracle_restart_required | bool
 
+- name: Check local CSS status for Restart database resources
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ oracle_gi_home }}/bin/crsctl stat res ora.cssd -init 2>&1 || true
+  args: { executable: /bin/bash }
+  register: _restart_css_status
+  changed_when: false
+  when: oracle_restart_available
+
+- name: Start local CSS before srvctl database operations
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ oracle_gi_home }}/bin/crsctl start resource ora.cssd -init 2>&1
+  args: { executable: /bin/bash }
+  register: _restart_css_start
+  changed_when: "'CRS-2676' in (_restart_css_start.stdout | default(''))"
+  failed_when: >-
+    _restart_css_start.rc != 0 and
+    'CRS-5702' not in (_restart_css_start.stdout | default('')) and
+    'already running' not in (_restart_css_start.stdout | default('') | lower)
+  when:
+    - oracle_restart_available
+    - "'STATE=ONLINE' not in (_restart_css_status.stdout | default(''))"
+    - "'ONLINE  ONLINE' not in (_restart_css_status.stdout | default(''))"
+
 # ── Register each instance + its listener with Restart ─────────────────
 - name: Register instance, listener, and start them under Restart
   ansible.builtin.include_tasks: register-instance.yml

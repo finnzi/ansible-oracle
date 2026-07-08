@@ -1,37 +1,327 @@
 ---
 # tasks/main.yml for oracle_gi_install
 #
-# STUB (vertical slice). Verifies the Grid installer zip is staged and
-# asserts the interface contract, then reports NotImplemented unless the
-# caller explicitly opts in (oracle_gi_install_enabled: true).
+# Install Oracle Grid Infrastructure as Oracle Restart (standalone server).
+# This role is opt-in through oracle_gi_install_enabled while the lab path is
+# being hardened; when disabled it still reports the current Restart state.
+
+- name: Resolve current GI home
+  ansible.builtin.set_fact:
+    _gi_current_home: "{{ (oracle_gi_homes | selectattr('current', 'equalto', true) | list | first) | default(oracle_gi_homes[0]) }}"
+
+- name: Resolve GI install paths
+  ansible.builtin.set_fact:
+    oracle_gi_home: "{{ oracle_gi_base }}/{{ _gi_current_home.suffix }}"
+    _gi_stage: "{{ oracle_gi_base }}/.stage_{{ _gi_current_home.suffix | replace('/', '_') }}"
+    _gi_response_file: "{{ oracle_gi_base }}/.stage_{{ _gi_current_home.suffix | replace('/', '_') }}/gridsetup.rsp"
 
 - name: Verify the GI installer zip is staged
   ansible.builtin.stat:
     path: "{{ oracle_stage_dir }}/{{ oracle_install_files.gi_zip }}"
   register: _gi_zip
 
-- name: Report staged GI installer status
-  ansible.builtin.debug:
-    msg: >-
-      GI installer present at {{ oracle_stage_dir }}/{{ oracle_install_files.gi_zip }}:
-      {{ 'yes' if _gi_zip.stat.exists else 'NO (slice tolerates absence)' }}
+- name: Fail when GI install is enabled but installer media is missing
+  ansible.builtin.fail:
+    msg: "GI installer missing: {{ oracle_stage_dir }}/{{ oracle_install_files.gi_zip }}"
+  when:
+    - oracle_gi_install_enabled | bool
+    - not _gi_zip.stat.exists
 
-- name: Set oracle_gi_installed fact (probe for gridSetup/srvctl)
+- name: Check whether Restart is already installed
   ansible.builtin.stat:
-    path: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current', 'equalto', true) | first).suffix }}/bin/srvctl"
+    path: "{{ oracle_gi_home }}/bin/srvctl"
   register: _gi_srvctl
+
+- name: Probe existing Restart stack before install
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [ -x {{ oracle_gi_home }}/bin/crsctl ]; then
+      {{ oracle_gi_home }}/bin/crsctl check has 2>&1 || true
+    else
+      echo "no-crsctl"
+    fi
+  args: { executable: /bin/bash }
+  register: _gi_existing_has_check
+  changed_when: false
   failed_when: false
 
-- name: Record whether Restart is installed
-  ansible.builtin.set_fact:
-    oracle_gi_installed: "{{ _gi_srvctl.stat.exists }}"
-    oracle_gi_home: "{{ oracle_gi_base }}/{{ (oracle_gi_homes | selectattr('current', 'equalto', true) | first).suffix }}"
+- name: Check GI install marker
+  ansible.builtin.stat:
+    path: "{{ oracle_gi_home }}/.install_complete"
+  register: _gi_marker
 
-- name: Not implemented in this slice — fail only if explicitly enabled
-  ansible.builtin.fail:
-    msg: >-
-      oracle_gi_install is scaffolded, not implemented, in this engagement.
-      To install Grid Infrastructure standalone, fill in gridSetup.sh -silent
-      (CONFIGURE_GIREP_FOR_STANDALONE, filesystem storage, OCR/voting on
-      /grid) and set oracle_gi_install_enabled: true. See defaults/main.yml.
-  when: oracle_gi_install_enabled | bool
+- name: Check whether GI software setup already produced root config
+  ansible.builtin.stat:
+    path: "{{ oracle_gi_home }}/crs/install/crsconfig_params"
+  register: _gi_crsconfig_params
+
+- name: Check whether GI root configuration already started
+  ansible.builtin.stat:
+    path: /etc/systemd/system/oracle-ohasd.service
+  register: _gi_root_started
+
+- name: Record current GI install fact
+  ansible.builtin.set_fact:
+    oracle_gi_installed: "{{ _gi_srvctl.stat.exists and 'CRS-4638' in (_gi_existing_has_check.stdout | default('')) }}"
+
+- name: Install Oracle Grid Infrastructure standalone
+  when:
+    - oracle_gi_install_enabled | bool
+    - not _gi_marker.stat.exists
+    - not oracle_gi_installed
+  block:
+    - name: Check free space for Grid Infrastructure install
+      ansible.builtin.shell: |
+        set -o pipefail
+        df -Pm {{ oracle_gi_base | quote }} | awk 'NR==2 {print $4}'
+      args: { executable: /bin/bash }
+      register: _gi_free_mb
+      changed_when: false
+
+    - name: Fail when Grid Infrastructure has too little free space
+      ansible.builtin.fail:
+        msg: >-
+          Oracle Grid Infrastructure install needs at least
+          {{ oracle_gi_install_min_free_mb }} MB free under {{ oracle_gi_base }};
+          only {{ _gi_free_mb.stdout | trim }} MB is available. Recreate or grow
+          the KVM lab disk before enabling oracle_gi_install.
+      when: (_gi_free_mb.stdout | trim | int) < (oracle_gi_install_min_free_mb | int)
+
+    - name: Verify Grid ASM disk exists for Oracle Restart
+      ansible.builtin.stat:
+        path: "{{ oracle_gi_asm_disks.split(',')[0] }}"
+      register: _gi_asm_disk
+
+    - name: Fail when Grid ASM disk is missing
+      ansible.builtin.fail:
+        msg: >-
+          Oracle Restart requires an ASM disk for Grid metadata in this lab.
+          Expected {{ oracle_gi_asm_disks.split(',')[0] }}. Recreate the KVM
+          lab, or attach the dedicated Grid ASM disk before enabling GI install.
+      when: not _gi_asm_disk.stat.exists
+
+    - name: Check whether an incomplete GI home was unpacked
+      ansible.builtin.stat:
+        path: "{{ oracle_gi_home }}/gridSetup.sh"
+      register: _gi_gridsetup
+
+    - name: Remove incomplete GI home left by a failed installer run
+      ansible.builtin.file:
+        path: "{{ oracle_gi_home }}"
+        state: absent
+      when:
+        - oracle_gi_install_recreate_incomplete_home | bool
+        - _gi_gridsetup.stat.exists
+        - not oracle_gi_installed
+        - not _gi_crsconfig_params.stat.exists
+        - not _gi_root_started.stat.exists
+
+    - name: Ensure GI directories exist
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0775"
+      loop:
+        - "{{ oracle_gi_base }}"
+        - "{{ oracle_gi_home }}"
+        - "{{ oracle_gi_oracle_base }}"
+        - "{{ _gi_stage }}"
+        - "{{ oracle_inventory_loc }}"
+
+    - name: Unzip Grid Infrastructure image into GI home
+      ansible.builtin.unarchive:
+        src: "{{ oracle_stage_dir }}/{{ oracle_install_files.gi_zip }}"
+        dest: "{{ oracle_gi_home }}"
+        remote_src: true
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        creates: "{{ oracle_gi_home }}/gridSetup.sh"
+      become: true
+      become_user: "{{ oracle_user }}"
+      when: not _gi_crsconfig_params.stat.exists
+
+    - name: Remove bundled GI OPatch before upgrade
+      ansible.builtin.file:
+        path: "{{ oracle_gi_home }}/OPatch"
+        state: absent
+      when: not _gi_crsconfig_params.stat.exists
+
+    - name: Upgrade GI OPatch
+      ansible.builtin.unarchive:
+        src: "{{ oracle_stage_dir }}/{{ oracle_patch_files.opatch_zip }}"
+        dest: "{{ oracle_gi_home }}"
+        remote_src: true
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+      become: true
+      become_user: "{{ oracle_user }}"
+      when: not _gi_crsconfig_params.stat.exists
+
+    - name: Write Grid Infrastructure response file
+      ansible.builtin.template:
+        src: gridsetup.rsp.j2
+        dest: "{{ _gi_response_file }}"
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0600"
+      when: not _gi_crsconfig_params.stat.exists
+
+    - name: Write oraInst.loc pointer for GI installer
+      ansible.builtin.copy:
+        dest: /etc/oraInst.loc
+        content: |
+          inventory_loc={{ oracle_inventory_loc }}
+          inst_group={{ oracle_inst_group }}
+        mode: "0644"
+        owner: root
+        group: root
+
+    - name: Detect OS family for GI applyRU path
+      ansible.builtin.set_fact:
+        _gi_apply_ru: >-
+          {{ (ansible_distribution_major_version | default('7')) not in ['7'] }}
+      when: not _gi_crsconfig_params.stat.exists
+
+    - name: Set GI RU extraction paths
+      ansible.builtin.set_fact:
+        _gi_ru_extract_dir: "{{ _gi_stage }}/gi_ru"
+        _gi_ru_extract_marker: >-
+          {{ _gi_stage }}/gi_ru/.{{ (oracle_patch_files.gi_ru_zip | default('p39062956_190000_Linux-x86-64.zip')) }}.extracted
+      when: _gi_apply_ru | default(false) | bool
+
+    - name: Create GI RU extraction directory
+      ansible.builtin.file:
+        path: "{{ _gi_ru_extract_dir }}"
+        state: directory
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0775"
+      when: _gi_apply_ru | default(false) | bool
+
+    - name: Check whether the GI RU bundle is already extracted
+      ansible.builtin.stat:
+        path: "{{ _gi_ru_extract_marker }}"
+      register: _gi_ru_marker
+      when: _gi_apply_ru | default(false) | bool
+
+    - name: Extract GI RU bundle for gridSetup -applyRU
+      ansible.builtin.unarchive:
+        src: "{{ oracle_stage_dir }}/{{ oracle_patch_files.gi_ru_zip }}"
+        dest: "{{ _gi_ru_extract_dir }}"
+        remote_src: true
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+      become: true
+      become_user: "{{ oracle_user }}"
+      when:
+        - _gi_apply_ru | default(false) | bool
+        - not _gi_ru_marker.stat.exists
+
+    - name: Mark GI RU bundle extraction complete
+      ansible.builtin.file:
+        path: "{{ _gi_ru_extract_marker }}"
+        state: touch
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0644"
+      when:
+        - _gi_apply_ru | default(false) | bool
+        - not _gi_ru_marker.stat.exists
+
+    - name: Resolve extracted GI RU directory for gridSetup -applyRU
+      ansible.builtin.shell: |
+        set -o pipefail
+        root={{ _gi_ru_extract_dir | quote }}
+        configured={{ (oracle_gi_install_apply_ru_component_id | default('')) | quote }}
+
+        if [ -n "$configured" ]; then
+          found="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$configured" -print -quit)"
+          if [ -n "$found" ]; then
+            printf '%s\n' "$found"
+            exit 0
+          fi
+        fi
+
+        while IFS= read -r candidate; do
+          readme="${candidate}/README.html"
+          if [ -f "$readme" ] &&
+             head -80 "$readme" | grep -Eiq 'GI Release Update|Grid Infrastructure.*Release Update'; then
+            printf '%s\n' "$candidate"
+            exit 0
+          fi
+        done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -print | sort)
+
+        echo "No GI Release Update component directory found under $root" >&2
+        exit 1
+      args: { executable: /bin/bash }
+      register: _gi_ru_apply_dir
+      changed_when: false
+      become: true
+      become_user: "{{ oracle_user }}"
+      when: _gi_apply_ru | default(false) | bool
+
+    - name: Run gridSetup for Oracle Restart
+      ansible.builtin.shell: |
+        set -o pipefail
+        cd {{ oracle_gi_home | quote }}
+        ./gridSetup.sh -silent -force -waitforcompletion \
+          -ignorePrereqFailure -ignoreInternalDriverError \
+          {% if _gi_apply_ru | bool -%}
+          -applyRU {{ _gi_ru_apply_dir.stdout | trim | quote }} \
+          {% endif -%}
+          -responseFile {{ _gi_response_file | quote }}
+      args: { executable: /bin/bash }
+      environment:
+        CV_ASSUME_DISTID: OL7
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _gi_setup
+      changed_when: >-
+        _gi_setup.rc == 0 or
+        'Successfully Setup Software' in (_gi_setup.stdout | default('')) or
+        'Successfully configured Oracle Grid Infrastructure' in (_gi_setup.stdout | default(''))
+      failed_when: >-
+        _gi_setup.rc != 0 and
+        'Successfully Setup Software' not in (_gi_setup.stdout | default('')) and
+        'Successfully configured Oracle Grid Infrastructure' not in (_gi_setup.stdout | default(''))
+      when: not _gi_crsconfig_params.stat.exists
+
+    - name: Run GI root scripts
+      ansible.builtin.shell: |
+        set -o pipefail
+        if [ -x {{ oracle_inventory_loc }}/orainstRoot.sh ]; then
+          {{ oracle_inventory_loc }}/orainstRoot.sh
+        fi
+        {{ oracle_gi_home }}/root.sh
+      args: { executable: /bin/bash }
+      register: _gi_root
+      changed_when: true
+      failed_when: _gi_root.rc != 0
+
+    - name: Drop GI install marker
+      ansible.builtin.file:
+        path: "{{ oracle_gi_home }}/.install_complete"
+        state: touch
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0644"
+
+- name: Probe Restart stack after GI install attempt
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [ -x {{ oracle_gi_home }}/bin/crsctl ]; then
+      {{ oracle_gi_home }}/bin/crsctl check has 2>&1 || true
+    else
+      echo "no-crsctl"
+    fi
+  args: { executable: /bin/bash }
+  register: _gi_has_check
+  changed_when: false
+  failed_when: false
+
+- name: Record final GI install facts
+  ansible.builtin.set_fact:
+    oracle_gi_installed: "{{ 'CRS-4638' in (_gi_has_check.stdout | default('')) }}"
+    oracle_gi_home: "{{ oracle_gi_home }}"

@@ -202,7 +202,9 @@
   register: _lsnr_start
   changed_when: true
   failed_when: >-
-    _lsnr_start.rc != 0 and 'TNS-' in _lsnr_start.stdout
+    _lsnr_start.rc != 0 and
+    'TNS-01106' not in (_lsnr_start.stdout | default('')) and
+    'TNS-' in (_lsnr_start.stdout | default(''))
 
 - name: Restart listener where bind inputs changed
   ansible.builtin.shell: |

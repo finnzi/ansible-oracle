@@ -20,7 +20,10 @@ Implemented:
   per-instance filesystem layout.
 - DB home install, standalone instance creation, listener, and `super_svc`
   service verified in the KVM lab.
-- Restart registration, Data Guard, observer, and patching role interfaces.
+- Oracle Restart/Grid install path, Restart registration, and stop/start recovery
+  verified on the KVM primary.
+- Restart-managed `super_svc` client service.
+- Data Guard, observer, and patching role interfaces.
 - Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
   listener services, and broker TNS aliases.
 - Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
@@ -30,7 +33,6 @@ Implemented:
 
 Still scaffolded or not yet proven end to end:
 
-- Oracle Restart/Grid installation.
 - Data Guard creation, broker configuration, READ ONLY WITH APPLY, and
   switchover. Data Guard broker protection mode must be MAXIMUM AVAILABILITY.
 - FSFO observer installation.
@@ -112,7 +114,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Requirement | Where |
 |---|---|
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard` scaffold |
-| Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage` |
+| Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
 | Patch DB homes and Grid homes | `oracle_patch` |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
@@ -124,7 +126,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Standby-first patch detection | `library/patch_standbyfirst_info.py` |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
-| No ASM | filesystem paths only; no ASM roles |
+| No ASM for database files | database files use filesystem paths; Grid uses a small lab ASM disk for Oracle Restart metadata |
 | Python venv | `scripts/bootstrap-venv.sh` |
 
 ## License

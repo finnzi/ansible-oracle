@@ -1,10 +1,10 @@
 ---
 # playbooks/01-install-grid.yml — install Oracle Restart (Grid standalone).
-# SCAFFOLDED in this slice: the role verifies the installer is staged and
-# reports readiness; it does not install (set oracle_gi_install_enabled=true
-# once implemented). oracle_restart_manage then degrades gracefully.
+# The role is opt-in because Grid install is slow and media-dependent. Set
+# oracle_gi_install_enabled=true to install Oracle Restart into the current GI
+# home; when disabled, the role reports the existing Restart state.
 
-- name: Install Oracle Grid Infrastructure (Restart) — scaffolded
+- name: Install Oracle Grid Infrastructure (Restart)
   hosts: oracle_db_hosts
   become: true
   roles:

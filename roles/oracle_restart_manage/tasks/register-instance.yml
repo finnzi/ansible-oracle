@@ -31,8 +31,7 @@
       -dbname {{ inst.name }} \
       -instance {{ inst.name }} \
       -startoption OPEN \
-      -stopoption IMMEDIATE \
-      -autostart ENABLE
+      -stopoption IMMEDIATE
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -79,24 +78,81 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" enable database -d {{ inst.name }}
-    "$ORACLE_HOME/bin/srvctl" enable listener -listener LISTENER_{{ inst.name | upper }}
+
+    enable_resource() {
+      label="$1"
+      shift
+      enable_output="$("$ORACLE_HOME/bin/srvctl" enable "$@" 2>&1)"
+      enable_rc=$?
+      printf '%s\n' "$enable_output"
+      if [ "$enable_rc" -ne 0 ] &&
+         ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
+        return "$enable_rc"
+      fi
+      if [ "$enable_rc" -eq 0 ]; then
+        printf '%s_ENABLED\n' "$label"
+      else
+        printf '%s_ALREADY_ENABLED\n' "$label"
+      fi
+    }
+
+    enable_resource DATABASE database -d {{ inst.name }}
+    database_rc=$?
+    enable_resource LISTENER listener -listener LISTENER_{{ inst.name | upper }}
+    listener_rc=$?
+
+    if [ "$database_rc" -ne 0 ]; then
+      exit "$database_rc"
+    fi
+    exit "$listener_rc"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _srvctl_enable
-  changed_when: false
-  failed_when: false
+  changed_when: >-
+    'DATABASE_ENABLED' in (_srvctl_enable.stdout | default('')) or
+    'LISTENER_ENABLED' in (_srvctl_enable.stdout | default(''))
+  failed_when: _srvctl_enable.rc != 0
 
 - name: Srvctl start database + listener (if not already running)
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" start listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || true
-    "$ORACLE_HOME/bin/srvctl" start database -d {{ inst.name }} 2>&1 || true
+
+    start_resource() {
+      label="$1"
+      shift
+      status_output="$("$ORACLE_HOME/bin/srvctl" status "$@" 2>&1)" || true
+      printf '%s\n' "$status_output"
+      if printf '%s\n' "$status_output" | grep -Eq 'is running|is already running|running on node'; then
+        printf '%s_ALREADY_RUNNING\n' "$label"
+        return 0
+      fi
+
+      start_output="$("$ORACLE_HOME/bin/srvctl" start "$@" 2>&1)"
+      start_rc=$?
+      printf '%s\n' "$start_output"
+      if [ "$start_rc" -ne 0 ] &&
+         ! printf '%s\n' "$start_output" | grep -Eiq 'already running|PRCR-1079'; then
+        return "$start_rc"
+      fi
+      printf '%s_STARTED\n' "$label"
+    }
+
+    start_resource LISTENER listener -listener LISTENER_{{ inst.name | upper }}
+    listener_rc=$?
+    start_resource DATABASE database -d {{ inst.name }}
+    database_rc=$?
+
+    if [ "$listener_rc" -ne 0 ]; then
+      exit "$listener_rc"
+    fi
+    exit "$database_rc"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _srvctl_start
-  changed_when: "'PRCR-1079' not in (_srvctl_start.stdout | default(''))"
-  failed_when: false
+  changed_when: >-
+    'LISTENER_STARTED' in (_srvctl_start.stdout | default('')) or
+    'DATABASE_STARTED' in (_srvctl_start.stdout | default(''))
+  failed_when: _srvctl_start.rc != 0

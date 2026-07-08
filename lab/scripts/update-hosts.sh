@@ -57,6 +57,8 @@ block() {
 # Uses sudo only if /etc/hosts isn't writable directly.
 strip_block() {
   local tmp; tmp="$(mktemp)"
+  local aliases
+  aliases="superdb1\\.domain\\.is|superdb1|superdb\\.domain\\.is|superdb|superdb2\\.domain\\.is|superdb2|superdc1\\.domain\\.is|superdc1|superdc2\\.domain\\.is|superdc2|observer\\.domain\\.is|observer"
   if [ -w /etc/hosts ]; then
     SUDO=""
   elif sudo -n true 2>/dev/null; then
@@ -67,9 +69,10 @@ strip_block() {
     return 1
   fi
   if $SUDO test -f /etc/hosts; then
-    $SUDO awk -v b="${HOSTS_MARKER_BEGIN}" -v e="${HOSTS_MARKER_END}" '
+    $SUDO awk -v b="${HOSTS_MARKER_BEGIN}" -v e="${HOSTS_MARKER_END}" -v aliases="${aliases}" '
       $0==b {ind=1; next}
       $0==e {ind=0; next}
+      $0 ~ "(^|[[:space:]])(" aliases ")([[:space:]]|$)" {next}
       !ind {print}
     ' /etc/hosts > "${tmp}" 2>/dev/null || cp /etc/hosts "${tmp}" 2>/dev/null || true
     $SUDO cp "${tmp}" /etc/hosts 2>/dev/null || true

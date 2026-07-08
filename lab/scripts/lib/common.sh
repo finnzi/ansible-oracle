@@ -27,6 +27,7 @@ LAB_BRIDGE_NAME="${LAB_BRIDGE_NAME:-virbr-oracle}"
 LAB_DOMAIN="${LAB_DOMAIN:-domain.is}"
 LAB_OS_VERSION="${LAB_OS_VERSION:-9}"
 LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-120G}"
+LAB_GRID_DISK_SIZE="${LAB_GRID_DISK_SIZE:-20G}"
 LAB_DB_MEMORY_MIB="${LAB_DB_MEMORY_MIB:-12288}"
 LAB_OBSERVER_MEMORY_MIB="${LAB_OBSERVER_MEMORY_MIB:-4096}"
 LAB_DB_VCPUS="${LAB_DB_VCPUS:-4}"
@@ -121,6 +122,13 @@ vm_vcpus() {
     superdb1|superdb2) echo "${LAB_DB_VCPUS}" ;;
     observer) echo "${LAB_OBSERVER_VCPUS}" ;;
     *) die "Unknown VM: $1" ;;
+  esac
+}
+
+vm_has_grid_disk() {
+  case "$1" in
+    superdb1|superdb2) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -225,6 +233,12 @@ write_files:
     content: |
       PermitRootLogin prohibit-password
 runcmd:
+  - [ sh, -lc, "growpart /dev/vda 4 || true" ]
+  - [ sh, -lc, "pvresize /dev/vda4 || true" ]
+  - [ sh, -lc, "lvextend -r -l +100%FREE /dev/vg_main/lv_root || true" ]
+  - [ sh, -lc, "echo 'KERNEL==\"vdb\", OWNER=\"oracle\", GROUP=\"asmadmin\", MODE=\"0660\"' > /etc/udev/rules.d/99-ansible-oracle-grid-asm.rules" ]
+  - [ sh, -lc, "udevadm control --reload-rules || true" ]
+  - [ sh, -lc, "udevadm trigger --name-match=vdb || true" ]
   - [ mkdir, -p, /u01/stage, /super/app/oracle, /super/d01, /super/a01, /super/f01, /super/r01, /grid ]
   - [ sh, -lc, "grep -q '^u01_stage ' /etc/fstab || echo 'u01_stage /u01/stage 9p trans=virtio,version=9p2000.L,ro,nofail,_netdev 0 0' >> /etc/fstab" ]
   - [ sh, -lc, "modprobe 9pnet_virtio || dnf -y install \"kernel-uek-modules-\$(uname -r)\" || true" ]
@@ -250,9 +264,10 @@ EOF
 }
 
 write_domain_xml() {
-  local short="$1" name disk seed domain_xml stage_mount_source
+  local short="$1" name disk grid_disk seed domain_xml stage_mount_source
   name="$(vm_name "${short}")"
   disk="${VM_DIR}/${short}.qcow2"
+  grid_disk="${VM_DIR}/${short}-grid.qcow2"
   seed="${SEED_DIR}/${short}.iso"
   domain_xml="${VM_DIR}/${short}.xml"
   stage_mount_source="$(lab_stage_mount_source)"
@@ -283,6 +298,18 @@ write_domain_xml() {
       <source file='${disk}'/>
       <target dev='vda' bus='virtio'/>
     </disk>
+EOF
+  if vm_has_grid_disk "${short}"; then
+    cat >> "${domain_xml}" <<EOF
+    <disk type='file' device='disk'>
+      <driver name='qemu' type='qcow2'/>
+      <source file='${grid_disk}'/>
+      <target dev='vdb' bus='virtio'/>
+      <serial>ansible-oracle-grid-${short}</serial>
+    </disk>
+EOF
+  fi
+  cat >> "${domain_xml}" <<EOF
     <disk type='file' device='cdrom'>
       <driver name='qemu' type='raw'/>
       <source file='${seed}'/>

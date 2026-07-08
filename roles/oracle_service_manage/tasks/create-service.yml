@@ -69,3 +69,44 @@
   failed_when: >-
     _srvctl_add_svc.rc != 0 and 'already exists' not in (_srvctl_add_svc.stdout | default(''))
   when: oracle_restart_available | bool
+
+- name: Srvctl enable + start service (when Restart owns the DB)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+
+    enable_output="$("$ORACLE_HOME/bin/srvctl" enable service -db {{ inst.name }} -service {{ _svc_name }} 2>&1)"
+    enable_rc=$?
+    printf '%s\n' "$enable_output"
+    if [ "$enable_rc" -ne 0 ] &&
+       ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
+      exit "$enable_rc"
+    fi
+    if [ "$enable_rc" -eq 0 ]; then
+      echo SERVICE_ENABLED
+    fi
+
+    status_output="$("$ORACLE_HOME/bin/srvctl" status service -db {{ inst.name }} -service {{ _svc_name }} 2>&1)" || true
+    printf '%s\n' "$status_output"
+    if printf '%s\n' "$status_output" | grep -Eq 'is running|is already running'; then
+      echo SERVICE_ALREADY_RUNNING
+      exit 0
+    fi
+
+    start_output="$("$ORACLE_HOME/bin/srvctl" start service -db {{ inst.name }} -service {{ _svc_name }} 2>&1)"
+    start_rc=$?
+    printf '%s\n' "$start_output"
+    if [ "$start_rc" -ne 0 ] &&
+       ! printf '%s\n' "$start_output" | grep -Eiq 'already running|PRCR-1079'; then
+      exit "$start_rc"
+    fi
+    echo SERVICE_STARTED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_start_svc
+  changed_when: >-
+    'SERVICE_ENABLED' in (_srvctl_start_svc.stdout | default('')) or
+    'SERVICE_STARTED' in (_srvctl_start_svc.stdout | default(''))
+  failed_when: _srvctl_start_svc.rc != 0
+  when: oracle_restart_available | bool

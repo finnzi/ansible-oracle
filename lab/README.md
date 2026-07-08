@@ -157,6 +157,8 @@ when preparing a host or debugging permissions.
 
 - Root disks default to `120G` qcow2 overlays. Override with
   `LAB_ROOT_DISK_SIZE`.
+- DB VMs also get a small Grid disk at `vdb` for Oracle Restart metadata.
+  Override with `LAB_GRID_DISK_SIZE`.
 - DB nodes default to `12288` MiB and 4 vCPUs. Override with
   `LAB_DB_MEMORY_MIB` and `LAB_DB_VCPUS`.
 - The observer defaults to `4096` MiB and 2 vCPUs. Override with

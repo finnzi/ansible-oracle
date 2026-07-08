@@ -51,9 +51,10 @@ ensure_network() {
 }
 
 ensure_vm() {
-  local short="$1" name disk seed
+  local short="$1" name disk grid_disk seed
   name="$(vm_name "${short}")"
   disk="${VM_DIR}/${short}.qcow2"
+  grid_disk="${VM_DIR}/${short}-grid.qcow2"
   seed="${SEED_DIR}/${short}.iso"
 
   write_seed "${short}"
@@ -61,6 +62,11 @@ ensure_vm() {
   if ! [ -f "${disk}" ]; then
     log "Creating ${short} root disk (${LAB_ROOT_DISK_SIZE})"
     qemu-img create -f qcow2 -F qcow2 -b "${BASE_IMAGE}" "${disk}" "${LAB_ROOT_DISK_SIZE}" >/dev/null
+  fi
+
+  if vm_has_grid_disk "${short}" && ! [ -f "${grid_disk}" ]; then
+    log "Creating ${short} Grid ASM disk (${LAB_GRID_DISK_SIZE})"
+    qemu-img create -f qcow2 "${grid_disk}" "${LAB_GRID_DISK_SIZE}" >/dev/null
   fi
 
   if ! virsh_cmd dominfo "${name}" >/dev/null 2>&1; then

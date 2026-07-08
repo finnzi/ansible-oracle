@@ -7,7 +7,8 @@
 oracle_user: oracle
 oracle_group: oinstall
 oracle_primary_group_role: dba
-oracle_roles: [dba, oper, backupdba, dgdba, kmdba]
+oracle_asm_group: asmadmin
+oracle_roles: [dba, oper, asmadmin, backupdba, dgdba, kmdba]
 
 # The preinstall RPM usually sets these but a lab image may not have it. The
 # role is idempotent regardless.
@@ -24,6 +25,7 @@ oracle_common_packages:
   - libstdc++-devel
   - libxcrypt-compat
   - make
+  - policycoreutils-python-utils
   - sysstat
   - unzip
 

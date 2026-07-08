@@ -5,9 +5,9 @@
 #   00 prep OS  -> 02 install DB home -> 03 create instance + listener ->
 #   04 register with Restart + create service -> 99 run tests.
 #
-# Scaffolded playbooks (01 grid, 05 dataguard, 06 observer, 07 patch) are
-# imported but currently no-ops or fact-gathering only. To exercise them
-# individually, run the playbook directly (e.g. ansible-playbook playbooks/07-patch.yml).
+# Media-dependent playbooks such as 01 grid install are imported with opt-in
+# defaults. Data Guard, observer, and patch application remain scaffolded or
+# partial; run numbered playbooks directly when developing a specific slice.
 #
 # Note: import_playbook does not accept a `name:` on the import itself, so
 # each imported playbook carries a clearly-named top-level play.
@@ -15,7 +15,7 @@
 - name: Vertical slice — prepare the OS for Oracle
   ansible.builtin.import_playbook: 00-prep-os.yml
 
-- name: Scaffolded — install Oracle Grid Infrastructure (Restart)
+- name: Install Oracle Grid Infrastructure (Restart)
   ansible.builtin.import_playbook: 01-install-grid.yml
 
 - name: Install Oracle Database software

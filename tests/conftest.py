@@ -64,7 +64,7 @@ def db_conn_kwargs():
     }
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def db_connection(oracledb, db_conn_kwargs):
     """A live Oracle connection to the client service. Skips if unreachable."""
     if not _port_open(db_conn_kwargs["host"], db_conn_kwargs["port"]):

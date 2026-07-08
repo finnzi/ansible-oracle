@@ -1,23 +1,15 @@
 ---
 # defaults/main.yml for oracle_gi_install
 #
-# SCOPE: stubbed in the vertical slice. The interface is fixed so a future
-# engagement can fill in the Grid Infrastructure (Oracle Restart) silent
-# install without touching playbooks that consume this role.
-#
-# WHAT TO IMPLEMENT (next engagement):
-#   1. Unzip V982068-01-...Grid.Infrastructure.zip into /grid/19c/gi_homeN.
-#   2. Run gridSetup.sh -silent with a response file for a
-#      "CONFIGURE_GIREP_FOR_STANDALONE" (Oracle Restart) install, filesystem
-#      storage (no ASM), OCR/voting on /grid.
-#   3. Run orainstRoot.sh + root.sh.
-#   4. Mark the home with .install_complete for idempotency.
-# Until then, oracle_restart_manage detects that Restart is absent and
-# degrades gracefully (oracle_restart_required defaults to false in the slice).
+# Install Oracle Grid Infrastructure for a standalone server (Oracle Restart).
+# Database files stay on normal filesystems. The lab uses a small dedicated ASM
+# disk only for Oracle Restart/Grid metadata.
 
 oracle_user: oracle
 oracle_group: oinstall
+oracle_asm_group: asmadmin
 oracle_gi_base: /grid
+oracle_gi_oracle_base: /grid/app/oracle
 oracle_gi_homes:
   - { suffix: 19c/gi_home1, current: true }
   - { suffix: 19c/gi_home2, current: false }
@@ -25,6 +17,24 @@ oracle_gi_homes:
 oracle_install_files:
   gi_zip: "V982068-01-Oracle.19c.Grid.Infrastructure.zip"
 oracle_stage_dir: /u01/stage
+oracle_patch_files:
+  opatch_zip: "p6880880_190000_Linux-x86-64.zip"
+  gi_ru_zip: "p39062956_190000_Linux-x86-64.zip"
 
-# Whether to hard-fail if asked to actually install. Flip to true once filled in.
+oracle_inventory_loc: /opt/oracle/oraInventory
+oracle_inst_group: oinstall
+
+oracle_gi_asm_diskgroup_name: RESTART
+oracle_gi_asm_diskgroup_redundancy: EXTERNAL
+oracle_gi_asm_diskgroup_ausize: 4
+oracle_gi_asm_disk_discovery_string: /dev/vdb
+oracle_gi_asm_disks: /dev/vdb
+oracle_gi_asm_sys_password: "{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+oracle_gi_asm_monitor_password: "{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+oracle_gi_install_cluster_name: restart
+oracle_gi_install_min_free_mb: 20480
+oracle_gi_install_apply_ru_component_id: "39036936"
+oracle_gi_install_recreate_incomplete_home: true
+
+# Keep the install explicit while this path is being hardened in the lab.
 oracle_gi_install_enabled: false

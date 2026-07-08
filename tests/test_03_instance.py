@@ -82,12 +82,18 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "register: _guest_hosts" in network_tasks
     assert "Restart listener where bind inputs changed" in network_tasks
     assert "_listener_vip_assign.changed" in network_tasks
+    assert "'TNS-01106' not in (_lsnr_start.stdout | default(''))" in network_tasks
     assert "Probe firewalld state" in network_tasks
     assert "firewall-cmd --add-port={{ inst._port }}/tcp" in network_tasks
     assert "firewall-cmd --permanent --add-port={{ inst._port }}/tcp" in network_tasks
     assert "r.inst is defined" in network_tasks
     assert "r.item is defined" not in network_tasks
     assert "ALTER SYSTEM REGISTER" in service_tasks
+    assert "Srvctl enable + start service" in service_tasks
+    assert "srvctl\" enable service" in service_tasks
+    assert "srvctl\" start service" in service_tasks
+    assert "already enabled|PRCR-1002" in service_tasks
+    assert "already running|PRCR-1079" in service_tasks
     assert "SQLCODE = -44305" in service_tasks
     assert "SQLCODE = -446" not in service_tasks
     assert "failed_when: false" not in service_tasks

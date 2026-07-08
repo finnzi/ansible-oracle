@@ -23,6 +23,8 @@ The supported lab path is now KVM/libvirt:
 - Oracle Linux cloud image backing disks, defaulting to OL9 with `LAB_OS_VERSION`
   available for OL10 experiments.
 - Cloud-init seed ISOs for hostnames and root SSH.
+- Root disks grow on first boot, and DB VMs get a dedicated `vdb` Grid disk for
+  Oracle Restart metadata.
 - `~/sources/oracle` mounted read-only at `/u01/stage`.
 - Generated `inventory/hosts.yml`.
 - `/etc/hosts` block for `superdb.domain.is`, `superdc1.domain.is`,
@@ -53,6 +55,10 @@ The supported lab path is now KVM/libvirt:
   - DB home install with OPatch/RU handling.
   - DBCA-created `super` database under `/super`.
   - Listener and `super_svc` client service reachable from the control host.
+  - Oracle Restart/Grid install on `superdb1`, with CSS, listener, database,
+    and `super_svc` registered and managed by Restart.
+  - Restart ownership is verified by stopping/starting `super` through `srvctl`
+    and waiting for SQL readiness.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - Primary/standby listener aliases `superdc1.domain.is` and
@@ -64,9 +70,8 @@ The supported lab path is now KVM/libvirt:
 
 ## Not Yet Proven End To End
 
-- Full `playbooks/site.yml` including scaffolded Grid/Data Guard/observer/patch
-  stages.
-- Oracle Restart/Grid installation and crash-restart ownership.
+- Full `playbooks/site.yml` including Data Guard/observer/patch stages.
+- Oracle Restart/Grid installation on `superdb2`.
 - Physical standby creation, Data Guard broker configuration, MAXIMUM
   AVAILABILITY enforcement, read-only apply, switchover, and FSFO.
 - Actual patch apply and dual-home switch.
@@ -88,6 +93,10 @@ The supported lab path is now KVM/libvirt:
 - `sudo` is not available non-interactively here, so package installation and
   libvirt group/service changes need to be done by the user outside this agent
   session.
+- The host had a stale unmarked Docker-era `/etc/hosts` entry for
+  `superdb.domain.is` pointing at `172.28.0.11`. `update-hosts.sh` now scrubs
+  known lab aliases before writing the KVM block, but applying it still needs
+  root or passwordless sudo on the host.
 
 ## Useful Commands
 
@@ -95,6 +104,7 @@ The supported lab path is now KVM/libvirt:
 ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 ./scripts/bootstrap-venv.sh && source .venv/bin/activate
 ./lab/scripts/lab-up.sh
+ansible-playbook playbooks/01-install-grid.yml --limit superdb1 -e oracle_gi_install_enabled=true
 ansible-playbook playbooks/site.yml
 ./scripts/run-tests.sh
 ```

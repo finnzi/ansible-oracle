@@ -283,7 +283,18 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     assert (state_dir / "vms/observer.xml").is_file()
     assert (state_dir / "seed/superdb1.iso").is_file()
     user_data = (state_dir / "seed/superdb1-user-data").read_text(encoding="utf-8")
+    assert "growpart /dev/vda 4" in user_data
+    assert "pvresize /dev/vda4" in user_data
+    assert "lvextend -r -l +100%FREE /dev/vg_main/lv_root" in user_data
+    assert "99-ansible-oracle-grid-asm.rules" in user_data
+    assert "asmadmin" in user_data
     assert 'kernel-uek-modules-$(uname -r)' in user_data
+
+    domain_xml = (state_dir / "vms/superdb1.xml").read_text(encoding="utf-8")
+    assert "superdb1-grid.qcow2" in domain_xml
+    assert "<target dev='vdb' bus='virtio'/>" in domain_xml
+    observer_xml = (state_dir / "vms/observer.xml").read_text(encoding="utf-8")
+    assert "observer-grid.qcow2" not in observer_xml
 
     iso_listing = subprocess.run(
         ["isoinfo", "-J", "-i", str(state_dir / "seed/superdb1.iso"), "-f"],
@@ -298,10 +309,13 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
 
 def test_update_hosts_standalone_uses_dedicated_listener_vip():
     result = run_lab_script("update-hosts.sh", "--print")
+    script = (REPO_ROOT / "lab/scripts/update-hosts.sh").read_text(encoding="utf-8")
 
     assert result.returncode == 0
     assert "192.168.87.21  superdb.domain.is superdb" in result.stdout
     assert "192.168.87.11  superdb.domain.is superdb" not in result.stdout
+    assert "superdb\\\\.domain\\\\.is" in script
+    assert "$0 ~ \"(^|[[:space:]])(\" aliases \")([[:space:]]|$)\" {next}" in script
 
 
 def test_update_hosts_dataguard_uses_dedicated_listener_vips():

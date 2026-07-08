@@ -21,9 +21,9 @@ def test_oracle_user_exists(lab_exec):
 
 
 def test_required_groups_exist(lab_exec):
-    r = lab_exec("getent group oinstall dba oper backupdba dgdba kmdba")
+    r = lab_exec("getent group oinstall dba oper asmadmin backupdba dgdba kmdba")
     assert r.returncode == 0, f"groups missing: {r.stderr}"
-    for grp in ("oinstall", "dba", "oper", "backupdba", "dgdba", "kmdba"):
+    for grp in ("oinstall", "dba", "oper", "asmadmin", "backupdba", "dgdba", "kmdba"):
         assert grp in r.stdout, f"group {grp} not found"
 
 
