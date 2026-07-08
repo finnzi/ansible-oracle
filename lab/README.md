@@ -24,6 +24,7 @@ Install the equivalent of these packages for your distribution:
 - `genisoimage`
 - `curl`
 - OpenSSH client
+- `rsync` if using `prepare-host-fedora.sh` to stage Oracle media
 
 The scripts use `qemu:///system` because the lab needs a bridged/NAT libvirt
 network with fixed DHCP leases. Your user must have permission to manage system
@@ -32,10 +33,11 @@ libvirt/QEMU packages, starting the modular libvirt sockets, adding your user to
 the relevant groups, and then logging out/in:
 
 ```bash
-sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage
-sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket
-sudo usermod -aG libvirt,kvm "$USER"
+./lab/scripts/prepare-host-fedora.sh
 ```
+
+If the script changes your group membership, log out and back in before running
+`lab-up.sh`.
 
 `qemu:///session` is not the default because session libvirt cannot create the
 bridged/NAT lab network on this host without elevated privileges. The lab needs
@@ -92,9 +94,7 @@ traverse `~/sources/oracle`. In that case, put the media somewhere libvirt can
 read it and point `SOURCES_DIR` there, for example:
 
 ```bash
-sudo mkdir -p /var/lib/libvirt/ansible-oracle-sources
-sudo rsync -a --info=progress2 ~/sources/oracle/ /var/lib/libvirt/ansible-oracle-sources/
-sudo chmod -R a+rX /var/lib/libvirt/ansible-oracle-sources
+./lab/scripts/prepare-host-fedora.sh --skip-package-install
 SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources ./lab/scripts/lab-up.sh
 ```
 

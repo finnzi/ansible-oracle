@@ -32,6 +32,23 @@ def run_common(script: str, env: dict[str, str] | None = None) -> subprocess.Com
     )
 
 
+def run_lab_script(
+    script_name: str,
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess:
+    merged_env = os.environ.copy()
+    merged_env.update(env or {})
+    return subprocess.run(
+        [str(REPO_ROOT / "lab/scripts" / script_name), *args],
+        cwd=REPO_ROOT,
+        env=merged_env,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
 def test_required_media_list_is_complete():
     result = run_common("lab_required_media_files")
     inventory_defaults = (REPO_ROOT / "inventory/group_vars/all.yml").read_text(
@@ -97,3 +114,18 @@ def test_allow_missing_media_keeps_os_only_lab_possible(tmp_path: Path):
 
     assert result.returncode == 0, result.stderr
     assert "LAB_ALLOW_MISSING_MEDIA=1" in result.stderr
+
+
+def test_prepare_host_fedora_help_is_safe():
+    result = run_lab_script("prepare-host-fedora.sh", "--help")
+
+    assert result.returncode == 0, result.stderr
+    assert "--skip-package-install" in result.stdout
+    assert "--skip-media-stage" in result.stdout
+
+
+def test_prepare_host_fedora_rejects_unknown_options():
+    result = run_lab_script("prepare-host-fedora.sh", "--bogus")
+
+    assert result.returncode == 1
+    assert "Unknown option: --bogus" in result.stderr
