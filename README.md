@@ -23,6 +23,8 @@ Implemented:
 - Oracle Restart/Grid install path, Restart registration, and stop/start recovery
   verified on the KVM primary.
 - Restart-managed `super_svc` client service.
+- Standby-candidate baseline on `superdb2`: Restart online, DB home present,
+  Grid disk owned for ASM metadata, and no standalone database created.
 - Data Guard, observer, and patching role interfaces.
 - Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
   listener services, and broker TNS aliases.

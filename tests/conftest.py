@@ -26,6 +26,7 @@ SYS_USER = _env("ORACLE_TEST_USER", "sys")
 SYS_PASSWORD = _env("ORACLE_TEST_PASSWORD", "SysPassword1_")
 SSH_USER = _env("ORACLE_TEST_SSH_USER", "root")
 SSH_HOST = _env("ORACLE_TEST_SSH_HOST", "192.168.87.11")
+STANDBY_SSH_HOST = _env("ORACLE_TEST_STANDBY_SSH_HOST", "192.168.87.12")
 SSH_KEY = _env("ORACLE_TEST_SSH_KEY", os.path.expanduser("~/.ssh/lab_oracle"))
 
 
@@ -93,9 +94,8 @@ def db_connection(oracledb, db_conn_kwargs):
 
 
 # ── Remote shell helper ────────────────────────────────────────────────
-@pytest.fixture(scope="session")
-def lab_exec():
-    """Run a shell command on the primary lab VM over SSH."""
+def _ssh_runner(host: str, user: str, key: str):
+    """Build a shell-command runner for a lab VM over SSH."""
     import subprocess
 
     def _run(cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
@@ -107,14 +107,34 @@ def lab_exec():
             "-o", "UserKnownHostsFile=/dev/null",
             "-o", "ConnectTimeout=5",
             "-o", "BatchMode=yes",
-            f"{SSH_USER}@{SSH_HOST}",
+            f"{user}@{host}",
             f"bash -lc {shlex.quote(cmd)}",
         ]
         return subprocess.run(full, capture_output=True, text=True, timeout=timeout)
 
+    return _run
+
+
+@pytest.fixture(scope="session")
+def lab_exec():
+    """Run a shell command on the primary lab VM over SSH."""
+    _run = _ssh_runner(SSH_HOST, SSH_USER, SSH_KEY)
     probe = _run("true")
     if probe.returncode != 0:
         pytest.skip(f"SSH to {SSH_USER}@{SSH_HOST} failed; is the KVM lab up? {probe.stderr}")
+    return _run
+
+
+@pytest.fixture(scope="session")
+def standby_exec():
+    """Run a shell command on the standby-candidate lab VM over SSH."""
+    _run = _ssh_runner(STANDBY_SSH_HOST, SSH_USER, SSH_KEY)
+    probe = _run("true")
+    if probe.returncode != 0:
+        pytest.skip(
+            f"SSH to {SSH_USER}@{STANDBY_SSH_HOST} failed; is the KVM lab up? "
+            f"{probe.stderr}"
+        )
     return _run
 
 

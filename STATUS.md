@@ -59,6 +59,8 @@ The supported lab path is now KVM/libvirt:
     and `super_svc` registered and managed by Restart.
   - Restart ownership is verified by stopping/starting `super` through `srvctl`
     and waiting for SQL readiness.
+  - Oracle Restart/Grid install on `superdb2`, with the DB home present and no
+    accidental standalone database created.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - Primary/standby listener aliases `superdc1.domain.is` and
@@ -71,7 +73,6 @@ The supported lab path is now KVM/libvirt:
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
-- Oracle Restart/Grid installation on `superdb2`.
 - Physical standby creation, Data Guard broker configuration, MAXIMUM
   AVAILABILITY enforcement, read-only apply, switchover, and FSFO.
 - Actual patch apply and dual-home switch.
