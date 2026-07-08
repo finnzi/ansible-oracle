@@ -61,6 +61,9 @@ The supported lab path is now KVM/libvirt:
     and waiting for SQL readiness.
   - Oracle Restart/Grid install on `superdb2`, with the DB home present and no
     accidental standalone database created.
+  - Standby auxiliary preparation on `superdb2`: `initsuper.ora`, matching
+    password file, `/etc/oratab` entry, and NOMOUNT instance reachable through
+    `super_sby_dgb` for the RMAN duplicate path.
   - Primary-side Data Guard preparation on `superdb1`: `dg_broker_start=TRUE`,
     `standby_file_management=AUTO`, FAL/DG config parameters set, deferred
     `SYNC AFFIRM` transport prepared for `super_sby_dgb`, and standby redo logs
@@ -72,9 +75,10 @@ The supported lab path is now KVM/libvirt:
     and `superdb2` binds `superdc2.domain.is` / `192.168.87.32`.
   - Per-host instance overrides are wired but remain dormant until
     Data Guard mode is active, preserving standalone behavior.
-  - Static `_DGMGRL` listener services, broker TNS aliases, and primary
-    `local_listener` registration on `superdc1.domain.is` are verified in the
-    KVM lab.
+  - Static `_DGMGRL` listener services, broker TNS aliases, primary
+    `local_listener` registration on `superdc1.domain.is`, and standby
+    auxiliary SYSDBA connectivity on `super_sby_dgb` are verified in the KVM
+    lab.
 
 ## Not Yet Proven End To End
 

@@ -1,12 +1,14 @@
 """
 test_08_standby_candidate.py - standby VM readiness for the Data Guard slice.
 
-These checks do not assert Data Guard itself yet. They prove the second DB VM
-has the software substrate required before RMAN duplicate and broker setup:
-Oracle Restart, the DB home, the dedicated Grid disk, and no accidental
-standalone database.
+These checks do not assert a completed Data Guard configuration yet. They prove
+the second DB VM has the substrate required before RMAN duplicate and broker
+setup: Oracle Restart, the DB home, the dedicated Grid disk, and no accidental
+standalone/open database.
 """
 from __future__ import annotations
+
+import shlex
 
 import pytest
 
@@ -40,7 +42,20 @@ def test_standby_candidate_grid_disk_is_owned_for_asm(standby_exec):
 
 def test_standby_candidate_has_no_standalone_database(standby_exec):
     pmon = standby_exec("pgrep -x ora_pmon_super")
-    assert pmon.returncode != 0, "super PMON should not be running on standby candidate"
+    if pmon.returncode == 0:
+        sql = (
+            "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+            "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+            "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+            "SELECT status FROM v$instance;\n"
+            "EXIT;\n"
+            "SQL"
+        )
+        state = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
+        assert state.returncode == 0, state.stderr
+        assert "STARTED" in state.stdout
+        assert "MOUNTED" not in state.stdout
+        assert "OPEN" not in state.stdout
 
     oratab = standby_exec("grep -E '^super:' /etc/oratab 2>/dev/null || true")
-    assert oratab.stdout.strip() == ""
+    assert oratab.stdout.strip() in ("", "super:/super/app/oracle/db_home1:N")

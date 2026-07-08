@@ -1,8 +1,7 @@
 ---
 # playbooks/05-dataguard.yml — Data Guard broker config + switchover.
-# Primary preparation is implemented behind oracle_dataguard_prepare_primary.
-# Full standby duplicate/broker/switchover remains scaffolded behind
-# oracle_dataguard_enabled.
+# Primary and standby auxiliary preparation run by default. Full standby
+# duplicate/broker/switchover remains scaffolded behind oracle_dataguard_enabled.
 
 - name: Configure Data Guard
   hosts: oracle_db_hosts
@@ -13,3 +12,6 @@
         oracle_network_dataguard_enabled: true
         oracle_lab_host_map_mode: dataguard
     - role: oracle_dataguard
+      vars:
+        oracle_dataguard_prepare_primary: true
+        oracle_dataguard_prepare_standby: true

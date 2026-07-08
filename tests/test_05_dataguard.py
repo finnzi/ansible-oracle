@@ -57,6 +57,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     dataguard_prepare = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/prepare-primary.yml"
     ).read_text(encoding="utf-8")
+    dataguard_prepare_standby = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/prepare-standby.yml"
+    ).read_text(encoding="utf-8")
     dataguard_playbook = (
         REPO_ROOT / "playbooks/05-dataguard.yml"
     ).read_text(encoding="utf-8")
@@ -99,9 +102,13 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     )
     assert "Prepare primary database for Data Guard" in dataguard_tasks
     assert "oracle_dataguard_prepare_primary | bool" in dataguard_tasks
+    assert "Prepare standby auxiliary for Data Guard" in dataguard_tasks
+    assert "oracle_dataguard_prepare_standby | bool" in dataguard_tasks
     assert "hosts: oracle_db_hosts" in dataguard_playbook
     assert "oracle_network_dataguard_enabled: true" in dataguard_playbook
     assert "oracle_lab_host_map_mode: dataguard" in dataguard_playbook
+    assert "oracle_dataguard_prepare_primary: true" in dataguard_playbook
+    assert "oracle_dataguard_prepare_standby: true" in dataguard_playbook
     assert "dependencies: []" in dataguard_meta
     assert "standby_file_management" in dataguard_prepare
     assert "dg_broker_start" in dataguard_prepare
@@ -112,6 +119,10 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "local_listener" in dataguard_prepare
     assert "ALTER SYSTEM REGISTER" in dataguard_prepare
     assert "ALTER DATABASE ADD STANDBY LOGFILE" in dataguard_prepare
+    assert "STARTUP NOMOUNT" in dataguard_prepare_standby
+    assert "Restart standby auxiliary when pfile changes" in dataguard_prepare_standby
+    assert "orapwd" in dataguard_prepare_standby
+    assert "{{ _dg_standby_unique_name }}_dgb as sysdba" in dataguard_prepare_standby
     assert "_DGMGRL" in listener_template
     assert "dg_primary_unique = inst.dg_primary_db_unique_name" in tns_template
     assert "dg_standby_unique = inst.dg_standby_db_unique_name" in tns_template
@@ -211,6 +222,36 @@ def test_dataguard_listener_identities(lab_exec, standby_exec):
     assert "super_DGMGRL" in primary_listener.stdout
     assert "HOST=192.168.87.32" in standby_listener.stdout
     assert "super_sby_DGMGRL" in standby_listener.stdout
+
+
+def test_standby_auxiliary_prerequisites(standby_exec):
+    pfile = standby_exec("test -f /super/app/oracle/db_home1/dbs/initsuper.ora")
+    pwfile = standby_exec("test -f /super/app/oracle/db_home1/dbs/orapwsuper")
+    oratab = standby_exec("grep -Fx 'super:/super/app/oracle/db_home1:N' /etc/oratab")
+    assert pfile.returncode == 0
+    assert pwfile.returncode == 0
+    assert oratab.returncode == 0, oratab.stdout + oratab.stderr
+
+    pfile_text = standby_exec("cat /super/app/oracle/db_home1/dbs/initsuper.ora")
+    assert "db_unique_name='super_sby'" in pfile_text.stdout
+    assert "fal_server='super_dgb'" in pfile_text.stdout
+    assert (
+        "local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST=superdc2.domain.is)(PORT=1521))'"
+        in pfile_text.stdout
+    )
+
+    sql = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 && "
+        "$ORACLE_HOME/bin/sqlplus -L -S 'sys/SysPassword1_@super_sby_dgb as sysdba' <<'SQL'\n"
+        "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT status FROM v$instance;\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    r = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
+    assert r.returncode == 0, r.stderr
+    assert "ORA-" not in r.stdout
+    assert "STARTED" in r.stdout
 
 
 @pytest.mark.scaffolded

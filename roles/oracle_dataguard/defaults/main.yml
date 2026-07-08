@@ -52,3 +52,7 @@ oracle_dataguard_enabled: false
 # primary-side prerequisites needed by RMAN duplicate and broker setup without
 # creating or switching a standby.
 oracle_dataguard_prepare_primary: false
+
+# Prepare the standby host as an RMAN auxiliary: pfile, password file, oratab,
+# and NOMOUNT instance reachable through the static _DGMGRL listener service.
+oracle_dataguard_prepare_standby: false

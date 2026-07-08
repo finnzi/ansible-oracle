@@ -24,7 +24,8 @@ Implemented:
   verified on the KVM primary.
 - Restart-managed `super_svc` client service.
 - Standby-candidate baseline on `superdb2`: Restart online, DB home present,
-  Grid disk owned for ASM metadata, and no standalone database created.
+  Grid disk owned for ASM metadata, no standalone database created, and a
+  NOMOUNT RMAN auxiliary reachable through `super_sby_dgb`.
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.

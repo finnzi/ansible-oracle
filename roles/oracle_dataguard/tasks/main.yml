@@ -19,6 +19,16 @@
     - oracle_dataguard_prepare_primary | bool
     - "'primary' in group_names"
 
+- name: Prepare standby auxiliary for Data Guard
+  ansible.builtin.include_tasks: prepare-standby.yml
+  loop: "{{ _dg_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  when:
+    - oracle_dataguard_prepare_standby | bool
+    - "'standby' in group_names"
+
 - name: Read live DB facts (so we can report role/open-mode)
   oracle_db_facts:
     service_name: "{{ (_dg_instances | first).service_name | default((_dg_instances | first).name) }}"
