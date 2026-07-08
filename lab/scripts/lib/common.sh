@@ -13,14 +13,15 @@ DOWNLOAD_DIR="${REPO_DIR}/download"
 INVENTORY_DIR="${REPO_DIR}/inventory"
 SOURCES_DIR="${SOURCES_DIR:-${HOME}/sources/oracle}"
 
+LAB_NAME="${LAB_NAME:-ansible-oracle-lab}"
+
 # KVM/libvirt lab state.
-LAB_STATE_DIR="${LAB_STATE_DIR:-${LAB_DIR}/state}"
+LAB_STATE_DIR="${LAB_STATE_DIR:-/var/tmp/${LAB_NAME}}"
 IMAGE_DIR="${LAB_STATE_DIR}/images"
 VM_DIR="${LAB_STATE_DIR}/vms"
 SEED_DIR="${LAB_STATE_DIR}/seed"
 EMPTY_STAGE_DIR="${LAB_STATE_DIR}/empty-stage"
 
-LAB_NAME="${LAB_NAME:-ansible-oracle-lab}"
 LAB_NETWORK_NAME="${LAB_NETWORK_NAME:-ansible-oracle-lab}"
 LAB_BRIDGE_NAME="${LAB_BRIDGE_NAME:-virbr-oracle}"
 LAB_DOMAIN="${LAB_DOMAIN:-domain.is}"
@@ -130,6 +131,7 @@ ssh_pubkey_file() {
 
 ssh_opts() {
   printf '%s\n' \
+    "-F" "/dev/null" \
     "-i" "$(ssh_key_file)" \
     "-o" "StrictHostKeyChecking=no" \
     "-o" "UserKnownHostsFile=/dev/null" \
@@ -165,6 +167,15 @@ path_world_accessible_for_9p() {
       return 1
     fi
   done
+}
+
+existing_path_or_parent() {
+  local path="$1"
+  while [ ! -e "${path}" ]; do
+    [ "${path}" = "/" ] && break
+    path="$(dirname "${path}")"
+  done
+  printf '%s\n' "${path}"
 }
 
 write_network_xml() {
@@ -213,6 +224,7 @@ write_files:
 runcmd:
   - [ mkdir, -p, /u01/stage, /super/app/oracle, /super/d01, /super/a01, /super/f01, /super/r01, /grid ]
   - [ sh, -lc, "grep -q '^u01_stage ' /etc/fstab || echo 'u01_stage /u01/stage 9p trans=virtio,version=9p2000.L,ro,nofail,_netdev 0 0' >> /etc/fstab" ]
+  - [ sh, -lc, "modprobe 9pnet_virtio || dnf -y install \"kernel-uek-modules-\$(uname -r)\" || true" ]
   - [ sh, -lc, "modprobe 9pnet_virtio || true" ]
   - [ sh, -lc, "mount /u01/stage || true" ]
   - [ systemctl, enable, --now, sshd ]
@@ -395,6 +407,25 @@ lab_preflight_libvirt() {
   return "${rc}"
 }
 
+lab_preflight_state_dir() {
+  local check_path
+
+  [ "${VIRSH_URI}" = "qemu:///system" ] || return 0
+  [ "${LAB_SKIP_STATE_ACCESS_CHECK:-0}" != "1" ] || return 0
+
+  check_path="$(existing_path_or_parent "${LAB_STATE_DIR}")"
+  if path_world_accessible_for_9p "${check_path}"; then
+    log "lab state path is system-QEMU traversable: ${LAB_STATE_DIR}"
+    return 0
+  fi
+
+  warn "LAB_STATE_DIR is not traversable/readable by an unprivileged system QEMU process: ${LAB_STATE_DIR}"
+  warn "Use a libvirt-readable state path, for example:"
+  warn "  LAB_STATE_DIR=/var/tmp/${LAB_NAME} ./lab/scripts/lab-up.sh"
+  warn "Set LAB_SKIP_STATE_ACCESS_CHECK=1 only if your libvirt setup grants QEMU access another way."
+  return 1
+}
+
 lab_preflight_session_network_note() {
   if [ "${VIRSH_URI}" = "qemu:///session" ]; then
     warn "VIRSH_URI=qemu:///session is not recommended for this lab."
@@ -470,6 +501,7 @@ lab_preflight_all() {
   lab_preflight_session_network_note
   lab_preflight_libvirt_groups
   lab_preflight_libvirt || rc=1
+  lab_preflight_state_dir || rc=1
   lab_preflight_ssh_key || rc=1
   lab_preflight_sources || rc=1
   return "${rc}"

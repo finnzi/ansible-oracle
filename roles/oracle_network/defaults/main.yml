@@ -9,6 +9,9 @@ oracle_user: oracle
 oracle_group: oinstall
 oracle_instances: []
 
+oracle_lab_guest_hosts: []
+oracle_network_open_firewall: false
+
 # Default listener shape; overridden per-instance in inventory.
 listener_name_template: "LISTENER_{% raw %}{{ inst.name | upper }}{% endraw %}"
 listener_port: 1521

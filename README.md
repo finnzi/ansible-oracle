@@ -51,6 +51,9 @@ source .venv/bin/activate
 # Optional: pin a known Oracle Linux KVM qcow2 image URL.
 # export ORACLE_LINUX_IMAGE_URL=https://yum.oracle.com/templates/OracleLinux/...
 
+# Optional: override the libvirt-readable VM state path.
+# export LAB_STATE_DIR=/var/tmp/ansible-oracle-lab
+
 # On Fedora, this installs/starts libvirt and stages Oracle media for system QEMU.
 # If it adds your user to libvirt/kvm groups, log out and back in before continuing.
 ./lab/scripts/prepare-host-fedora.sh

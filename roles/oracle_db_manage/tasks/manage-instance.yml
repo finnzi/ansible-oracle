@@ -1,6 +1,13 @@
 ---
 # tasks/manage-instance.yml — create one instance via DBCA + reconcile params.
-# `inst` is in scope (one element of _db_instances).
+# `inst` is in scope (one element of oracle_instances).
+
+- name: Resolve current ORACLE_HOME for this instance
+  ansible.builtin.set_fact:
+    _home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+    _dbca_stage: "{{ inst.oracle_base }}/.stage_{{ inst.name }}"
+    _dbca_response_file: "{{ inst.oracle_base }}/.stage_{{ inst.name }}/dbca.rsp"
 
 - name: Check if instance already exists (oratab + DB open)
   ansible.builtin.shell: |
@@ -15,10 +22,19 @@
     _instance_exists: "{{ _oratab.stdout | trim == 'present' }}"
 
 # ── DBCA create ───────────────────────────────────────────────────────
+- name: Create writable DBCA staging area
+  ansible.builtin.file:
+    path: "{{ _dbca_stage }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  when: not _instance_exists
+
 - name: Stage DBCA response file
   ansible.builtin.template:
     src: dbca.rsp.j2
-    dest: "{{ oracle_stage_dir }}/{{ inst.name }}_dbca.rsp"
+    dest: "{{ _dbca_response_file }}"
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0644"
@@ -27,38 +43,60 @@
 - name: Run DBCA -createDatabase (slow — many minutes)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_HOME={{ _home_path }}
     "$ORACLE_HOME/bin/dbca" -silent -createDatabase \
-      -responseFile {{ oracle_stage_dir }}/{{ inst.name }}_dbca.rsp
+      -responseFile {{ _dbca_response_file }}
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dbca
   when: not _instance_exists
-  changed_when: "'100% complete' in (_dbca.stdout | default('')) or _dbca.rc == 0"
+  changed_when: "'100% complete' in (_dbca.stdout | default(''))"
   failed_when: >-
-    _dbca.rc != 0 and 'already exists' not in (_dbca.stdout | default(''))
+    _dbca.rc != 0 or (
+      '100% complete' not in (_dbca.stdout | default('')) and
+      'already exists' not in (_dbca.stdout | default(''))
+    )
 
-- name: Read live DB facts (open mode, archivelog, flashback, role)
-  oracle_db_facts:
-    service_name: "{{ inst.service_name | default(inst.name) }}"
-    host: "{{ inst.listener_vip | default(inst.name ~ 'db.domain.is') }}"
-    port: "{{ inst.listener_port | default(1521) }}"
-    username: system
-    password: "{{ oracle_lab_system_password }}"
-    role: sysdba
-  register: _dbfacts
+- name: Read live DB facts locally with sqlplus
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF
+    SELECT open_mode || '|' || log_mode || '|' || flashback_on || '|' ||
+           database_role || '|' || force_logging
+      FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dbfacts_sql
   when: _instance_exists or (_dbca is success)
+  changed_when: false
+  failed_when: false
   retries: 5
   delay: 5
-  until: _dbfacts.facts.reachable | default(false)
-  ignore_errors: true
+  until:
+    - _dbfacts_sql.rc == 0
+    - "'|' in (_dbfacts_sql.stdout | default(''))"
+
+- name: Parse live DB facts
+  ansible.builtin.set_fact:
+    _dbfacts_fields: "{{ (_dbfacts_sql.stdout | trim).split('|') }}"
+    _db_reachable: true
+  when:
+    - _dbfacts_sql is defined
+    - _dbfacts_sql.rc == 0
+    - "'|' in (_dbfacts_sql.stdout | default(''))"
 
 # ── Reconcile runtime parameters (idempotent) ─────────────────────────
 - name: Apply memory / archivelog / flashback / force-logging settings
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_HOME={{ _home_path }}
     export ORACLE_SID={{ inst.name }}
     "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
     ALTER SYSTEM SET sga_target={{ (inst.memory | default(oracle_default_memory)).sga_target | default(oracle_default_memory.sga_target) }} SCOPE=BOTH SID='*';
@@ -74,30 +112,37 @@
   become: true
   become_user: "{{ oracle_user }}"
   register: _params_sql
-  changed_when: "'System altered' in (_params_sql.stdout | default(''))"
-  failed_when: false
-  when: _dbfacts.facts.reachable | default(false)
+  changed_when: false
+  failed_when: >-
+    _params_sql.rc != 0 or
+    'ORA-' in (_params_sql.stdout | default('')) or
+    'SP2-' in (_params_sql.stdout | default(''))
+  when: _db_reachable | default(false)
 
 # These require restarts of the right kind; gate on the *current* value so we
 # only change them when needed.
 - name: Toggle ARCHIVELOG mode (if differs from desired)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_HOME={{ _home_path }}
     export ORACLE_SID={{ inst.name }}
-    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | tail -1
-    SET PAGES 0 FEEDBACK OFF
+    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | awk 'NF {gsub(/^[ \t]+|[ \t]+$/, ""); print; exit}'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT log_mode FROM v$database;
     C
     )"
     want="{{ 'ARCHIVELOG' if (inst.archivelog | default(true)) else 'NOARCHIVELOG' }}"
     if [ "${cur// /}" != "${want}" ]; then
-      "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'S'
-      SHUTDOWN IMMEDIATE;
-      STARTUP MOUNT;
-      ALTER DATABASE ARCHIVELOG;
-      ALTER DATABASE OPEN;
-      S
+      printf '%s\n' \
+        'SHUTDOWN IMMEDIATE;' \
+        'STARTUP MOUNT;' \
+        {% if inst.archivelog | default(true) -%}
+        'ALTER DATABASE ARCHIVELOG;' \
+        {% else -%}
+        'ALTER DATABASE NOARCHIVELOG;' \
+        {% endif -%}
+        'ALTER DATABASE OPEN;' \
+        'EXIT;' | "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
       echo CHANGED
     else
       echo OK
@@ -107,24 +152,26 @@
   become_user: "{{ oracle_user }}"
   register: _archivelog
   changed_when: "'CHANGED' in (_archivelog.stdout | default(''))"
-  failed_when: false
-  when: _dbfacts.facts.reachable | default(false)
+  failed_when: >-
+    _archivelog.rc != 0 or
+    'ORA-' in (_archivelog.stdout | default('')) or
+    'SP2-' in (_archivelog.stdout | default(''))
+  when: _db_reachable | default(false)
 
 - name: Toggle FLASHBACK ON/OFF (if differs from desired)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_HOME={{ _home_path }}
     export ORACLE_SID={{ inst.name }}
-    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | tail -1
-    SET PAGES 0 FEEDBACK OFF
+    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | awk 'NF {gsub(/^[ \t]+|[ \t]+$/, ""); print; exit}'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT flashback_on FROM v$database;
     C
     )"
     want="{{ 'YES' if (inst.flashback | default(false)) else 'NO' }}"
     if [ "${cur// /}" != "${want}" ]; then
-      "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'S'
-      ALTER DATABASE FLASHBACK ON;
-      S
+      printf '%s\n' 'ALTER DATABASE FLASHBACK ON;' 'EXIT;' |
+        "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
       echo CHANGED
     else
       echo OK
@@ -134,24 +181,26 @@
   become_user: "{{ oracle_user }}"
   register: _flashback
   changed_when: "'CHANGED' in (_flashback.stdout | default(''))"
-  failed_when: false
-  when: _dbfacts.facts.reachable | default(false) and (inst.flashback | default(false))
+  failed_when: >-
+    _flashback.rc != 0 or
+    'ORA-' in (_flashback.stdout | default('')) or
+    'SP2-' in (_flashback.stdout | default(''))
+  when: _db_reachable | default(false) and (inst.flashback | default(false))
 
 - name: Toggle FORCE LOGGING (if differs from desired)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_HOME={{ _home_path }}
     export ORACLE_SID={{ inst.name }}
-    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | tail -1
-    SET PAGES 0 FEEDBACK OFF
+    cur="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'C' | awk 'NF {gsub(/^[ \t]+|[ \t]+$/, ""); print; exit}'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT force_logging FROM v$database;
     C
     )"
     want="{{ 'YES' if (inst.force_logging | default(true)) else 'NO' }}"
     if [ "${cur// /}" != "${want}" ]; then
-      "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'S'
-      ALTER DATABASE FORCE LOGGING;
-      S
+      printf '%s\n' 'ALTER DATABASE FORCE LOGGING;' 'EXIT;' |
+        "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
       echo CHANGED
     else
       echo OK
@@ -161,5 +210,8 @@
   become_user: "{{ oracle_user }}"
   register: _forcelog
   changed_when: "'CHANGED' in (_forcelog.stdout | default(''))"
-  failed_when: false
-  when: _dbfacts.facts.reachable | default(false)
+  failed_when: >-
+    _forcelog.rc != 0 or
+    'ORA-' in (_forcelog.stdout | default('')) or
+    'SP2-' in (_forcelog.stdout | default(''))
+  when: _db_reachable | default(false)

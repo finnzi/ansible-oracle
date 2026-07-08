@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lab/scripts/lab-down.sh — stop the KVM/libvirt lab VMs.
 # VM disks are NOT removed by default; pass --purge to undefine VMs and delete
-# lab/state/vms + lab/state/seed.
+# ${LAB_STATE_DIR}/vms + ${LAB_STATE_DIR}/seed.
 
 set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"

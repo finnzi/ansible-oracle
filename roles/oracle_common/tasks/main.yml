@@ -41,6 +41,12 @@
     group: root
     validate: /usr/sbin/visudo -csf %s
 
+- name: Ensure Oracle installer support packages are present
+  ansible.builtin.package:
+    name: "{{ oracle_common_packages }}"
+    state: present
+  when: oracle_common_packages | length > 0
+
 - name: Ensure /u01 base dir exists (owned by oracle)
   ansible.builtin.file:
     path: /u01

@@ -6,11 +6,13 @@
 - name: Set service name
   ansible.builtin.set_fact:
     _svc_name: "{{ inst.service_name | default(inst.name ~ '_svc') }}"
+    _svc_home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
 
 - name: Create + start the client service via DBMS_SERVICE (idempotent)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst._home_path }}
+    export ORACLE_HOME={{ _svc_home_path }}
     export ORACLE_SID={{ inst.name }}
     "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
     SET SERVEROUTPUT ON
@@ -29,10 +31,11 @@
         DBMS_OUTPUT.PUT_LINE('STARTED');
       EXCEPTION
         WHEN OTHERS THEN
-          IF SQLCODE = -446 THEN DBMS_OUTPUT.PUT_LINE('ALREADY_RUNNING'); ELSE RAISE; END IF;
+          IF SQLCODE = -44305 THEN DBMS_OUTPUT.PUT_LINE('ALREADY_RUNNING'); ELSE RAISE; END IF;
       END;
     END;
     /
+    ALTER SYSTEM REGISTER;
     EXIT;
     SQL
   args: { executable: /bin/bash }
@@ -40,7 +43,11 @@
   become_user: "{{ oracle_user }}"
   register: _svc_sql
   changed_when: "'CREATED' in (_svc_sql.stdout | default('')) or 'STARTED' in (_svc_sql.stdout | default(''))"
-  failed_when: false
+  failed_when: >-
+    _svc_sql.rc != 0 or
+    'ORA-' in (_svc_sql.stdout | default('')) or
+    'SP2-' in (_svc_sql.stdout | default('')) or
+    'PLS-' in (_svc_sql.stdout | default(''))
 
 # Register with Restart too, when available, so it survives crashes.
 - name: Srvctl add service (when Restart owns the DB)

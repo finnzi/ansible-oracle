@@ -14,6 +14,19 @@ oracle_roles: [dba, oper, backupdba, dgdba, kmdba]
 oracle_uid: 54321
 oracle_gid: 54321
 
+oracle_common_packages:
+  - elfutils-libelf-devel
+  - gcc
+  - glibc-devel
+  - ksh
+  - libaio-devel
+  - libnsl
+  - libstdc++-devel
+  - libxcrypt-compat
+  - make
+  - sysstat
+  - unzip
+
 # sysctl / limits — conservative lab defaults. Tune via inventory in real envs.
 oracle_sysctl:
   fs.file-max: 6815744

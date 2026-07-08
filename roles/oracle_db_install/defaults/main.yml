@@ -22,3 +22,8 @@ oracle_install_edition: EE
 
 # Memory for the installer itself; not the database SGA.
 oracle_install_inventory_pointer: /etc/oraInst.loc
+
+# Greenfield recovery: if a previous installer run left an unmarked home with
+# no linked oracle binary, remove and restage it instead of retrying a dirty
+# OPatch/OUI state forever.
+oracle_db_install_recreate_incomplete_home: true

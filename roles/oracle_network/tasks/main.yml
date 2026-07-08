@@ -13,13 +13,30 @@
 - name: Resolve current ORACLE_HOME and listener VIP per instance
   ansible.builtin.set_fact:
     _net_instances: >-
-      {{
-        (oracle_instances | default([])) | map('combine',
-          {'_home': (item.db_homes | selectattr('current','equalto',true) | first | default(item.db_homes[0])).suffix,
-           '_net':  (item.listener_vip | default(item.name ~ 'db.' ~ 'domain.is')),
-           '_port': (item.listener_port | default(1521))})
-        | list
-      }}
+      {%- set out = [] -%}
+      {%- for inst in (oracle_instances | default([])) -%}
+        {%- if 'standby' not in group_names or (inst.dataguard | default(false) | bool) -%}
+          {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
+          {%- set _ = out.append(inst | combine({
+            '_home': current_home.suffix,
+            '_net':  (inst.listener_vip | default(inst.name ~ 'db.' ~ 'domain.is')),
+            '_port': (inst.listener_port | default(1521))})) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Ensure guest /etc/hosts has the lab host aliases
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE-ORACLE lab guest hosts"
+    block: |
+      {% for entry in oracle_lab_guest_hosts %}
+      {{ entry.ip }} {{ entry.names }}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  when: oracle_lab_guest_hosts | length > 0
 
 - name: Ensure ORACLE_HOME/network/admin exists per instance
   ansible.builtin.file:
@@ -65,6 +82,37 @@
   loop: "{{ _net_instances }}"
   loop_control: { loop_var: inst, label: "{{ inst.name }}" }
 
+- name: Probe firewalld state
+  ansible.builtin.command: firewall-cmd --state
+  register: _firewalld_state
+  changed_when: false
+  failed_when: false
+  when: oracle_network_open_firewall | bool
+
+- name: Open listener port in firewalld
+  ansible.builtin.shell: |
+    set -o pipefail
+    changed=0
+    if ! firewall-cmd --query-port={{ inst._port }}/tcp >/dev/null; then
+      firewall-cmd --add-port={{ inst._port }}/tcp
+      changed=1
+    fi
+    if ! firewall-cmd --permanent --query-port={{ inst._port }}/tcp >/dev/null; then
+      firewall-cmd --permanent --add-port={{ inst._port }}/tcp
+      changed=1
+    fi
+    if [ "$changed" -eq 1 ]; then
+      echo CHANGED
+    fi
+  args: { executable: /bin/bash }
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}:{{ inst._port }}" }
+  register: _firewalld_listener_port
+  changed_when: "'CHANGED' in (_firewalld_listener_port.stdout | default(''))"
+  when:
+    - oracle_network_open_firewall | bool
+    - (_firewalld_state.rc | default(1)) == 0
+
 # ── Bring the listener up idempotently ────────────────────────────────
 # Check status; if down, start it; if up and .ora changed, reload.
 - name: Check listener status (LISTENER_<INSTANCE>)
@@ -90,9 +138,9 @@
   become_user: "{{ oracle_user }}"
   loop: >-
     {%- set down = [] -%}
-    {%- for r in _lsnr_status.results -%}
-      {%- if 'TNS-' in r.stdout or 'no listener' in r.stdout | lower or r.rc != 0 -%}
-        {%- set _ = down.append({'inst': r.item}) -%}
+    {%- for r in (_lsnr_status.results | default([])) -%}
+      {%- if r.inst is defined and ('TNS-' in (r.stdout | default('')) or 'no listener' in (r.stdout | default('') | lower) or (r.rc | default(0)) != 0) -%}
+        {%- set _ = down.append({'inst': r.inst}) -%}
       {%- endif -%}
     {%- endfor -%}
     {{ down }}
@@ -112,9 +160,9 @@
   become_user: "{{ oracle_user }}"
   loop: >-
     {%- set reload = [] -%}
-    {%- for r in _lsnr_status.results -%}
-      {%- if r.rc == 0 -%}
-        {%- set _ = reload.append({'inst': r.item}) -%}
+    {%- for r in (_lsnr_status.results | default([])) -%}
+      {%- if r.inst is defined and (r.rc | default(1)) == 0 and 'TNS-' not in (r.stdout | default('')) and 'no listener' not in (r.stdout | default('') | lower) -%}
+        {%- set _ = reload.append({'inst': r.inst}) -%}
       {%- endif -%}
     {%- endfor -%}
     {{ reload }}

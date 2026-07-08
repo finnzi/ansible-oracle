@@ -7,19 +7,10 @@
 # standalone hosts even before Restart owns the DB; if Restart is available
 # we ALSO register the service via srvctl so Restart restarts it.
 
-- name: Resolve current ORACLE_HOME per instance
-  ansible.builtin.set_fact:
-    _svc_instances: >-
-      {{
-        (oracle_instances | default([])) | map('combine',
-          {'_home_path': (item.oracle_base ~ '/' ~
-             ((item.db_homes | selectattr('current','equalto',true) | first | default(item.db_homes[0])).suffix))})
-        | list
-      }}
-
 - name: Per-instance service loop
   ansible.builtin.include_tasks: create-service.yml
-  loop: "{{ _svc_instances }}"
+  loop: "{{ oracle_instances | default([]) }}"
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"
+  when: "'standby' not in group_names"

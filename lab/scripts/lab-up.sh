@@ -32,8 +32,10 @@ if [ ! -f "${BASE_IMAGE}" ]; then
 fi
 
 ensure_network() {
+  local net_info
   if virsh_cmd net-info "${LAB_NETWORK_NAME}" >/dev/null 2>&1; then
-    if ! virsh_cmd net-info "${LAB_NETWORK_NAME}" | grep -q "Active:.*yes"; then
+    net_info="$(virsh_cmd net-info "${LAB_NETWORK_NAME}")"
+    if ! grep -q "Active:.*yes" <<< "${net_info}"; then
       log "Starting libvirt network ${LAB_NETWORK_NAME}"
       virsh_cmd net-start "${LAB_NETWORK_NAME}" >/dev/null
     fi

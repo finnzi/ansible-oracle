@@ -11,6 +11,35 @@
     path: "{{ tgt.home_path }}/.install_complete"
   register: _marker
 
+- name: Check whether a previous run unpacked the installer
+  ansible.builtin.stat:
+    path: "{{ tgt.home_path }}/runInstaller"
+  register: _runinstaller
+  when: not _marker.stat.exists
+
+- name: Check whether the oracle binary is linked
+  ansible.builtin.stat:
+    path: "{{ tgt.home_path }}/bin/oracle"
+  register: _oracle_binary
+  when: not _marker.stat.exists
+
+- name: Determine whether this home already has a linked oracle binary
+  ansible.builtin.set_fact:
+    _oracle_home_linked: >-
+      {{ (_oracle_binary.stat.exists | default(false)) and
+         ((_oracle_binary.stat.size | default(0) | int) > 0) }}
+  when: not _marker.stat.exists
+
+- name: Remove incomplete Oracle home left by a failed installer run
+  ansible.builtin.file:
+    path: "{{ tgt.home_path }}"
+    state: absent
+  when:
+    - not _marker.stat.exists
+    - oracle_db_install_recreate_incomplete_home | default(true) | bool
+    - _runinstaller.stat.exists | default(false)
+    - not _oracle_home_linked | default(false)
+
 - name: Home directory should exist (created by oracle_storage)
   ansible.builtin.file:
     path: "{{ tgt.home_path }}"
@@ -41,7 +70,17 @@
     creates: "{{ tgt.home_path }}/runInstaller"
   become: true
   become_user: "{{ oracle_user }}"
-  when: not _marker.stat.exists
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+
+- name: Remove bundled OPatch before upgrade
+  ansible.builtin.file:
+    path: "{{ tgt.home_path }}/OPatch"
+    state: absent
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
 
 - name: Upgrade bundled OPatch (extract p6880880 over ORACLE_HOME)
   ansible.builtin.unarchive:
@@ -50,10 +89,11 @@
     remote_src: true
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
-    creates: "{{ tgt.home_path }}/OPatch/opatch.pl"
   become: true
   become_user: "{{ oracle_user }}"
-  when: not _marker.stat.exists
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
 
 - name: Write silent installer response file (db_install.rsp)
   ansible.builtin.template:
@@ -89,6 +129,101 @@
     _install_apply_ru: >-
       {{ (ansible_distribution_major_version | default('7')) not in ['7'] }}
 
+- name: Set DB RU staging paths
+  ansible.builtin.set_fact:
+    _db_ru_extract_dir: "{{ _home_stage }}/db_ru"
+    _db_ru_extract_marker: >-
+      {{ _home_stage }}/db_ru/.{{ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip')) }}.extracted
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
+- name: Create DB RU extraction directory
+  ansible.builtin.file:
+    path: "{{ _db_ru_extract_dir }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
+- name: Check whether the DB RU bundle is already extracted
+  ansible.builtin.stat:
+    path: "{{ _db_ru_extract_marker }}"
+  register: _db_ru_marker
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
+- name: Extract DB RU bundle for runInstaller -applyRU
+  ansible.builtin.unarchive:
+    src: "{{ tgt.stage_dir }}/{{ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip')) }}"
+    dest: "{{ _db_ru_extract_dir }}"
+    remote_src: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+    - not _db_ru_marker.stat.exists
+
+- name: Mark DB RU bundle extraction complete
+  ansible.builtin.file:
+    path: "{{ _db_ru_extract_marker }}"
+    state: touch
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+    - not _db_ru_marker.stat.exists
+
+- name: Resolve extracted Database RU directory for runInstaller -applyRU
+  ansible.builtin.shell: |
+    set -o pipefail
+    root={{ _db_ru_extract_dir | quote }}
+    configured={{ (oracle_db_install_apply_ru_component_id | default('')) | quote }}
+
+    if [ -n "$configured" ]; then
+      found="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$configured" -print -quit)"
+      if [ -n "$found" ]; then
+        printf '%s\n' "$found"
+        exit 0
+      fi
+    fi
+
+    while IFS= read -r candidate; do
+      readme="${candidate}/README.html"
+      if [ -f "$readme" ] &&
+         head -80 "$readme" | grep -Eiq 'Patch [0-9]+ - Database Release Update'; then
+        printf '%s\n' "$candidate"
+        exit 0
+      fi
+    done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -print | sort)
+
+    echo "No Database RU component directory found under $root" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  register: _db_ru_apply_dir
+  changed_when: false
+  become: true
+  become_user: "{{ oracle_user }}"
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
 - name: Run runInstaller — OL7 certified path (plain install)
   ansible.builtin.shell: |
     set -o pipefail
@@ -103,6 +238,7 @@
   register: _installer
   when:
     - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
     - not _install_apply_ru | bool
   changed_when: _installer.rc == 0 or 'Successfully Setup Software' in (_installer.stdout | default(''))
   failed_when: >-
@@ -114,7 +250,7 @@
     cd {{ tgt.home_path }}
     ./runInstaller -silent -force -waitforcompletion -noconfig \
       -ignorePrereqFailure -ignoreInternalDriverError \
-      -applyRU {{ tgt.stage_dir }}/{{ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip')) }} \
+      -applyRU {{ _db_ru_apply_dir.stdout | trim | quote }} \
       -responseFile {{ _home_stage }}/db_install.rsp
   args:
     executable: /bin/bash
@@ -125,6 +261,7 @@
   register: _installer_ru
   when:
     - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
     - _install_apply_ru | bool
   changed_when: _installer_ru.rc == 0 or 'Successfully Setup Software' in (_installer_ru.stdout | default(''))
   failed_when: >-
@@ -133,6 +270,18 @@
   # InstallerPatchJob can exit without applying when it cannot reach Oracle
   # Support metadata). Surface a clear message in that case rather than retry.
   ignore_errors: "{{ oracle_install_allow_ol8_gap | default(true) | bool }}"
+
+- name: Determine whether runInstaller completed successfully
+  ansible.builtin.set_fact:
+    _installer_completed: >-
+      {{
+        (_oracle_home_linked | default(false)) or
+        (((_installer | default({})).rc | default(1) | int) == 0) or
+        ('Successfully Setup Software' in ((_installer | default({})).stdout | default(''))) or
+        (((_installer_ru | default({})).rc | default(1) | int) == 0) or
+        ('Successfully Setup Software' in ((_installer_ru | default({})).stdout | default('')))
+      }}
+  when: not _marker.stat.exists
 
 - name: Report OL8+ install gap when applyRU did not succeed
   ansible.builtin.fail:
@@ -147,7 +296,7 @@
   when:
     - not _marker.stat.exists
     - _install_apply_ru | bool
-    - _installer_ru is failed or (_installer_ru.rc | default(1)) != 0
+    - not _installer_completed | default(false)
 
 - name: Run root scripts (orainstRoot.sh + root.sh)
   ansible.builtin.shell: |
@@ -160,7 +309,7 @@
     executable: /bin/bash
   when:
     - not _marker.stat.exists
-    - (_installer is success) or (_installer_ru is success and (_installer_ru.rc | default(1)) == 0)
+    - _installer_completed | default(false)
   changed_when: true
 
 - name: Drop the idempotency marker
@@ -172,4 +321,4 @@
     mode: "0644"
   when:
     - not _marker.stat.exists
-    - (_installer is success) or (_installer_ru is success and (_installer_ru.rc | default(1)) == 0)
+    - _installer_completed | default(false)

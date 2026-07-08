@@ -1,6 +1,11 @@
 ---
 # tasks/register-instance.yml — srvctl add + start one instance.
-# `inst` is in scope (one element of _restart_instances).
+# `inst` is in scope (one element of oracle_instances).
+
+- name: Resolve current ORACLE_HOME for Restart registration
+  ansible.builtin.set_fact:
+    _restart_home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
 
 - name: Is this DB already registered with Restart?
   ansible.builtin.shell: |
@@ -20,7 +25,7 @@
     export ORACLE_HOME={{ oracle_gi_home }}
     "$ORACLE_HOME/bin/srvctl" add database \
       -db {{ inst.name }} \
-      -oraclehome {{ inst._home_path }} \
+      -oraclehome {{ _restart_home_path }} \
       -spfile {{ inst.dirs.data }}/{{ inst.name }}/spfile{{ inst.name }}.ora \
       -role PRIMARY \
       -dbname {{ inst.name }} \
@@ -46,7 +51,7 @@
     export ORACLE_HOME={{ oracle_gi_home }}
     "$ORACLE_HOME/bin/srvctl" modify database \
       -db {{ inst.name }} \
-      -spfile {{ inst._home_path }}/dbs/spfile{{ inst.name }}.ora
+      -spfile {{ _restart_home_path }}/dbs/spfile{{ inst.name }}.ora
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -60,7 +65,7 @@
     export ORACLE_HOME={{ oracle_gi_home }}
     "$ORACLE_HOME/bin/srvctl" add listener \
       -listener LISTENER_{{ inst.name | upper }} \
-      -oraclehome {{ inst._home_path }} \
+      -oraclehome {{ _restart_home_path }} \
       -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
   args: { executable: /bin/bash }
   become: true

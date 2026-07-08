@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import socket
 import sys
 
@@ -21,7 +22,7 @@ PRIMARY_HOST = _env("ORACLE_TEST_HOST", "superdb.domain.is")
 PRIMARY_PORT = int(_env("ORACLE_TEST_PORT", "1521"))
 DB_SERVICE = _env("ORACLE_TEST_SERVICE", "super_svc")
 DB_SID = _env("ORACLE_TEST_SID", "super")
-SYS_USER = _env("ORACLE_TEST_USER", "system")
+SYS_USER = _env("ORACLE_TEST_USER", "sys")
 SYS_PASSWORD = _env("ORACLE_TEST_PASSWORD", "SysPassword1_")
 SSH_USER = _env("ORACLE_TEST_SSH_USER", "root")
 SSH_HOST = _env("ORACLE_TEST_SSH_HOST", "192.168.87.11")
@@ -100,15 +101,14 @@ def lab_exec():
     def _run(cmd: str, timeout: int = 60) -> subprocess.CompletedProcess:
         full = [
             "ssh",
+            "-F", "/dev/null",
             "-i", SSH_KEY,
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
             "-o", "ConnectTimeout=5",
             "-o", "BatchMode=yes",
             f"{SSH_USER}@{SSH_HOST}",
-            "bash",
-            "-lc",
-            cmd,
+            f"bash -lc {shlex.quote(cmd)}",
         ]
         return subprocess.run(full, capture_output=True, text=True, timeout=timeout)
 

@@ -7,9 +7,74 @@ Uses python-oracledb from the control host.
 """
 from __future__ import annotations
 
+import shlex
+from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.slice
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_db_manage_role_uses_writable_dbca_response_path():
+    main_tasks = (
+        REPO_ROOT / "roles/oracle_db_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+    instance_tasks = (
+        REPO_ROOT / "roles/oracle_db_manage/tasks/manage-instance.yml"
+    ).read_text(encoding="utf-8")
+    dbca_response = (
+        REPO_ROOT / "roles/oracle_db_manage/templates/dbca.rsp.j2"
+    ).read_text(encoding="utf-8")
+    network_tasks = (
+        REPO_ROOT / "roles/oracle_network/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+    network_defaults = (
+        REPO_ROOT / "roles/oracle_network/defaults/main.yml"
+    ).read_text(encoding="utf-8")
+    service_tasks = (
+        REPO_ROOT / "roles/oracle_service_manage/tasks/create-service.yml"
+    ).read_text(encoding="utf-8")
+    service_main_tasks = (
+        REPO_ROOT / "roles/oracle_service_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+    lab_group_vars = (
+        REPO_ROOT / "inventory/group_vars/all.yml"
+    ).read_text(encoding="utf-8")
+    test_conftest = (REPO_ROOT / "tests/conftest.py").read_text(encoding="utf-8")
+    test_runner = (REPO_ROOT / "scripts/run-tests.sh").read_text(encoding="utf-8")
+
+    assert "_db_instances" not in main_tasks
+    assert "'standby' not in group_names" in main_tasks
+    assert "or (inst.dataguard" not in main_tasks
+    assert "'standby' not in group_names" in service_main_tasks
+    assert "or (inst.dataguard" not in service_main_tasks
+    assert "oracle_stage_dir }}/{{ inst.name }}_dbca.rsp" not in instance_tasks
+    assert "_dbca_response_file" in instance_tasks
+    assert "autostartDuringBuild" not in dbca_response
+    assert "dbUniqueName=" in dbca_response
+    assert "dbUniquename=" not in dbca_response
+    assert "* 1024" in dbca_response
+    assert "'100% complete' in (_dbca.stdout | default(''))" in instance_tasks
+    assert "map('combine'" not in network_tasks
+    assert "'standby' not in group_names" in network_tasks
+    assert "Ensure guest /etc/hosts has the lab host aliases" in network_tasks
+    assert "oracle_network_open_firewall: false" in network_defaults
+    assert "oracle_network_open_firewall: true" in lab_group_vars
+    assert "superdc1.domain.is superdc1" in lab_group_vars
+    assert "superdc2.domain.is superdc2" in lab_group_vars
+    assert "Probe firewalld state" in network_tasks
+    assert "firewall-cmd --add-port={{ inst._port }}/tcp" in network_tasks
+    assert "firewall-cmd --permanent --add-port={{ inst._port }}/tcp" in network_tasks
+    assert "r.inst is defined" in network_tasks
+    assert "r.item is defined" not in network_tasks
+    assert "ALTER SYSTEM REGISTER" in service_tasks
+    assert "SQLCODE = -44305" in service_tasks
+    assert "SQLCODE = -446" not in service_tasks
+    assert "failed_when: false" not in service_tasks
+    assert "'ORA-' in (_svc_sql.stdout | default(''))" in service_tasks
+    assert 'SYS_USER = _env("ORACLE_TEST_USER", "sys")' in test_conftest
+    assert 'ORACLE_TEST_USER="${ORACLE_TEST_USER:-sys}"' in test_runner
 
 
 def test_instance_is_open_read_write(db_connection):
@@ -68,7 +133,7 @@ def test_dedicated_data_path_used(lab_exec):
     size = int((probe.stdout or "0").strip().splitlines()[-1] or "0")
     if size == 0:
         pytest.skip("sqlplus not linked (OL8+ install gap); DB instance not created.")
-    r = lab_exec(
+    sql = (
         "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF\n"
@@ -76,6 +141,7 @@ def test_dedicated_data_path_used(lab_exec):
         "EXIT;\n"
         "SQL"
     )
+    r = lab_exec(f"su - oracle -c {shlex.quote(sql)}")
     assert r.returncode == 0, r.stderr
     count = int((r.stdout or "0").strip() or "0")
     assert count > 0, f"no datafiles under /super/d01; output: {r.stdout}"

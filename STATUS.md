@@ -8,6 +8,7 @@ This repo is intended to manage Oracle Database installations, upgrades,
 Oracle Restart, Data Guard, Fast-Start Failover observer nodes, and patching.
 The test environment is now being moved from Docker containers to KVM VMs after
 the container lab proved unsafe and unreliable on the host.
+Data Guard configurations must use MAXIMUM AVAILABILITY protection mode.
 
 ## Current Lab Direction
 

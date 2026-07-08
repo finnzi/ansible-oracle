@@ -10,22 +10,21 @@
 
 - name: Ensure per-instance top-level directories exist
   ansible.builtin.file:
-    path: "{{ item.1 }}"
+    path: "{{ top_path }}"
     state: directory
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0775"
   loop: >-
-    {{
-      (oracle_instances | default([]))
-      | map('combine', {'_all': (_inst.dirs | default({})).values() | list
-                         + [(_inst.oracle_base | default('')), (_inst.gi_base | default(''))]})
-      | list
-      | map(attribute='_all')
-      | flatten
-    }}
-  # The above jinja is awkward; use the simpler loop below instead.
-  when: false
+    {%- set paths = [] -%}
+    {%- for inst in (oracle_instances | default([])) -%}
+      {%- set _ = paths.append('/' ~ inst.name) -%}
+      {%- if inst.gi_base -%}{%- set _ = paths.append(inst.gi_base) -%}{%- endif -%}
+    {%- endfor -%}
+    {{ paths | unique | list }}
+  loop_control:
+    loop_var: top_path
+    label: "{{ top_path }}"
 
 # Simpler, readable, debuggable: a nested loop.
 - name: Create instance data/archive/flashback/redo directories

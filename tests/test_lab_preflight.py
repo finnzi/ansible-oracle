@@ -122,6 +122,28 @@ def test_allow_missing_media_keeps_os_only_lab_possible(tmp_path: Path):
     assert "LAB_ALLOW_MISSING_MEDIA=1" in result.stderr
 
 
+def test_default_lab_state_dir_is_libvirt_readable_var_tmp():
+    result = run_common("printf '%s\\n' \"${LAB_STATE_DIR}\"")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "/var/tmp/ansible-oracle-lab"
+
+
+def test_preflight_state_dir_fails_for_private_home_like_parent(tmp_path: Path):
+    private_parent = tmp_path / "private"
+    private_parent.mkdir()
+    private_parent.chmod(0o700)
+
+    result = run_common(
+        "lab_preflight_state_dir",
+        {"LAB_STATE_DIR": str(private_parent / "lab-state")},
+    )
+
+    assert result.returncode == 1
+    assert "LAB_STATE_DIR is not traversable/readable" in result.stderr
+    assert "LAB_STATE_DIR=/var/tmp/ansible-oracle-lab" in result.stderr
+
+
 def test_preflight_libvirt_groups_passes_with_active_libvirt_group():
     result = run_common(
         "lab_preflight_libvirt_groups",
@@ -260,6 +282,8 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     assert (state_dir / "vms/superdb2.xml").is_file()
     assert (state_dir / "vms/observer.xml").is_file()
     assert (state_dir / "seed/superdb1.iso").is_file()
+    user_data = (state_dir / "seed/superdb1-user-data").read_text(encoding="utf-8")
+    assert 'kernel-uek-modules-$(uname -r)' in user_data
 
     iso_listing = subprocess.run(
         ["isoinfo", "-J", "-i", str(state_dir / "seed/superdb1.iso"), "-f"],

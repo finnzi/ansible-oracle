@@ -5,16 +5,6 @@
 # listener auto-start on crash/reboot. Degrades gracefully if Restart isn't
 # installed yet (the slice case) — sets a fact the test suite asserts on.
 
-- name: Resolve current ORACLE_HOME per instance
-  ansible.builtin.set_fact:
-    _restart_instances: >-
-      {{
-        (oracle_instances | default([])) | map('combine',
-          {'_home_path': (item.oracle_base ~ '/' ~
-             ((item.db_homes | selectattr('current','equalto',true) | first | default(item.db_homes[0])).suffix))})
-        | list
-      }}
-
 # ── Is Oracle Restart actually installed on this host? ─────────────────
 - name: Locate srvctl
   ansible.builtin.stat:
@@ -55,7 +45,7 @@
 # ── Register each instance + its listener with Restart ─────────────────
 - name: Register instance, listener, and start them under Restart
   ansible.builtin.include_tasks: register-instance.yml
-  loop: "{{ _restart_instances }}"
+  loop: "{{ oracle_instances | default([]) }}"
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"

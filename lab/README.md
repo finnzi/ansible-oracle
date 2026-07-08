@@ -76,8 +76,11 @@ ORACLE_LINUX_IMAGE_URL=https://yum.oracle.com/templates/OracleLinux/.../image.qc
   ./lab/scripts/fetch-base-image.sh
 ```
 
-Downloaded base images are stored under `lab/state/images/`. VM overlay disks
-and cloud-init seed ISOs are stored under `lab/state/`.
+Downloaded base images are stored under `${LAB_STATE_DIR}/images`. VM overlay
+disks and cloud-init seed ISOs are stored under `${LAB_STATE_DIR}`. By default
+that is `/var/tmp/ansible-oracle-lab`, because system libvirt runs QEMU as an
+unprivileged service user that cannot usually traverse a private home directory.
+Override `LAB_STATE_DIR` only with a path system QEMU can traverse and read.
 
 ## Oracle Media
 

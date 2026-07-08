@@ -15,9 +15,15 @@ recoveryAreaDestination={{ inst.dirs.flashback }}
 recoveryAreaSize=10240
 # Use Oracle-Managed Files rooted at the data dir for cleanliness.
 useOMF=true
-dbUniquename={{ inst.db_unique_name | default(inst.name) }}
+dbUniqueName={{ inst.db_unique_name | default(inst.name) }}
 # Memory
-totalMemory={{ ((inst.memory | default(oracle_default_memory)).sga_target | default('2G') | regex_replace('[^0-9]','') | int) + ((inst.memory | default(oracle_default_memory)).pga_aggregate_target | default('1G') | regex_replace('[^0-9]','') | int) }}
+{% set sga_raw = ((inst.memory | default(oracle_default_memory)).sga_target | default('2G') | string | upper) %}
+{% set pga_raw = ((inst.memory | default(oracle_default_memory)).pga_aggregate_target | default('1G') | string | upper) %}
+{% set sga_value = (sga_raw | regex_replace('[^0-9]', '') | int) %}
+{% set pga_value = (pga_raw | regex_replace('[^0-9]', '') | int) %}
+{% set sga_mb = (sga_value * 1024) if 'G' in sga_raw else sga_value %}
+{% set pga_mb = (pga_value * 1024) if 'G' in pga_raw else pga_value %}
+totalMemory={{ sga_mb + pga_mb }}
 memoryPercentage=40
 automaticMemoryManagement=false
 # National charset / characterset
@@ -33,4 +39,3 @@ emConfiguration=NONE
 emExpressPort=5500
 # Don't auto-register the DB with Restart here; oracle_restart_manage does that.
 databaseType=MULTIPURPOSE
-autostartDuringBuild=true

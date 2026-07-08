@@ -13,11 +13,27 @@ idempotency marker. The actual 19.3 binary link is OS-dependent:
 """
 from __future__ import annotations
 
+import shlex
+from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.slice
 
 ORACLE_HOME = "/super/app/oracle/db_home1"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_install_role_applies_extracted_database_ru_directory():
+    tasks = (
+        REPO_ROOT / "roles/oracle_db_install/tasks/install-home.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Remove incomplete Oracle home left by a failed installer run" in tasks
+    assert "Remove bundled OPatch before upgrade" in tasks
+    assert "Extract DB RU bundle for runInstaller -applyRU" in tasks
+    assert "Resolve extracted Database RU directory for runInstaller -applyRU" in tasks
+    assert "-applyRU {{ _db_ru_apply_dir.stdout | trim | quote }}" in tasks
 
 
 def test_central_inventory_pointer_exists(lab_exec):
@@ -78,9 +94,10 @@ def test_opatch_lsinventory_when_linked(lab_exec):
     size = int((r.stdout or "0").strip().splitlines()[-1] or "0")
     if size == 0:
         pytest.skip("oracle binary not linked (OL8+ gap); lsinventory N/A.")
-    r = lab_exec(
-        f"export ORACLE_HOME={ORACLE_HOME} && {ORACLE_HOME}/OPatch/opatch lsinventory",
-        timeout=180,
+    opatch_cmd = (
+        f"export ORACLE_HOME={ORACLE_HOME} && "
+        f"{ORACLE_HOME}/OPatch/opatch lsinventory"
     )
+    r = lab_exec(f"su - oracle -c {shlex.quote(opatch_cmd)}", timeout=180)
     assert r.returncode == 0, f"opatch lsinventory failed: {r.stderr}"
     assert "19." in (r.stdout + r.stderr)
