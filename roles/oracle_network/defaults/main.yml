@@ -12,6 +12,7 @@ oracle_instances: []
 oracle_lab_guest_hosts: []
 oracle_lab_host_map_mode: standalone
 oracle_lab_listener_vips: []
+oracle_network_dataguard_enabled: false
 oracle_network_listener_interface: ""
 oracle_network_persist_listener_vips: true
 oracle_network_listener_vip_prefix: 24

@@ -62,16 +62,19 @@ The supported lab path is now KVM/libvirt:
   - Oracle Restart/Grid install on `superdb2`, with the DB home present and no
     accidental standalone database created.
   - Primary-side Data Guard preparation on `superdb1`: `dg_broker_start=TRUE`,
-    `standby_file_management=AUTO`, FAL/DG config parameters set, and standby
-    redo logs created under `/super/r01`.
+    `standby_file_management=AUTO`, FAL/DG config parameters set, deferred
+    `SYNC AFFIRM` transport prepared for `super_sby_dgb`, and standby redo logs
+    created under `/super/r01`.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
-  - Primary/standby listener aliases `superdc1.domain.is` and
-    `superdc2.domain.is` are represented in lab host maps with dedicated VIPs.
+  - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
+    primary prep, so `superdb1` binds `superdc1.domain.is` / `192.168.87.31`
+    and `superdb2` binds `superdc2.domain.is` / `192.168.87.32`.
   - Per-host instance overrides are wired but remain dormant until
-    `dataguard: true`, preserving standalone behavior.
-  - Static `_DGMGRL` listener service and broker TNS alias rendering are ready
-    for the physical standby/broker slice.
+    Data Guard mode is active, preserving standalone behavior.
+  - Static `_DGMGRL` listener services, broker TNS aliases, and primary
+    `local_listener` registration on `superdc1.domain.is` are verified in the
+    KVM lab.
 
 ## Not Yet Proven End To End
 

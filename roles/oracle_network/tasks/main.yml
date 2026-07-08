@@ -14,8 +14,12 @@
   ansible.builtin.set_fact:
     _net_instances: >-
       {%- set out = [] -%}
-      {%- for inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}))) -%}
-        {%- if 'standby' not in group_names or (inst.dataguard | default(false) | bool) -%}
+      {%- set dg_mode = oracle_network_dataguard_enabled | default(false) | bool -%}
+      {%- set require_dg = false if dg_mode else true -%}
+      {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
+        {%- set inst = raw_inst -%}
+        {%- set include_inst = (inst.dataguard | default(false) | bool) if dg_mode else ('standby' not in group_names or (inst.dataguard | default(false) | bool)) -%}
+        {%- if include_inst -%}
           {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
           {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
           {%- set vip = namespace(ip='') -%}
@@ -32,6 +36,44 @@
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
+
+- name: Remove stale lab host aliases from guest /etc/hosts
+  ansible.builtin.shell: |
+    set -o pipefail
+    tmp="$(mktemp)"
+    aliases="{{ oracle_lab_guest_hosts | map(attribute='names') | join(' ') }}"
+    awk -v b="# BEGIN ANSIBLE-ORACLE lab guest hosts" \
+        -v e="# END ANSIBLE-ORACLE lab guest hosts" \
+        -v aliases="$aliases" '
+      BEGIN {
+        split(aliases, alias_list, /[[:space:]]+/)
+        for (i in alias_list) {
+          if (alias_list[i] != "") {
+            stale[alias_list[i]] = 1
+          }
+        }
+      }
+      $0==b {ind=1; print; next}
+      $0==e {ind=0; print; next}
+      ind {print; next}
+      {
+        for (i = 2; i <= NF; i++) {
+          if ($i in stale) {
+            next
+          }
+        }
+      }
+      {print}
+    ' /etc/hosts > "$tmp"
+    if ! cmp -s "$tmp" /etc/hosts; then
+      cat "$tmp" > /etc/hosts
+      echo CHANGED
+    fi
+    rm -f "$tmp"
+  args: { executable: /bin/bash }
+  register: _guest_hosts_scrub
+  changed_when: "'CHANGED' in (_guest_hosts_scrub.stdout | default(''))"
+  when: oracle_lab_guest_hosts | length > 0
 
 - name: Ensure guest /etc/hosts has the lab host aliases
   ansible.builtin.blockinfile:
@@ -74,7 +116,7 @@
         echo "No NetworkManager connection found for listener interface $iface" >&2
         exit 1
       fi
-      if ! nmcli -g ipv4.addresses connection show "$conn" | tr ',' '\n' | grep -Fxq "{{ inst._vip }}/{{ oracle_network_listener_vip_prefix }}"; then
+      if ! nmcli -g ipv4.addresses connection show "$conn" | tr ',' '\n' | awk '{$1=$1};1' | grep -Fxq "{{ inst._vip }}/{{ oracle_network_listener_vip_prefix }}"; then
         nmcli connection modify "$conn" +ipv4.addresses "{{ inst._vip }}/{{ oracle_network_listener_vip_prefix }}"
         persistent_changed=1
       fi

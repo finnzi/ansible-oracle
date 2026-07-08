@@ -8,4 +8,8 @@
   hosts: oracle_db_hosts
   become: true
   roles:
+    - role: oracle_network
+      vars:
+        oracle_network_dataguard_enabled: true
+        oracle_lab_host_map_mode: dataguard
     - role: oracle_dataguard

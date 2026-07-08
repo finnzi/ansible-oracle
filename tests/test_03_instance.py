@@ -130,6 +130,13 @@ def test_listener_answers_on_vip(db_conn_kwargs):
 
 def test_standalone_listener_uses_dedicated_vip(lab_exec):
     host_lookup = lab_exec("getent hosts superdb.domain.is | awk '{print $1}'")
+    dg_lookup = lab_exec("getent hosts superdc1.domain.is")
+    if dg_lookup.returncode == 0 and dg_lookup.stdout.strip():
+        if (
+            host_lookup.returncode != 0
+            or host_lookup.stdout.strip() != "192.168.87.21"
+        ):
+            pytest.skip("Lab is in Data Guard listener mode; standalone VIP is not mapped.")
     assert host_lookup.returncode == 0, host_lookup.stderr
     assert host_lookup.stdout.strip().splitlines()[-1] == "192.168.87.21"
 

@@ -12,6 +12,7 @@
 # When dataguard is enabled, primaries bind the dc1 VIP.
 oracle_instance_overrides:
   super:
+    dataguard: true
     listener_vip: "superdc1.domain.is"
     dg_role: primary
     # db_unique_name must differ between primary and standby in a DG config.

@@ -7,7 +7,7 @@
 
 - name: Resolve Data Guard instances
   ansible.builtin.set_fact:
-    _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+    _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) }}"
 
 - name: Prepare primary database for Data Guard
   ansible.builtin.include_tasks: prepare-primary.yml
