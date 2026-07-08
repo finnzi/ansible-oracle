@@ -32,6 +32,8 @@ The supported lab path is now KVM/libvirt:
   - `lab/scripts/lab-down.sh`
   - `lab/scripts/update-hosts.sh`
 - SSH-based pytest execution against the primary VM.
+- Preflight checks for host tools, libvirt access, SSH key, source media
+  readability, and required Oracle installer/patch files.
 - Inventory defaults for the KVM fixed IPs.
 - Existing Ansible role scaffolding for OS prep, storage, DB home install,
   network/listener, DB create/manage, Restart, Data Guard, observer, service,
@@ -56,6 +58,9 @@ The supported lab path is now KVM/libvirt:
 - `/home/finnur` is private (`0700`), so system QEMU is unlikely to read
   `~/sources/oracle` through a 9p mount. The lab now checks this and asks for a
   libvirt-readable `SOURCES_DIR`.
+- The required media files are present under `~/sources/oracle`; `info.txt`
+  does not mention `p39062956_190000_Linux-x86-64.zip`, so preflight warns
+  about that metadata mismatch.
 - `sudo` is not available non-interactively here, so package installation and
   libvirt group/service changes need to be done by the user outside this agent
   session.

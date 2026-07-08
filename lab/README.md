@@ -74,6 +74,18 @@ Oracle installers and patches are expected under `~/sources/oracle`. Set
 `SOURCES_DIR` to override this. The directory is mounted read-only into every VM
 at `/u01/stage` through a libvirt filesystem mount.
 
+Preflight requires the lab media files named in `inventory/group_vars/all.yml`:
+
+- `V982063-01-Oracle.19c.Database.Enterprise.Edition.zip`
+- `V982064-01-Oracle.19c.Database.Client.zip`
+- `V982068-01-Oracle.19c.Grid.Infrastructure.zip`
+- `p6880880_190000_Linux-x86-64.zip`
+- `p39062931_190000_Linux-x86-64.zip`
+- `p39062956_190000_Linux-x86-64.zip`
+- `info.txt`
+
+For OS-only lab work without Oracle media, set `LAB_ALLOW_MISSING_MEDIA=1`.
+
 With system libvirt, the QEMU process usually runs as an unprivileged service
 user. If your home directory is private (`0700`), QEMU may not be able to
 traverse `~/sources/oracle`. In that case, put the media somewhere libvirt can

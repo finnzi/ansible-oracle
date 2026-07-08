@@ -67,7 +67,8 @@ ansible-playbook playbooks/site.yml
 
 Oracle installers and patches are expected under `~/sources/oracle` by default
 and are mounted read-only into the VMs at `/u01/stage`. Override with
-`SOURCES_DIR=/path/to/oracle/sources`.
+`SOURCES_DIR=/path/to/oracle/sources`. For OS-only lab work without Oracle
+media, set `LAB_ALLOW_MISSING_MEDIA=1`.
 
 ## Repository Layout
 

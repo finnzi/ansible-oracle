@@ -145,6 +145,17 @@ lab_required_commands() {
   printf '%s\n' virsh qemu-img genisoimage timeout ssh curl
 }
 
+lab_required_media_files() {
+  printf '%s\n' \
+    info.txt \
+    V982063-01-Oracle.19c.Database.Enterprise.Edition.zip \
+    V982064-01-Oracle.19c.Database.Client.zip \
+    V982068-01-Oracle.19c.Grid.Infrastructure.zip \
+    p6880880_190000_Linux-x86-64.zip \
+    p39062931_190000_Linux-x86-64.zip \
+    p39062956_190000_Linux-x86-64.zip
+}
+
 lab_preflight_commands() {
   local missing=0 cmd
   while read -r cmd; do
@@ -192,10 +203,15 @@ lab_preflight_ssh_key() {
 }
 
 lab_preflight_sources() {
+  local rc=0 file
   if [ ! -d "${SOURCES_DIR}" ]; then
     warn "SOURCES_DIR not found: ${SOURCES_DIR}"
     warn "Oracle installs will fail until the media from ~/sources/oracle is staged or SOURCES_DIR is overridden."
-    return 0
+    if [ "${LAB_ALLOW_MISSING_MEDIA:-0}" = "1" ]; then
+      warn "LAB_ALLOW_MISSING_MEDIA=1 is set; continuing for OS-only lab work."
+      return 0
+    fi
+    return 1
   fi
 
   log "Oracle media directory present: ${SOURCES_DIR}"
@@ -209,10 +225,32 @@ lab_preflight_sources() {
     warn "  sudo chmod -R a+rX /var/lib/libvirt/ansible-oracle-sources"
     warn "  SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources ./lab/scripts/lab-up.sh"
     warn "Set LAB_SKIP_SOURCE_ACCESS_CHECK=1 only if your libvirt setup grants QEMU access another way."
-    return 1
+    rc=1
   fi
 
-  return 0
+  while read -r file; do
+    if [ -f "${SOURCES_DIR}/${file}" ]; then
+      log "Oracle media present: ${file}"
+    else
+      warn "Oracle media missing: ${SOURCES_DIR}/${file}"
+      rc=1
+    fi
+  done < <(lab_required_media_files)
+
+  if [ -f "${SOURCES_DIR}/info.txt" ]; then
+    while read -r file; do
+      [ "${file}" = "info.txt" ] && continue
+      if ! grep -Fq "${file}" "${SOURCES_DIR}/info.txt"; then
+        warn "info.txt does not mention expected media file: ${file}"
+      fi
+    done < <(lab_required_media_files)
+  fi
+
+  if [ "${rc}" -ne 0 ] && [ "${LAB_ALLOW_MISSING_MEDIA:-0}" = "1" ]; then
+    warn "LAB_ALLOW_MISSING_MEDIA=1 is set; continuing for OS-only lab work."
+    return 0
+  fi
+  return "${rc}"
 }
 
 lab_preflight_all() {
