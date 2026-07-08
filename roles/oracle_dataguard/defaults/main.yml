@@ -60,3 +60,7 @@ oracle_dataguard_prepare_standby: false
 # Create the physical standby from the primary with RMAN active duplicate. This
 # is idempotent: it skips once the standby reports database_role=PHYSICAL STANDBY.
 oracle_dataguard_duplicate_standby: false
+
+# Configure Data Guard broker, enable the configuration, set Maximum
+# Availability, and keep the standby open READ ONLY WITH APPLY.
+oracle_dataguard_configure_broker: false

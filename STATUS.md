@@ -65,13 +65,14 @@ The supported lab path is now KVM/libvirt:
     password file, `/etc/oratab` entry, and NOMOUNT instance reachable through
     `super_sby_dgb` for the RMAN duplicate path.
   - Physical standby creation on `superdb2` through RMAN active duplicate from
-    `superdb1`, with the standby mounted as `PHYSICAL STANDBY` and registered
-    in Oracle Restart as `super_sby` with the `LISTENER_SUPER` listener
-    resource.
+    `superdb1`, with the standby registered in Oracle Restart as `super_sby`
+    with the `LISTENER_SUPER` listener resource.
   - Primary-side Data Guard preparation on `superdb1`: `dg_broker_start=TRUE`,
-    `standby_file_management=AUTO`, FAL/DG config parameters set, deferred
-    `SYNC AFFIRM` transport prepared for `super_sby_dgb`, and standby redo logs
-    created under `/super/r01`.
+    `standby_file_management=AUTO`, FAL/DG config parameters set, broker-managed
+    `SYNC AFFIRM` transport to `super_sby_dgb`, and standby redo logs created
+    under `/super/r01`.
+  - Data Guard broker configuration `dg_super`, with protection mode and level
+    at `MAXIMUM AVAILABILITY` and the standby open `READ ONLY WITH APPLY`.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
@@ -87,8 +88,7 @@ The supported lab path is now KVM/libvirt:
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
-- Data Guard broker configuration, MAXIMUM AVAILABILITY enforcement, read-only
-  apply, switchover, and FSFO.
+- Data Guard switchover and FSFO.
 - Actual patch apply and dual-home switch.
 
 ## Host Findings From This Run

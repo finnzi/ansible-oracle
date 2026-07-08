@@ -16,3 +16,4 @@
         oracle_dataguard_prepare_primary: true
         oracle_dataguard_prepare_standby: true
         oracle_dataguard_duplicate_standby: true
+        oracle_dataguard_configure_broker: true

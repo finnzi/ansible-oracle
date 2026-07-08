@@ -11,6 +11,7 @@ the project requirements that will apply once DG lands:
 from __future__ import annotations
 
 import shlex
+import time
 from pathlib import Path
 
 import pytest
@@ -28,6 +29,7 @@ def test_dataguard_defaults_use_maximum_availability():
     )
     assert "oracle_dataguard_prepare_primary: false" in defaults_text
     assert "oracle_dataguard_duplicate_standby: false" in defaults_text
+    assert "oracle_dataguard_configure_broker: false" in defaults_text
 
 
 def test_dataguard_inventory_and_network_prerequisites_are_wired():
@@ -63,6 +65,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     ).read_text(encoding="utf-8")
     dataguard_duplicate_standby = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/duplicate-standby.yml"
+    ).read_text(encoding="utf-8")
+    dataguard_configure_broker = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/configure-broker.yml"
     ).read_text(encoding="utf-8")
     dataguard_playbook = (
         REPO_ROOT / "playbooks/05-dataguard.yml"
@@ -110,18 +115,22 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_prepare_standby | bool" in dataguard_tasks
     assert "Duplicate physical standby for Data Guard" in dataguard_tasks
     assert "oracle_dataguard_duplicate_standby | bool" in dataguard_tasks
+    assert "Configure Data Guard broker" in dataguard_tasks
+    assert "oracle_dataguard_configure_broker | bool" in dataguard_tasks
     assert "hosts: oracle_db_hosts" in dataguard_playbook
     assert "oracle_network_dataguard_enabled: true" in dataguard_playbook
     assert "oracle_lab_host_map_mode: dataguard" in dataguard_playbook
     assert "oracle_dataguard_prepare_primary: true" in dataguard_playbook
     assert "oracle_dataguard_prepare_standby: true" in dataguard_playbook
     assert "oracle_dataguard_duplicate_standby: true" in dataguard_playbook
+    assert "oracle_dataguard_configure_broker: true" in dataguard_playbook
     assert "dependencies: []" in dataguard_meta
     assert "standby_file_management" in dataguard_prepare
     assert "dg_broker_start" in dataguard_prepare
     assert "log_archive_config" in dataguard_prepare
     assert "log_archive_dest_2" in dataguard_prepare
     assert "SYNC AFFIRM" in dataguard_prepare
+    assert "oracle_dataguard_configure_broker | default(false) | bool" in dataguard_prepare
     assert "fal_server" in dataguard_prepare
     assert "local_listener" in dataguard_prepare
     assert "ALTER SYSTEM REGISTER" in dataguard_prepare
@@ -133,9 +142,23 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "DUPLICATE TARGET DATABASE" in dataguard_duplicate_standby
     assert "FROM ACTIVE DATABASE" in dataguard_duplicate_standby
     assert "PHYSICAL STANDBY" in dataguard_duplicate_standby
+    assert "Read standby spfile in use" in dataguard_duplicate_standby
+    assert "Restart standby from spfile for broker management" in dataguard_duplicate_standby
+    assert "oracle_dataguard_configure_broker | default(false) | bool" in dataguard_duplicate_standby
+    assert "STARTUP MOUNT" in dataguard_duplicate_standby
     assert "-role PHYSICAL_STANDBY" in dataguard_duplicate_standby
     assert "srvctl\" add database" in dataguard_duplicate_standby
     assert "Validate standby Restart registration" in dataguard_duplicate_standby
+    assert "CREATE CONFIGURATION" in dataguard_configure_broker
+    assert "Wait for standby broker member to be available" in dataguard_configure_broker
+    assert "SHOW DATABASE '{{ _dg_standby_unique_name }}'" in dataguard_configure_broker
+    assert "EDIT CONFIGURATION SET PROTECTION MODE AS MAXAVAILABILITY" in dataguard_configure_broker
+    assert "Stop standby apply through broker before opening read-only" in dataguard_configure_broker
+    assert "READ ONLY WITH APPLY" in dataguard_configure_broker
+    assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
+    assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
+    assert "LogXptMode='SYNC'" in dataguard_configure_broker
+    assert "export ORACLE_SID={{ inst.name }}" in dataguard_configure_broker
     assert "_DGMGRL" in listener_template
     assert "dg_primary_unique = inst.dg_primary_db_unique_name" in tns_template
     assert "dg_standby_unique = inst.dg_standby_db_unique_name" in tns_template
@@ -191,11 +214,12 @@ def test_primary_dataguard_prerequisites(lab_exec):
     assert dg_broker_start == "TRUE"
     assert "DG_CONFIG=(" in log_archive_config
     assert "super_sby" in log_archive_config
-    assert "SERVICE=super_sby_dgb" in log_archive_dest_2
-    assert "SYNC" in log_archive_dest_2
-    assert "AFFIRM" in log_archive_dest_2
-    assert "DB_UNIQUE_NAME=super_sby" in log_archive_dest_2
-    assert log_archive_dest_state_2 == "DEFER"
+    log_archive_dest_2_lower = log_archive_dest_2.lower()
+    assert 'service="super_sby_dgb"' in log_archive_dest_2_lower
+    assert "sync" in log_archive_dest_2_lower
+    assert "affirm" in log_archive_dest_2_lower
+    assert 'db_unique_name="super_sby"' in log_archive_dest_2_lower
+    assert log_archive_dest_state_2.upper() == "ENABLE"
     assert fal_server == "super_sby_dgb"
     assert "HOST=superdc1.domain.is" in local_listener
     assert standby_log_count >= needed_standby_logs
@@ -307,6 +331,21 @@ def test_physical_standby_restart_registration(standby_exec):
     assert "LISTENER_SUPER" in listener.stdout
 
 
+def test_physical_standby_uses_spfile(standby_exec):
+    sql = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT value FROM v$parameter WHERE name = 'spfile';\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    r = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
+    assert r.returncode == 0, r.stderr
+    assert "ORA-" not in r.stdout
+    assert "/super/app/oracle/db_home1/dbs/spfilesuper.ora" in r.stdout
+
+
 @pytest.mark.scaffolded
 def test_dataguard_role_present_or_skipped(db_connection):
     """In the slice there is no standby; skip cleanly with a clear reason."""
@@ -321,20 +360,43 @@ def test_dataguard_role_present_or_skipped(db_connection):
         )
 
 
-@pytest.mark.scaffolded
-def test_standby_is_read_only_with_apply(db_connection):
-    pytest.skip(
-        "Standby open-mode assertion: requires Data Guard (scaffolded). "
-        "Will assert open_mode == 'READ ONLY WITH APPLY'."
+def test_standby_is_read_only_with_apply(standby_exec):
+    sql = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;\n"
+        "EXIT;\n"
+        "SQL"
     )
+    expected = (
+        "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY"
+    )
+    last = None
+    for _ in range(12):
+        last = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
+        assert last.returncode == 0, last.stderr
+        assert "ORA-" not in last.stdout
+        if expected in last.stdout:
+            return
+        time.sleep(10)
+    assert last is not None
+    assert expected in last.stdout
 
 
-@pytest.mark.scaffolded
-def test_dgmgrrl_configuration_healthy():
-    pytest.skip(
-        "DGMGRL broker health assertion: requires Data Guard (scaffolded). "
-        "Will run `dgmgrl ... SHOW CONFIGURATION`."
+def test_dgmgrrl_configuration_healthy(lab_exec):
+    r = lab_exec(
+        "su - oracle -c "
+        + shlex.quote(
+            "export ORACLE_HOME=/super/app/oracle/db_home1; "
+            "$ORACLE_HOME/bin/dgmgrl -silent sys/SysPassword1_@super_dgb "
+            "'SHOW CONFIGURATION'"
+        )
     )
+    assert r.returncode == 0, r.stderr
+    assert "SUCCESS" in r.stdout
+    assert "Protection Mode: MaxAvailability" in r.stdout
+    assert "super_sby" in r.stdout
 
 
 @pytest.mark.scaffolded

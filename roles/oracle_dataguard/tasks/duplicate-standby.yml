@@ -105,6 +105,62 @@
     'SP2-' in (_dg_standby_create_spfile.stdout | default(''))
   when: not _dg_standby_spfile_stat.stat.exists
 
+- name: Read standby spfile in use
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT value FROM v$parameter WHERE name = 'spfile';
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_spfile_in_use
+  changed_when: false
+  failed_when: >-
+    _dg_standby_spfile_in_use.rc != 0 or
+    'ORA-' in (_dg_standby_spfile_in_use.stdout | default('')) or
+    'SP2-' in (_dg_standby_spfile_in_use.stdout | default(''))
+
+- name: Restart standby from spfile for broker management
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    DECLARE
+      v_open_mode v$database.open_mode%TYPE;
+    BEGIN
+      SELECT open_mode INTO v_open_mode FROM v$database;
+      IF v_open_mode = 'READ ONLY WITH APPLY' THEN
+        BEGIN
+          EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL';
+        EXCEPTION
+          WHEN OTHERS THEN NULL;
+        END;
+      END IF;
+    END;
+    /
+    SHUTDOWN IMMEDIATE;
+    STARTUP MOUNT;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_restart_spfile
+  changed_when: true
+  failed_when: >-
+    _dg_standby_restart_spfile.rc != 0 or
+    'ORA-' in (_dg_standby_restart_spfile.stdout | default('')) or
+    'SP2-' in (_dg_standby_restart_spfile.stdout | default(''))
+  when:
+    - oracle_dataguard_configure_broker | default(false) | bool
+    - _dg_standby_spfile not in (_dg_standby_spfile_in_use.stdout | default(''))
+
 - name: Check local CSS status before standby Restart registration
   ansible.builtin.shell: |
     set -o pipefail

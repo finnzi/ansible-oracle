@@ -1,0 +1,251 @@
+---
+# tasks/configure-broker.yml - broker config, Maximum Availability, read-only apply.
+# `inst` is one element of oracle_instances, after host overrides.
+
+- name: Resolve current ORACLE_HOME for Data Guard broker
+  ansible.builtin.set_fact:
+    _dg_home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+    _dg_primary_unique_name: "{{ inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
+    _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
+    _dg_broker_protection_mode: "{{ dg_protection_mode | default('MAXIMUM AVAILABILITY') }}"
+
+- name: Read Data Guard broker configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_show_before
+  changed_when: false
+  failed_when: >-
+    _dg_broker_show_before.rc != 0 or
+    (
+      'ORA-16532' not in (_dg_broker_show_before.stdout | default('')) and
+      'Configuration -' not in (_dg_broker_show_before.stdout | default(''))
+    )
+  no_log: true
+
+- name: Create Data Guard broker configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    CREATE CONFIGURATION '{{ dg_broker_config }}' AS
+      PRIMARY DATABASE IS '{{ _dg_primary_unique_name }}'
+      CONNECT IDENTIFIER IS {{ _dg_primary_unique_name }}_dgb;
+    ADD DATABASE '{{ _dg_standby_unique_name }}'
+      AS CONNECT IDENTIFIER IS {{ _dg_standby_unique_name }}_dgb
+      MAINTAINED AS PHYSICAL;
+    ENABLE CONFIGURATION;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_create
+  changed_when: true
+  failed_when: >-
+    _dg_broker_create.rc != 0 or
+    'Error:' in (_dg_broker_create.stdout | default('')) or
+    'ORA-' in (_dg_broker_create.stdout | default(''))
+  no_log: true
+  when: "'ORA-16532' in (_dg_broker_show_before.stdout | default(''))"
+
+- name: Wait for standby broker member to be available
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    SHOW DATABASE '{{ _dg_standby_unique_name }}';
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_standby_ready
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: >-
+    _dg_broker_standby_ready.rc == 0 and
+    'Database Status:' in (_dg_broker_standby_ready.stdout | default('')) and
+    'SUCCESS' in (_dg_broker_standby_ready.stdout | default('')) and
+    'ORA-' not in (_dg_broker_standby_ready.stdout | default('')) and
+    'Error:' not in (_dg_broker_standby_ready.stdout | default(''))
+  failed_when: >-
+    _dg_broker_standby_ready.rc != 0 or
+    'Database Status:' not in (_dg_broker_standby_ready.stdout | default('')) or
+    'SUCCESS' not in (_dg_broker_standby_ready.stdout | default('')) or
+    'ORA-' in (_dg_broker_standby_ready.stdout | default('')) or
+    'Error:' in (_dg_broker_standby_ready.stdout | default(''))
+  no_log: true
+
+- name: Configure broker transport and protection mode
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    EDIT DATABASE '{{ _dg_primary_unique_name }}' SET PROPERTY LogXptMode='SYNC';
+    EDIT DATABASE '{{ _dg_standby_unique_name }}' SET PROPERTY LogXptMode='SYNC';
+    EDIT CONFIGURATION SET PROTECTION MODE AS MAXAVAILABILITY;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_configure
+  changed_when: false
+  failed_when: >-
+    _dg_broker_configure.rc != 0 or
+    'Error:' in (_dg_broker_configure.stdout | default('')) or
+    'ORA-' in (_dg_broker_configure.stdout | default(''))
+  no_log: true
+
+- name: Read standby open mode before read-only apply correction
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb as sysdba" <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_open_mode_before
+  changed_when: false
+  failed_when: >-
+    _dg_standby_open_mode_before.rc != 0 or
+    'PHYSICAL STANDBY|' not in (_dg_standby_open_mode_before.stdout | default('')) or
+    'ORA-' in (_dg_standby_open_mode_before.stdout | default('')) or
+    'SP2-' in (_dg_standby_open_mode_before.stdout | default(''))
+  no_log: true
+
+- name: Stop standby apply through broker before opening read-only
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    EDIT DATABASE '{{ _dg_standby_unique_name }}' SET STATE='APPLY-OFF';
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_apply_off
+  changed_when: true
+  failed_when: >-
+    _dg_broker_apply_off.rc != 0 or
+    'Error:' in (_dg_broker_apply_off.stdout | default('')) or
+    'ORA-' in (_dg_broker_apply_off.stdout | default(''))
+  no_log: true
+  when: "'READ ONLY WITH APPLY' not in (_dg_standby_open_mode_before.stdout | default(''))"
+
+- name: Open physical standby read-only with apply
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb as sysdba" <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    DECLARE
+      v_open_mode v$database.open_mode%TYPE;
+    BEGIN
+      SELECT open_mode INTO v_open_mode FROM v$database;
+      IF v_open_mode != 'READ ONLY WITH APPLY' THEN
+        BEGIN
+          EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL';
+        EXCEPTION
+          WHEN OTHERS THEN NULL;
+        END;
+        IF v_open_mode = 'MOUNTED' THEN
+          EXECUTE IMMEDIATE 'ALTER DATABASE OPEN';
+        END IF;
+        EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION';
+        DBMS_OUTPUT.PUT_LINE('CHANGED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('OK');
+      END IF;
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_read_only_apply
+  changed_when: "'CHANGED' in (_dg_standby_read_only_apply.stdout | default(''))"
+  failed_when: >-
+    _dg_standby_read_only_apply.rc != 0 or
+    'ORA-' in (_dg_standby_read_only_apply.stdout | default('')) or
+    'SP2-' in (_dg_standby_read_only_apply.stdout | default('')) or
+    'PLS-' in (_dg_standby_read_only_apply.stdout | default(''))
+  no_log: true
+  when: "'READ ONLY WITH APPLY' not in (_dg_standby_open_mode_before.stdout | default(''))"
+
+- name: Enable standby apply through broker
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    EDIT DATABASE '{{ _dg_standby_unique_name }}' SET STATE='APPLY-ON';
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_apply_on
+  changed_when: false
+  failed_when: >-
+    _dg_broker_apply_on.rc != 0 or
+    'Error:' in (_dg_broker_apply_on.stdout | default('')) or
+    'ORA-' in (_dg_broker_apply_on.stdout | default(''))
+  no_log: true
+  when: "'READ ONLY WITH APPLY' not in (_dg_standby_open_mode_before.stdout | default(''))"
+
+- name: Validate Data Guard broker and standby open mode
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    broker="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+    )"
+    standby="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb as sysdba" <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+    EXIT;
+    SQL
+    )"
+    primary="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+    EXIT;
+    SQL
+    )"
+    output="$(printf '%s\n%s\n%s\n' "$broker" "$standby" "$primary")"
+    printf '%s\n' "$output"
+    case "$output" in
+      *ORA-*|*Error:*) exit 1 ;;
+    esac
+    printf '%s\n' "$output" | grep -F 'SUCCESS' >/dev/null || exit 1
+    printf '%s\n' "$output" | grep -F 'MAXIMUM AVAILABILITY' >/dev/null || exit 1
+    printf '%s\n' "$output" | grep -F 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' >/dev/null || exit 1
+    printf '%s\n' "$output" | grep -F 'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' >/dev/null || exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_validate
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: _dg_broker_validate.rc == 0
+  failed_when: _dg_broker_validate.rc != 0
+  no_log: true
