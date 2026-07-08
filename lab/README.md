@@ -36,9 +36,10 @@ the relevant groups, and then logging out/in:
 ./lab/scripts/prepare-host-fedora.sh
 ```
 
-The manual equivalent for the group step is:
+The manual equivalent for host setup is:
 
 ```bash
+sudo systemctl enable --now virtlogd.socket virtqemud.socket virtnetworkd.socket virtstoraged.socket
 sudo usermod -aG libvirt,kvm "$USER"
 ```
 
@@ -65,9 +66,10 @@ To try Oracle Linux 10:
 LAB_OS_VERSION=10 ./lab/scripts/lab-up.sh
 ```
 
-`fetch-base-image.sh` tries to discover the latest KVM qcow2 image from
-`https://yum.oracle.com/templates/OracleLinux/OL${LAB_OS_VERSION}/`. If Oracle
-changes that index, set an explicit URL:
+`fetch-base-image.sh` tries to discover the latest x86_64 KVM qcow2 image from
+Oracle's Linux cloud images page at
+`https://yum.oracle.com/oracle-linux-templates.html`. If Oracle changes that
+page, set an explicit URL:
 
 ```bash
 ORACLE_LINUX_IMAGE_URL=https://yum.oracle.com/templates/OracleLinux/.../image.qcow2 \

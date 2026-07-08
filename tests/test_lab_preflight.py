@@ -49,6 +49,12 @@ def run_lab_script(
     )
 
 
+def write_fake_virsh(bin_dir: Path, body: str) -> None:
+    virsh = bin_dir / "virsh"
+    virsh.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{body}\n", encoding="utf-8")
+    virsh.chmod(0o755)
+
+
 def test_required_media_list_is_complete():
     result = run_common("lab_required_media_files")
     inventory_defaults = (REPO_ROOT / "inventory/group_vars/all.yml").read_text(
@@ -159,6 +165,59 @@ def test_preflight_libvirt_groups_warns_without_active_kvm_group():
     assert "Group membership is advisory" in result.stderr
 
 
+def test_preflight_libvirt_checks_domain_and_network_drivers(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_virsh(
+        bin_dir,
+        """
+if [ "$1" = "--connect" ] && [ "$3" = "list" ]; then
+  exit 0
+fi
+if [ "$1" = "--connect" ] && [ "$3" = "net-list" ]; then
+  exit 0
+fi
+exit 2
+""",
+    )
+
+    result = run_common(
+        "lab_preflight_libvirt",
+        {"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "libvirt domain driver reachable" in result.stderr
+    assert "libvirt network driver reachable" in result.stderr
+
+
+def test_preflight_libvirt_reports_missing_network_driver(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_fake_virsh(
+        bin_dir,
+        """
+if [ "$1" = "--connect" ] && [ "$3" = "list" ]; then
+  exit 0
+fi
+if [ "$1" = "--connect" ] && [ "$3" = "net-list" ]; then
+  exit 1
+fi
+exit 2
+""",
+    )
+
+    result = run_common(
+        "lab_preflight_libvirt",
+        {"PATH": f"{bin_dir}:{os.environ['PATH']}"},
+    )
+
+    assert result.returncode == 1
+    assert "libvirt domain driver reachable" in result.stderr
+    assert "cannot access libvirt network driver" in result.stderr
+    assert "sudo systemctl enable --now virtnetworkd.socket" in result.stderr
+
+
 def test_prepare_host_fedora_help_is_safe():
     result = run_lab_script("prepare-host-fedora.sh", "--help")
 
@@ -211,3 +270,39 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     assert iso_listing.returncode == 0, iso_listing.stderr
     assert "/user-data" in iso_listing.stdout
     assert "/meta-data" in iso_listing.stdout
+
+
+def test_oracle_linux_image_discovery_selects_latest_ol9_kvm_image():
+    result = run_common(
+        "discover_oracle_linux_image_url_from_page \"$(cat tests/fixtures/oracle-linux-templates.html)\"",
+        {"LAB_OS_VERSION": "9"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        "https://yum.oracle.com/templates/OracleLinux/OL9/u7/x86_64/"
+        "OL9U7_x86_64-kvm-b289.qcow2"
+    )
+
+
+def test_oracle_linux_image_discovery_selects_ol10_kvm_image():
+    result = run_common(
+        "discover_oracle_linux_image_url_from_page \"$(cat tests/fixtures/oracle-linux-templates.html)\"",
+        {"LAB_OS_VERSION": "10"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == (
+        "https://yum.oracle.com/templates/OracleLinux/OL10/u1/x86_64/"
+        "OL10U1_x86_64-kvm-b291.qcow2"
+    )
+
+
+def test_oracle_linux_image_discovery_returns_empty_string_without_match():
+    result = run_common(
+        "url=$(discover_oracle_linux_image_url_from_page 'no matching links'); printf '<%s>\\n' \"$url\"",
+        {"LAB_OS_VERSION": "9"},
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "<>"

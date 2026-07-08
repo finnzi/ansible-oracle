@@ -78,6 +78,7 @@ if [ "${SKIP_PACKAGE_INSTALL}" != "1" ]; then
 
   log "Starting libvirt sockets"
   as_root systemctl enable --now \
+    virtlogd.socket \
     virtqemud.socket \
     virtnetworkd.socket \
     virtstoraged.socket

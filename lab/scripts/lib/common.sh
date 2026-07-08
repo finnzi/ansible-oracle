@@ -369,18 +369,30 @@ lab_preflight_libvirt_groups() {
 }
 
 lab_preflight_libvirt() {
+  local rc=0
+
   if timeout 8 virsh --connect "${VIRSH_URI}" list --all >/dev/null 2>&1; then
-    log "libvirt reachable: ${VIRSH_URI}"
-    return 0
+    log "libvirt domain driver reachable: ${VIRSH_URI}"
+  else
+    warn "cannot access libvirt domain driver at ${VIRSH_URI}"
+    warn "Fedora setup usually needs:"
+    warn "  sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage"
+    warn "  sudo systemctl enable --now virtlogd.socket virtqemud.socket virtnetworkd.socket virtstoraged.socket"
+    warn "  sudo usermod -aG libvirt,kvm \$USER"
+    warn "Then log out and back in so group membership applies."
+    rc=1
   fi
 
-  warn "cannot access libvirt at ${VIRSH_URI}"
-  warn "Fedora setup usually needs:"
-  warn "  sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage"
-  warn "  sudo systemctl enable --now virtqemud.socket virtnetworkd.socket virtstoraged.socket"
-  warn "  sudo usermod -aG libvirt,kvm \$USER"
-  warn "Then log out and back in so group membership applies."
-  return 1
+  if timeout 8 virsh --connect "${VIRSH_URI}" net-list --all >/dev/null 2>&1; then
+    log "libvirt network driver reachable: ${VIRSH_URI}"
+  else
+    warn "cannot access libvirt network driver at ${VIRSH_URI}"
+    warn "Start the modular network daemon socket:"
+    warn "  sudo systemctl enable --now virtnetworkd.socket"
+    rc=1
+  fi
+
+  return "${rc}"
 }
 
 lab_preflight_session_network_note() {
@@ -469,18 +481,22 @@ lab_require_preflight() {
 
 discover_oracle_linux_image_url() {
   require_cmd curl
-  local root="https://yum.oracle.com/templates/OracleLinux/OL${LAB_OS_VERSION}"
-  local update page arch file
-  page="$(curl -fsSL "${root}/" 2>/dev/null || true)"
-  update="$(printf '%s\n' "${page}" | grep -Eo 'href="u[0-9]+/' | sed -E 's/^href="(u[0-9]+).*/\1/' | sort -V | tail -1)"
-  [ -n "${update}" ] || die "Could not discover an OL${LAB_OS_VERSION} update directory at ${root}/. Set ORACLE_LINUX_IMAGE_URL explicitly."
+  local page image_url index_url="https://yum.oracle.com/oracle-linux-templates.html"
+  page="$(curl -fsSL "${index_url}" 2>/dev/null || true)"
+  image_url="$(discover_oracle_linux_image_url_from_page "${page}")"
+  [ -n "${image_url}" ] || die "Could not discover an OL${LAB_OS_VERSION} x86_64 KVM qcow2 image at ${index_url}. Set ORACLE_LINUX_IMAGE_URL explicitly."
 
-  arch="${root}/${update}/x86_64"
-  page="$(curl -fsSL "${arch}/" 2>/dev/null || true)"
-  file="$(printf '%s\n' "${page}" | grep -Eo "OL${LAB_OS_VERSION}U[0-9]+_x86_64-kvm-b[0-9]+\\.qcow2" | sort -V | tail -1)"
-  [ -n "${file}" ] || die "Could not discover a KVM qcow2 image at ${arch}/. Set ORACLE_LINUX_IMAGE_URL explicitly."
+  printf '%s\n' "${image_url}"
+}
 
-  printf '%s/%s\n' "${arch}" "${file}"
+discover_oracle_linux_image_url_from_page() {
+  local page="$1"
+  {
+    printf '%s\n' "${page}" \
+      | grep -Eo "https://yum\\.oracle\\.com/templates/OracleLinux/OL${LAB_OS_VERSION}/u[0-9]+/x86_64/OL${LAB_OS_VERSION}U[0-9]+_x86_64-kvm-b[0-9]+\\.qcow2" \
+      | sort -V \
+      | tail -1
+  } || true
 }
 
 HOSTS_MARKER_BEGIN="# ansible-oracle lab begin"

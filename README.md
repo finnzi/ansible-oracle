@@ -55,7 +55,8 @@ source .venv/bin/activate
 # If it adds your user to libvirt/kvm groups, log out and back in before continuing.
 ./lab/scripts/prepare-host-fedora.sh
 
-# Manual equivalent for the group step:
+# Manual equivalent for host setup:
+# sudo systemctl enable --now virtlogd.socket virtqemud.socket virtnetworkd.socket virtstoraged.socket
 # sudo usermod -aG libvirt,kvm "$USER"
 # Then log out and back in before continuing.
 
