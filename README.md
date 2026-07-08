@@ -26,6 +26,8 @@ Implemented:
 - Standby-candidate baseline on `superdb2`: Restart online, DB home present,
   Grid disk owned for ASM metadata, no standalone database created, and a
   NOMOUNT RMAN auxiliary reachable through `super_sby_dgb`.
+- Physical standby creation on `superdb2` via RMAN active duplicate, registered
+  with Oracle Restart as `super_sby`.
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.
@@ -39,8 +41,8 @@ Implemented:
 
 Still scaffolded or not yet proven end to end:
 
-- Data Guard creation, broker configuration, READ ONLY WITH APPLY, and
-  switchover. Data Guard broker protection mode must be MAXIMUM AVAILABILITY.
+- Data Guard broker configuration, READ ONLY WITH APPLY, and switchover. Data
+  Guard broker protection mode must be MAXIMUM AVAILABILITY.
 - FSFO observer installation.
 - Actual patch application and dual-home switch.
 

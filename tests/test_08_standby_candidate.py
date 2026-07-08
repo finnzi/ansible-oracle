@@ -46,16 +46,18 @@ def test_standby_candidate_has_no_standalone_database(standby_exec):
         sql = (
             "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
             "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
-            "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+            "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
             "SELECT status FROM v$instance;\n"
+            "SELECT database_role || '|' || open_mode FROM v$database;\n"
             "EXIT;\n"
             "SQL"
         )
         state = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
         assert state.returncode == 0, state.stderr
-        assert "STARTED" in state.stdout
-        assert "MOUNTED" not in state.stdout
-        assert "OPEN" not in state.stdout
+        if "ORA-01507" in state.stdout:
+            assert "STARTED" in state.stdout
+        else:
+            assert "PHYSICAL STANDBY" in state.stdout
 
     oratab = standby_exec("grep -E '^super:' /etc/oratab 2>/dev/null || true")
     assert oratab.stdout.strip() in ("", "super:/super/app/oracle/db_home1:N")

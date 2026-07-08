@@ -56,3 +56,7 @@ oracle_dataguard_prepare_primary: false
 # Prepare the standby host as an RMAN auxiliary: pfile, password file, oratab,
 # and NOMOUNT instance reachable through the static _DGMGRL listener service.
 oracle_dataguard_prepare_standby: false
+
+# Create the physical standby from the primary with RMAN active duplicate. This
+# is idempotent: it skips once the standby reports database_role=PHYSICAL STANDBY.
+oracle_dataguard_duplicate_standby: false

@@ -1,0 +1,245 @@
+---
+# tasks/duplicate-standby.yml - create the physical standby with RMAN.
+# `inst` is one element of oracle_instances, after host overrides.
+
+- name: Resolve current ORACLE_HOME for Data Guard standby duplicate
+  ansible.builtin.set_fact:
+    _dg_home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+    _dg_standby_unique_name: "{{ inst.db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
+    _dg_primary_unique_name: "{{ inst.dg_primary_db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
+    _dg_standby_pfile: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/init{{ inst.name }}.ora
+    _dg_standby_spfile: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/spfile{{ inst.name }}.ora
+    _dg_standby_pwfile: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
+
+- name: Read standby database role before duplicate
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_role_before
+  changed_when: false
+  failed_when: false
+
+- name: Run RMAN active duplicate for physical standby
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/rman" <<'RMAN'
+    CONNECT TARGET sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb
+    CONNECT AUXILIARY sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb
+    DUPLICATE TARGET DATABASE
+      FOR STANDBY
+      FROM ACTIVE DATABASE
+      DORECOVER
+      NOFILENAMECHECK;
+    EXIT;
+    RMAN
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_duplicate_standby
+  changed_when: true
+  failed_when: >-
+    _dg_duplicate_standby.rc != 0 or
+    'RMAN-' in (_dg_duplicate_standby.stdout | default('')) or
+    'ORA-' in (_dg_duplicate_standby.stdout | default(''))
+  no_log: true
+  when: "'PHYSICAL STANDBY' not in (_dg_standby_role_before.stdout | default(''))"
+
+- name: Validate physical standby role after duplicate
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_role_after
+  changed_when: false
+  failed_when: >-
+    _dg_standby_role_after.rc != 0 or
+    'PHYSICAL STANDBY' not in (_dg_standby_role_after.stdout | default('')) or
+    'ORA-' in (_dg_standby_role_after.stdout | default('')) or
+    'SP2-' in (_dg_standby_role_after.stdout | default(''))
+
+- name: Check standby spfile for Restart registration
+  ansible.builtin.stat:
+    path: "{{ _dg_standby_spfile }}"
+  register: _dg_standby_spfile_stat
+
+- name: Create standby spfile for Restart registration
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<SQL
+    CREATE SPFILE='{{ _dg_standby_spfile }}' FROM PFILE='{{ _dg_standby_pfile }}';
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_create_spfile
+  changed_when: true
+  failed_when: >-
+    _dg_standby_create_spfile.rc != 0 or
+    'ORA-' in (_dg_standby_create_spfile.stdout | default('')) or
+    'SP2-' in (_dg_standby_create_spfile.stdout | default(''))
+  when: not _dg_standby_spfile_stat.stat.exists
+
+- name: Check local CSS status before standby Restart registration
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/crsctl" stat res ora.cssd -init 2>&1 || true
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_css_status
+  changed_when: false
+
+- name: Start local CSS before standby Restart registration
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/crsctl" start resource ora.cssd -init 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_css_start
+  changed_when: "'CRS-2676' in (_dg_standby_css_start.stdout | default(''))"
+  failed_when: >-
+    _dg_standby_css_start.rc != 0 and
+    'CRS-5702' not in (_dg_standby_css_start.stdout | default('')) and
+    'already running' not in (_dg_standby_css_start.stdout | default('') | lower)
+  when:
+    - "'STATE=ONLINE' not in (_dg_standby_css_status.stdout | default(''))"
+    - "'ONLINE  ONLINE' not in (_dg_standby_css_status.stdout | default(''))"
+
+- name: Check standby Restart database registration
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_db
+  changed_when: false
+  failed_when: false
+
+- name: Register physical standby database with Oracle Restart
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" add database \
+      -db {{ _dg_standby_unique_name }} \
+      -oraclehome {{ _dg_home_path }} \
+      -spfile {{ _dg_standby_spfile }} \
+      -pwfile {{ _dg_standby_pwfile }} \
+      -role PHYSICAL_STANDBY \
+      -dbname {{ inst.name }} \
+      -instance {{ inst.name }} \
+      -startoption MOUNT \
+      -stopoption IMMEDIATE
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_add_db
+  changed_when: _dg_standby_srvctl_add_db.rc == 0
+  failed_when: >-
+    _dg_standby_srvctl_add_db.rc != 0 and
+    'already exists' not in (_dg_standby_srvctl_add_db.stdout | default(''))
+  when: "'NOT_REGISTERED' in (_dg_standby_srvctl_db.stdout | default(''))"
+
+- name: Check standby listener Restart registration
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_listener
+  changed_when: false
+  failed_when: false
+
+- name: Register standby listener with Oracle Restart
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" add listener \
+      -listener LISTENER_{{ inst.name | upper }} \
+      -oraclehome {{ _dg_home_path }} \
+      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_add_listener
+  changed_when: _dg_standby_srvctl_add_listener.rc == 0
+  failed_when: >-
+    _dg_standby_srvctl_add_listener.rc != 0 and
+    'already exists' not in (_dg_standby_srvctl_add_listener.stdout | default(''))
+  when: "'NOT_REGISTERED' in (_dg_standby_srvctl_listener.stdout | default(''))"
+
+- name: Enable standby database and listener in Oracle Restart
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    changed=0
+
+    enable_output="$("$gi_home/bin/srvctl" enable database -db {{ _dg_standby_unique_name }} 2>&1)" || enable_rc=$?
+    printf '%s\n' "$enable_output"
+    if [ "${enable_rc:-0}" -ne 0 ] && ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
+      exit "${enable_rc:-1}"
+    fi
+    if [ "${enable_rc:-0}" -eq 0 ]; then
+      changed=1
+    fi
+
+    unset enable_rc
+    enable_output="$("$gi_home/bin/srvctl" enable listener -listener LISTENER_{{ inst.name | upper }} 2>&1)" || enable_rc=$?
+    printf '%s\n' "$enable_output"
+    if [ "${enable_rc:-0}" -ne 0 ] && ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
+      exit "${enable_rc:-1}"
+    fi
+    if [ "${enable_rc:-0}" -eq 0 ]; then
+      changed=1
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+      echo CHANGED
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_enable
+  changed_when: "'CHANGED' in (_dg_standby_srvctl_enable.stdout | default(''))"
+
+- name: Validate standby Restart registration
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    "$gi_home/bin/srvctl" config database -db {{ _dg_standby_unique_name }}
+    "$gi_home/bin/srvctl" config listener -listener LISTENER_{{ inst.name | upper }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_validate
+  changed_when: false
+  failed_when: >-
+    _dg_standby_srvctl_validate.rc != 0 or
+    'PHYSICAL_STANDBY' not in (_dg_standby_srvctl_validate.stdout | default('')) or
+    'LISTENER_' not in (_dg_standby_srvctl_validate.stdout | default(''))

@@ -27,6 +27,7 @@ def test_dataguard_defaults_use_maximum_availability():
         "dg_protection_mode: MAXIMUM AVAILABILITY" in defaults_text
     )
     assert "oracle_dataguard_prepare_primary: false" in defaults_text
+    assert "oracle_dataguard_duplicate_standby: false" in defaults_text
 
 
 def test_dataguard_inventory_and_network_prerequisites_are_wired():
@@ -59,6 +60,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     ).read_text(encoding="utf-8")
     dataguard_prepare_standby = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/prepare-standby.yml"
+    ).read_text(encoding="utf-8")
+    dataguard_duplicate_standby = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/duplicate-standby.yml"
     ).read_text(encoding="utf-8")
     dataguard_playbook = (
         REPO_ROOT / "playbooks/05-dataguard.yml"
@@ -104,11 +108,14 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_prepare_primary | bool" in dataguard_tasks
     assert "Prepare standby auxiliary for Data Guard" in dataguard_tasks
     assert "oracle_dataguard_prepare_standby | bool" in dataguard_tasks
+    assert "Duplicate physical standby for Data Guard" in dataguard_tasks
+    assert "oracle_dataguard_duplicate_standby | bool" in dataguard_tasks
     assert "hosts: oracle_db_hosts" in dataguard_playbook
     assert "oracle_network_dataguard_enabled: true" in dataguard_playbook
     assert "oracle_lab_host_map_mode: dataguard" in dataguard_playbook
     assert "oracle_dataguard_prepare_primary: true" in dataguard_playbook
     assert "oracle_dataguard_prepare_standby: true" in dataguard_playbook
+    assert "oracle_dataguard_duplicate_standby: true" in dataguard_playbook
     assert "dependencies: []" in dataguard_meta
     assert "standby_file_management" in dataguard_prepare
     assert "dg_broker_start" in dataguard_prepare
@@ -123,6 +130,12 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "Restart standby auxiliary when pfile changes" in dataguard_prepare_standby
     assert "orapwd" in dataguard_prepare_standby
     assert "{{ _dg_standby_unique_name }}_dgb as sysdba" in dataguard_prepare_standby
+    assert "DUPLICATE TARGET DATABASE" in dataguard_duplicate_standby
+    assert "FROM ACTIVE DATABASE" in dataguard_duplicate_standby
+    assert "PHYSICAL STANDBY" in dataguard_duplicate_standby
+    assert "-role PHYSICAL_STANDBY" in dataguard_duplicate_standby
+    assert "srvctl\" add database" in dataguard_duplicate_standby
+    assert "Validate standby Restart registration" in dataguard_duplicate_standby
     assert "_DGMGRL" in listener_template
     assert "dg_primary_unique = inst.dg_primary_db_unique_name" in tns_template
     assert "dg_standby_unique = inst.dg_standby_db_unique_name" in tns_template
@@ -245,13 +258,53 @@ def test_standby_auxiliary_prerequisites(standby_exec):
         "$ORACLE_HOME/bin/sqlplus -L -S 'sys/SysPassword1_@super_sby_dgb as sysdba' <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT status FROM v$instance;\n"
+        "SELECT database_role || '|' || open_mode FROM v$database;\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    r = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
+    assert r.returncode == 0, r.stderr
+    if "ORA-01507" in r.stdout:
+        assert "STARTED" in r.stdout
+    else:
+        assert "ORA-" not in r.stdout
+        assert (
+            "STARTED" in r.stdout
+            or "MOUNTED" in r.stdout
+            or "OPEN" in r.stdout
+        )
+        assert "PHYSICAL STANDBY" in r.stdout
+
+
+def test_physical_standby_duplicate(standby_exec):
+    sql = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT database_role || '|' || open_mode FROM v$database;\n"
         "EXIT;\n"
         "SQL"
     )
     r = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
     assert r.returncode == 0, r.stderr
     assert "ORA-" not in r.stdout
-    assert "STARTED" in r.stdout
+    assert "PHYSICAL STANDBY" in r.stdout
+
+
+def test_physical_standby_restart_registration(standby_exec):
+    config = standby_exec(
+        "/grid/19c/gi_home1/bin/srvctl config database -db super_sby"
+    )
+    listener = standby_exec(
+        "/grid/19c/gi_home1/bin/srvctl config listener -listener LISTENER_SUPER"
+    )
+    assert config.returncode == 0, config.stdout + config.stderr
+    assert listener.returncode == 0, listener.stdout + listener.stderr
+    assert "Database unique name: super_sby" in config.stdout
+    assert "Database name: super" in config.stdout
+    assert "Database role: PHYSICAL_STANDBY" in config.stdout
+    assert "/super/app/oracle/db_home1/dbs/spfilesuper.ora" in config.stdout
+    assert "LISTENER_SUPER" in listener.stdout
 
 
 @pytest.mark.scaffolded
