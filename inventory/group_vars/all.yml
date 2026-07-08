@@ -95,11 +95,32 @@ oracle_lab_dg_password: "DgPassword1_"
 # ── Domain / DNS conventions for the lab ──────────────────────────────
 lab_domain: domain.is
 oracle_network_open_firewall: true
+oracle_lab_host_map_mode: standalone
 
 oracle_lab_guest_hosts:
   - ip: 192.168.87.11
-    names: superdb1.domain.is superdb1 superdb.domain.is superdb superdc1.domain.is superdc1
+    names: superdb1.domain.is superdb1
+    modes: [standalone, dataguard]
   - ip: 192.168.87.12
-    names: superdb2.domain.is superdb2 superdc2.domain.is superdc2
+    names: superdb2.domain.is superdb2
+    modes: [standalone, dataguard]
   - ip: 192.168.87.13
     names: observer.domain.is observer
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.21
+    names: superdb.domain.is superdb
+    modes: [standalone]
+  - ip: 192.168.87.31
+    names: superdc1.domain.is superdc1
+    modes: [dataguard]
+  - ip: 192.168.87.32
+    names: superdc2.domain.is superdc2
+    modes: [dataguard]
+
+oracle_lab_listener_vips:
+  - ip: 192.168.87.21
+    names: superdb.domain.is superdb
+  - ip: 192.168.87.31
+    names: superdc1.domain.is superdc1
+  - ip: 192.168.87.32
+    names: superdc2.domain.is superdc2

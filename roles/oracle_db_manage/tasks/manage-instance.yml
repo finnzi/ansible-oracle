@@ -8,6 +8,8 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dbca_stage: "{{ inst.oracle_base }}/.stage_{{ inst.name }}"
     _dbca_response_file: "{{ inst.oracle_base }}/.stage_{{ inst.name }}/dbca.rsp"
+    _listener_host: "{{ inst.listener_vip }}"
+    _listener_port: "{{ inst.listener_port | default(1521) }}"
 
 - name: Check if instance already exists (oratab + DB open)
   ansible.builtin.shell: |
@@ -106,6 +108,9 @@
     -- Recovery area (flashback) on the dedicated /f01 path
     ALTER SYSTEM SET db_recovery_file_dest='{{ inst.dirs.flashback }}' SCOPE=BOTH SID='*';
     ALTER SYSTEM SET db_recovery_file_dest_size=10G SCOPE=BOTH SID='*';
+    -- Register dynamic services with the per-instance VIP listener.
+    ALTER SYSTEM SET local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST={{ _listener_host }})(PORT={{ _listener_port }}))' SCOPE=BOTH SID='*';
+    ALTER SYSTEM REGISTER;
     EXIT;
     SQL
   args: { executable: /bin/bash }

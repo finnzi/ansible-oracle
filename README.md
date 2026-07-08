@@ -23,6 +23,8 @@ Implemented:
 - Restart registration, Data Guard, observer, and patching role interfaces.
 - Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
   listener services, and broker TNS aliases.
+- Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
+  separate from VM management IPs.
 - Standby-first patch eligibility parser with unit coverage.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 

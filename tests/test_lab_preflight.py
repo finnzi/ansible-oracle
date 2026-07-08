@@ -296,6 +296,24 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     assert "/meta-data" in iso_listing.stdout
 
 
+def test_update_hosts_standalone_uses_dedicated_listener_vip():
+    result = run_lab_script("update-hosts.sh", "--print")
+
+    assert result.returncode == 0
+    assert "192.168.87.21  superdb.domain.is superdb" in result.stdout
+    assert "192.168.87.11  superdb.domain.is superdb" not in result.stdout
+
+
+def test_update_hosts_dataguard_uses_dedicated_listener_vips():
+    result = run_lab_script("update-hosts.sh", "--dg", "--print")
+
+    assert result.returncode == 0
+    assert "192.168.87.31  superdc1.domain.is superdc1" in result.stdout
+    assert "192.168.87.32  superdc2.domain.is superdc2" in result.stdout
+    assert "192.168.87.11  superdc1.domain.is" not in result.stdout
+    assert "192.168.87.12  superdc2.domain.is" not in result.stdout
+
+
 def test_oracle_linux_image_discovery_selects_latest_ol9_kvm_image():
     result = run_common(
         "discover_oracle_linux_image_url_from_page \"$(cat tests/fixtures/oracle-linux-templates.html)\"",

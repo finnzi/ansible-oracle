@@ -53,7 +53,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
         REPO_ROOT / "roles/oracle_service_manage/tasks/main.yml"
     ).read_text(encoding="utf-8")
 
+    assert "192.168.87.31" in all_vars
     assert "superdc1.domain.is superdc1" in all_vars
+    assert "192.168.87.32" in all_vars
     assert "superdc2.domain.is superdc2" in all_vars
     assert "listener_vip: \"superdc1.domain.is\"" in primary_vars
     assert "db_unique_name: super_pri" in primary_vars

@@ -6,14 +6,18 @@ not a reliable or safe fit for this repo.
 
 ## Topology
 
-| VM | IP | Hostname(s) | Purpose |
+| VM/VIP | IP | Hostname(s) | Purpose |
 |---|---:|---|---|
-| `ansible-oracle-lab-superdb1` | `192.168.87.11` | `superdb1.domain.is`, `superdb.domain.is` | Primary or standalone DB |
-| `ansible-oracle-lab-superdb2` | `192.168.87.12` | `superdb2.domain.is`, `superdc2.domain.is` | Future Data Guard standby |
+| `ansible-oracle-lab-superdb1` | `192.168.87.11` | `superdb1.domain.is` | Primary or standalone DB host |
+| standalone listener VIP | `192.168.87.21` | `superdb.domain.is` | Standalone listener address |
+| Data Guard primary listener VIP | `192.168.87.31` | `superdc1.domain.is` | Primary listener address |
+| `ansible-oracle-lab-superdb2` | `192.168.87.12` | `superdb2.domain.is` | Future Data Guard standby host |
+| Data Guard standby listener VIP | `192.168.87.32` | `superdc2.domain.is` | Standby listener address |
 | `ansible-oracle-lab-observer` | `192.168.87.13` | `observer.domain.is` (`observer1` in Ansible inventory) | Future FSFO observer |
 
 The libvirt network is `ansible-oracle-lab` on `192.168.87.0/24`, with fixed
-DHCP leases for the VM MAC addresses.
+DHCP leases for the VM MAC addresses. Listener names use dedicated VIPs that
+the `oracle_network` role assigns inside the guest before starting listeners.
 
 ## Host Requirements
 

@@ -16,6 +16,10 @@ The supported lab path is now KVM/libvirt:
 
 - Three VMs: `superdb1`, `superdb2`, and `observer`.
 - Fixed libvirt DHCP leases on `192.168.87.0/24`.
+- Dedicated listener VIPs on the same lab subnet:
+  - `192.168.87.21` for `superdb.domain.is`.
+  - `192.168.87.31` for `superdc1.domain.is`.
+  - `192.168.87.32` for `superdc2.domain.is`.
 - Oracle Linux cloud image backing disks, defaulting to OL9 with `LAB_OS_VERSION`
   available for OL10 experiments.
 - Cloud-init seed ISOs for hostnames and root SSH.
@@ -52,7 +56,7 @@ The supported lab path is now KVM/libvirt:
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - Primary/standby listener aliases `superdc1.domain.is` and
-    `superdc2.domain.is` are represented in lab host maps.
+    `superdc2.domain.is` are represented in lab host maps with dedicated VIPs.
   - Per-host instance overrides are wired but remain dormant until
     `dataguard: true`, preserving standalone behavior.
   - Static `_DGMGRL` listener service and broker TNS alias rendering are ready

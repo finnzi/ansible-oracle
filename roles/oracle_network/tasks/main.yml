@@ -17,9 +17,17 @@
       {%- for inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}))) -%}
         {%- if 'standby' not in group_names or (inst.dataguard | default(false) | bool) -%}
           {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
+          {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
+          {%- set vip = namespace(ip='') -%}
+          {%- for entry in (oracle_lab_listener_vips | default([])) -%}
+            {%- if listener_name in (entry.names | default('') | string).split() -%}
+              {%- set vip.ip = entry.ip -%}
+            {%- endif -%}
+          {%- endfor -%}
           {%- set _ = out.append(inst | combine({
             '_home': current_home.suffix,
-            '_net':  (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))),
+            '_net': listener_name,
+            '_vip': vip.ip,
             '_port': (inst.listener_port | default(1521))})) -%}
         {%- endif -%}
       {%- endfor -%}
@@ -31,12 +39,58 @@
     marker: "# {mark} ANSIBLE-ORACLE lab guest hosts"
     block: |
       {% for entry in oracle_lab_guest_hosts %}
+      {% if oracle_lab_host_map_mode in (entry.modes | default([oracle_lab_host_map_mode])) %}
       {{ entry.ip }} {{ entry.names }}
+      {% endif %}
       {% endfor %}
     owner: root
     group: root
     mode: "0644"
   when: oracle_lab_guest_hosts | length > 0
+  register: _guest_hosts
+
+- name: Assign dedicated listener VIPs to the guest interface
+  ansible.builtin.shell: |
+    set -o pipefail
+    iface="{{ oracle_network_listener_interface | default('') }}"
+    if [ -z "$iface" ]; then
+      iface="$(ip -o route show default | awk '{print $5; exit}')"
+    fi
+    if ip -4 addr show dev "$iface" | grep -Eq '(^|[[:space:]]){{ inst._vip }}/'; then
+      runtime_present=1
+    else
+      runtime_present=0
+    fi
+
+    persistent_changed=0
+    persist="{{ '1' if (oracle_network_persist_listener_vips | bool) else '0' }}"
+    if [ "$persist" -eq 1 ]; then
+      if ! command -v nmcli >/dev/null 2>&1; then
+        echo "nmcli is required to persist listener VIP {{ inst._vip }}" >&2
+        exit 1
+      fi
+      conn="$(nmcli -g GENERAL.CONNECTION device show "$iface" | awk 'NF {print; exit}')"
+      if [ -z "$conn" ] || [ "$conn" = "--" ]; then
+        echo "No NetworkManager connection found for listener interface $iface" >&2
+        exit 1
+      fi
+      if ! nmcli -g ipv4.addresses connection show "$conn" | tr ',' '\n' | grep -Fxq "{{ inst._vip }}/{{ oracle_network_listener_vip_prefix }}"; then
+        nmcli connection modify "$conn" +ipv4.addresses "{{ inst._vip }}/{{ oracle_network_listener_vip_prefix }}"
+        persistent_changed=1
+      fi
+    fi
+
+    if [ "$runtime_present" -eq 0 ]; then
+      ip addr add "{{ inst._vip }}/{{ oracle_network_listener_vip_prefix }}" dev "$iface"
+      echo CHANGED
+    elif [ "$persistent_changed" -eq 1 ]; then
+      echo CHANGED
+    fi
+  args: { executable: /bin/bash }
+  loop: "{{ _net_instances | selectattr('_vip', 'defined') | selectattr('_vip') | list }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}:{{ inst._vip }}" }
+  register: _listener_vip_assign
+  changed_when: "'CHANGED' in (_listener_vip_assign.stdout | default(''))"
 
 - name: Ensure ORACLE_HOME/network/admin exists per instance
   ansible.builtin.file:
@@ -149,6 +203,35 @@
   changed_when: true
   failed_when: >-
     _lsnr_start.rc != 0 and 'TNS-' in _lsnr_start.stdout
+
+- name: Restart listener where bind inputs changed
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.inst.oracle_base }}/{{ item.inst._home }}
+    "$ORACLE_HOME/bin/lsnrctl" stop LISTENER_{{ item.inst.name | upper }} 2>&1 || true
+    "$ORACLE_HOME/bin/lsnrctl" start LISTENER_{{ item.inst.name | upper }} 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  loop: >-
+    {%- set restart = [] -%}
+    {%- for r in (_lsnr_status.results | default([])) -%}
+      {%- set listener_changed = namespace(value=false) -%}
+      {%- for t in (_listener_ora.results | default([])) -%}
+        {%- if t.inst is defined and r.inst is defined and t.inst.name == r.inst.name and (t.changed | default(false)) -%}
+          {%- set listener_changed.value = true -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- if r.inst is defined and (r.rc | default(1)) == 0 and 'TNS-' not in (r.stdout | default('')) and 'no listener' not in (r.stdout | default('') | lower) and ((_guest_hosts.changed | default(false)) or (_listener_vip_assign.changed | default(false)) or listener_changed.value) -%}
+        {%- set _ = restart.append({'inst': r.inst}) -%}
+      {%- endif -%}
+    {%- endfor -%}
+    {{ restart }}
+  loop_control: { label: "{{ item.inst.name }}" }
+  register: _lsnr_restart
+  changed_when: true
+  failed_when: >-
+    _lsnr_restart.rc != 0 or 'TNS-' in (_lsnr_restart.stdout | default(''))
 
 - name: Reload listener where it is up and .ora changed
   ansible.builtin.shell: |

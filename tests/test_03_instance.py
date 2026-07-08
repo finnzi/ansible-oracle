@@ -60,9 +60,28 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "'standby' not in group_names" in network_tasks
     assert "Ensure guest /etc/hosts has the lab host aliases" in network_tasks
     assert "oracle_network_open_firewall: false" in network_defaults
+    assert "oracle_lab_host_map_mode: standalone" in network_defaults
+    assert "oracle_lab_listener_vips: []" in network_defaults
+    assert "oracle_network_persist_listener_vips: true" in network_defaults
+    assert "oracle_network_listener_vip_prefix: 24" in network_defaults
     assert "oracle_network_open_firewall: true" in lab_group_vars
-    assert "superdc1.domain.is superdc1" in lab_group_vars
-    assert "superdc2.domain.is superdc2" in lab_group_vars
+    assert "oracle_lab_host_map_mode: standalone" in lab_group_vars
+    assert "192.168.87.21" in lab_group_vars
+    assert "names: superdb.domain.is superdb" in lab_group_vars
+    assert "modes: [standalone]" in lab_group_vars
+    assert "_listener_host" in instance_tasks
+    assert "ALTER SYSTEM SET local_listener" in instance_tasks
+    assert "192.168.87.31" in lab_group_vars
+    assert "names: superdc1.domain.is superdc1" in lab_group_vars
+    assert "192.168.87.32" in lab_group_vars
+    assert "names: superdc2.domain.is superdc2" in lab_group_vars
+    assert "Assign dedicated listener VIPs to the guest interface" in network_tasks
+    assert "nmcli is required to persist listener VIP" in network_tasks
+    assert "nmcli connection modify" in network_tasks
+    assert "ip addr add" in network_tasks
+    assert "register: _guest_hosts" in network_tasks
+    assert "Restart listener where bind inputs changed" in network_tasks
+    assert "_listener_vip_assign.changed" in network_tasks
     assert "Probe firewalld state" in network_tasks
     assert "firewall-cmd --add-port={{ inst._port }}/tcp" in network_tasks
     assert "firewall-cmd --permanent --add-port={{ inst._port }}/tcp" in network_tasks
@@ -101,6 +120,15 @@ def test_listener_answers_on_vip(db_conn_kwargs):
             f"— bring the lab up (lab/scripts/lab-up.sh) first: {exc}"
         )
     s.close()
+
+
+def test_standalone_listener_uses_dedicated_vip(lab_exec):
+    host_lookup = lab_exec("getent hosts superdb.domain.is | awk '{print $1}'")
+    assert host_lookup.returncode == 0, host_lookup.stderr
+    assert host_lookup.stdout.strip().splitlines()[-1] == "192.168.87.21"
+
+    vip_addr = lab_exec("ip -4 addr show | grep -w '192.168.87.21/24'")
+    assert vip_addr.returncode == 0, vip_addr.stderr
 
 
 def test_service_super_svc_resolves(db_connection):

@@ -91,7 +91,7 @@ log "Generating ${INVENTORY_DIR}/hosts.yml"
 mkdir -p "${INVENTORY_DIR}"
 cp "${INVENTORY_DIR}/hosts.example.yml" "${INVENTORY_DIR}/hosts.yml"
 
-log "Updating /etc/hosts (standalone slice: superdb.domain.is -> ${IP_SUPERDB1})"
+log "Updating /etc/hosts (standalone listener VIP: superdb.domain.is -> ${IP_SUPERDB})"
 "$(dirname "$0")/update-hosts.sh"
 
 log "Lab is up. Inventory: ${INVENTORY_DIR}/hosts.yml"
