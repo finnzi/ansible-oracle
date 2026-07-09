@@ -1,6 +1,7 @@
 """Oracle DB home patch inventory and convergence assertions."""
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import subprocess
@@ -130,12 +131,21 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_dual_home_switchback_listener_names: {}" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_sid_names: {}" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_install_discovered_targets: true" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_restart_discovery_fixture: []" in dual_switchback_playbook
     assert "SWITCH_DUAL_HOME_AND_BACK" in dual_switchback_playbook
     assert "Read Restart database names for switchback discovery" in dual_switchback_playbook
     assert "Read Restart database homes for switchback discovery" in dual_switchback_playbook
+    assert "Resolve fixture Restart database homes for switchback discovery" in dual_switchback_playbook
     assert "Resolve Restart-discovered switchback targets" in dual_switchback_playbook
     assert "Merge inventory and Restart-discovered switchback targets" in dual_switchback_playbook
+    assert "'dataguard': item.dataguard | default(false) | bool" in dual_switchback_playbook
+    assert "'dataguard': result.dataguard | default(false) | bool" in dual_switchback_playbook
+    assert "Report Restart-discovered install plan" in dual_switchback_playbook
+    assert "readiness/test-only" in dual_switchback_playbook
+    assert "Fail when fixture Restart discovery is used for execution" in dual_switchback_playbook
     assert "Report readiness-only mode" in dual_switchback_playbook
+    assert "standalone DB candidate(s)" in dual_switchback_playbook
+    assert "Data Guard target(s)" in dual_switchback_playbook
     assert "Fail when switchback is requested for Data Guard hosts" in dual_switchback_playbook
     assert (
         "Fail when Restart-discovered switchback targets are not explicitly named"
@@ -364,6 +374,158 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     assert "Dual-home switchback readiness resolved" in r.stdout
     assert "TASK [Install dual-home switchback target]" in r.stdout
     assert "skipping:" in r.stdout
+
+
+def test_dual_home_switchback_fixture_reports_discovered_install_plan(tmp_path):
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        """
+all:
+  children:
+    oracle_db_hosts:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_become: false
+""".lstrip(),
+        encoding="utf-8",
+    )
+    extra_vars = {
+        "oracle_user": os.environ.get("USER", "oracle"),
+        "oracle_instances": [],
+        "oracle_patch_dual_home_switchback_restart_discovery_fixture": [
+            {
+                "restart_db_name": "brown",
+                "home_path": "/brown/app/oracle/db_home1",
+            }
+        ],
+    }
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        str(inventory),
+        "playbooks/07-patch-dual-db-switchback.yml",
+        "-e",
+        json.dumps(extra_vars),
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "failed=0" in r.stdout
+    assert "changed=0" in r.stdout
+    assert "Restart-discovered target-home install plan" in r.stdout
+    assert "'name': 'brown'" in r.stdout
+    assert "'oracle_base': '/brown/app/oracle'" in r.stdout
+    assert "'suffix': 'db_home2'" in r.stdout
+    assert "TASK [Install Restart-discovered dual-home target homes]" in r.stdout
+    assert "skipping:" in r.stdout
+
+
+def test_dual_home_switchback_fixture_cannot_execute(tmp_path):
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        """
+all:
+  children:
+    oracle_db_hosts:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_become: false
+""".lstrip(),
+        encoding="utf-8",
+    )
+    extra_vars = {
+        "oracle_user": os.environ.get("USER", "oracle"),
+        "oracle_instances": [],
+        "oracle_patch_dual_home_switchback_execute": True,
+        "oracle_patch_dual_home_switchback_confirm": "SWITCH_DUAL_HOME_AND_BACK",
+        "oracle_patch_dual_home_switchback_restart_discovery_fixture": [
+            {
+                "restart_db_name": "brown",
+                "home_path": "/brown/app/oracle/db_home1",
+            }
+        ],
+    }
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        str(inventory),
+        "playbooks/07-patch-dual-db-switchback.yml",
+        "-e",
+        json.dumps(extra_vars),
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "readiness/test-only" in r.stdout
+    assert "Install Restart-discovered dual-home target homes" not in r.stdout
+
+
+def test_dual_home_switchback_fixture_dataguard_suppresses_install_plan(tmp_path):
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text(
+        """
+all:
+  children:
+    oracle_db_hosts:
+      hosts:
+        localhost:
+          ansible_connection: local
+          ansible_become: false
+""".lstrip(),
+        encoding="utf-8",
+    )
+    extra_vars = {
+        "oracle_user": os.environ.get("USER", "oracle"),
+        "oracle_instances": [],
+        "oracle_patch_dual_home_switchback_restart_discovery_fixture": [
+            {
+                "restart_db_name": "brown_sby",
+                "home_path": "/brown/app/oracle/db_home1",
+                "dataguard": True,
+            }
+        ],
+    }
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        str(inventory),
+        "playbooks/07-patch-dual-db-switchback.yml",
+        "-e",
+        json.dumps(extra_vars),
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "failed=0" in r.stdout
+    assert "changed=0" in r.stdout
+    assert "Restart-discovered target-home install plan" not in r.stdout
+    assert (
+        "Dual-home switchback readiness resolved for 0 standalone DB candidate(s) "
+        "and 1 Data Guard target(s)"
+    ) in r.stdout
 
 
 def test_restart_database_uses_current_oracle_home_after_dual_home_noop(lab_exec):
