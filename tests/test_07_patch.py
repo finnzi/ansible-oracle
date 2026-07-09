@@ -46,6 +46,9 @@ def test_patch_role_db_apply_contract():
     dual_playbook = (REPO_ROOT / "playbooks/07-patch-dual-db.yml").read_text(
         encoding="utf-8"
     )
+    dual_switchback_playbook = (
+        REPO_ROOT / "playbooks/07-patch-dual-db-switchback.yml"
+    ).read_text(encoding="utf-8")
     standbyfirst_playbook = (
         REPO_ROOT / "playbooks/07-patch-standbyfirst.yml"
     ).read_text(encoding="utf-8")
@@ -119,6 +122,25 @@ def test_patch_role_db_apply_contract():
     assert "oracle_db_install_home_paths" in dual_playbook
     assert "oracle_patch_dual_home_path | default('') | length == 0" in dual_playbook
     assert "oracle_patch_mode: oop_dual" in dual_playbook
+    assert "Rehearse standalone DB dual-home switch and switchback" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_execute: false" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_target_path: \"\"" in dual_switchback_playbook
+    assert "SWITCH_DUAL_HOME_AND_BACK" in dual_switchback_playbook
+    assert "Report readiness-only mode" in dual_switchback_playbook
+    assert "Fail when switchback is requested for Data Guard hosts" in dual_switchback_playbook
+    assert "Check existing brownfield switchback target path" in dual_switchback_playbook
+    assert "Read actual Restart homes before dual-home switchback" in dual_switchback_playbook
+    assert "Record actual original Restart homes for switchback" in dual_switchback_playbook
+    assert "Install dual-home switchback target" in dual_switchback_playbook
+    assert "Switch Restart to dual-home target" in dual_switchback_playbook
+    assert "oracle_patch_discover_oratab: false" in dual_switchback_playbook
+    assert "Validate Restart uses dual-home target" in dual_switchback_playbook
+    assert "Stop DBs before dual-home switchback" in dual_switchback_playbook
+    assert "Switch Restart database back to actual original home" in dual_switchback_playbook
+    assert "Switch Restart listener back to actual original home" in dual_switchback_playbook
+    assert "Start DBs after dual-home switchback" in dual_switchback_playbook
+    assert "Validate Restart uses original home again" in dual_switchback_playbook
+    assert "item.actual_original_home_path" in dual_switchback_playbook
     assert "Validate standby-first patch eligibility" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
     assert "Discover current Data Guard roles for standby-first patching" in standbyfirst_playbook
@@ -259,6 +281,30 @@ def test_dual_home_switch_playbook_converges_when_target_is_current_home():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "failed=0" in r.stdout
     assert "changed=0" in r.stdout
+
+
+def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-dual-db-switchback.yml",
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "failed=0" in r.stdout
+    assert "changed=0" in r.stdout
+    assert "Dual-home switchback readiness resolved" in r.stdout
+    assert "TASK [Install dual-home switchback target]" in r.stdout
+    assert "skipping:" in r.stdout
 
 
 def test_restart_database_uses_current_oracle_home_after_dual_home_noop(lab_exec):

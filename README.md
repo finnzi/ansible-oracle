@@ -52,6 +52,9 @@ Implemented:
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
   dual-home Restart switching with automatic installation of inventory suffix
   and inventory-declared explicit-path target homes before patch/switch.
+  `playbooks/07-patch-dual-db-switchback.yml` provides a gated standalone
+  rehearsal that switches to an inventory suffix or existing explicit target
+  path and back to the actual Restart-registered original home.
   Expected RU IDs are derived from staged patch metadata, OPatch inventory is
   checked on both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
   brownfield Grid homes from `/etc/oracle/olr.loc`, and the current 19.31 RU
@@ -147,6 +150,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
 | Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; DB dual-home target install and Restart switch |
+| Reversible standalone DB dual-home switch | `playbooks/07-patch-dual-db-switchback.yml` resolves readiness by default; actual switch/switchback to a suffix or explicit path requires confirmation |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |

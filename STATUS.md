@@ -113,6 +113,13 @@ The supported lab path is now KVM/libvirt:
     target home, compares Restart's registered Oracle home, modifies the
     Restart database/listener home when needed, restarts the database, and runs
     datapatch. The current lab verifies the idempotent current-home no-op path.
+  - `playbooks/07-patch-dual-db-switchback.yml` provides a gated standalone
+    rehearsal that installs an inventory suffix target or uses an existing
+    explicit target path, switches Restart to it, validates the registered
+    Oracle home, switches back to the actual Restart-registered original home,
+    and validates again. The default readiness-only path is safe in the current
+    Data Guard lab, does not stop databases, and has been run live with
+    `changed=0`.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration mechanics for eligible DB patch bundles: precheck
     README eligibility, optional target-home staging on the current standby,
