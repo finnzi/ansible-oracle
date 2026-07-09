@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/db_home1")
@@ -351,6 +352,17 @@ def test_dual_home_switch_playbook_converges_when_target_is_current_home():
 
 
 def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
+    inventory_data = yaml.safe_load((REPO_ROOT / "inventory/hosts.yml").read_text())
+    groups = inventory_data["all"]["children"]
+
+    def group_hosts(group_name: str) -> set[str]:
+        group = groups[group_name]
+        hosts = set((group.get("hosts") or {}).keys())
+        for child in (group.get("children") or {}).keys():
+            hosts.update(group_hosts(child))
+        return hosts
+
+    expected_db_hosts = len(group_hosts("oracle_db_hosts"))
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -371,7 +383,16 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "failed=0" in r.stdout
     assert "changed=0" in r.stdout
-    assert "Dual-home switchback readiness resolved" in r.stdout
+    assert (
+        "Dual-home switchback readiness resolved for 0 standalone DB candidate(s) "
+        "and 1 Data Guard target(s)"
+    ) in r.stdout
+    assert r.stdout.count(
+        "Dual-home switchback readiness resolved for 0 standalone DB candidate(s) "
+        "and 1 Data Guard target(s)"
+    ) == expected_db_hosts
+    assert "Restart-discovered target-home install plan" not in r.stdout
+    assert "Data Guard targets must use playbooks/07-patch-standbyfirst.yml" in r.stdout
     assert "TASK [Install dual-home switchback target]" in r.stdout
     assert "skipping:" in r.stdout
 

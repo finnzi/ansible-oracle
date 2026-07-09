@@ -135,12 +135,14 @@ The supported lab path is now KVM/libvirt:
     Guard config peers; Data Guard databases must be modeled in inventory and
     patched through standby-first orchestration.
     The safe readiness path, including opt-in Restart discovery, has been run
-    live in the current Data Guard lab with `changed=0`. Readiness reporting
-    separates standalone candidates from Data Guard targets. Fixture-backed
-    readiness tests also verify that explicitly discovered brownfield targets
-    synthesize the expected installer inventory without calling `srvctl`, and
-    that fixture data is rejected for destructive execution. Fixture entries
-    marked as Data Guard are not reported as standalone install candidates.
+    live in the current Data Guard lab with `changed=0`, and the live test now
+    asserts the current lab reports `0` standalone candidates and `1` Data
+    Guard target per DB host. Readiness reporting separates standalone
+    candidates from Data Guard targets. Fixture-backed readiness tests also
+    verify that explicitly discovered brownfield targets synthesize the
+    expected installer inventory without calling `srvctl`, and that fixture
+    data is rejected for destructive execution. Fixture entries marked as Data
+    Guard are not reported as standalone install candidates.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration mechanics for eligible DB patch bundles: precheck
     README eligibility, optional target-home staging on the current standby,
