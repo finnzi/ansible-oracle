@@ -48,8 +48,10 @@ Implemented:
 - Standby-first patch eligibility parser and dedicated Data Guard standby-first
   orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
-  dual-home Restart switching to an existing configured target home. Expected
-  RU IDs are derived from staged patch metadata, OPatch inventory is checked on
+  dual-home Restart switching with automatic installation of inventory suffix
+  target homes before patch/switch. Explicit path targets must already exist.
+  Expected RU IDs are derived from staged patch metadata, OPatch inventory is
+  checked on
   both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
   brownfield Grid homes from `/etc/oracle/olr.loc`, and the current 19.31 RU
   convergence plus current-home dual mode are verified as idempotent.
@@ -62,7 +64,7 @@ Implemented:
 Still scaffolded or not yet proven end to end:
 
 - Destructive automatic failover simulation and reinstate workflow.
-- Automated staging/install of a new dual-home target before switching.
+- Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck.
 
@@ -143,7 +145,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 |---|---|
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
-| Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; DB dual-home Restart switch to a configured target |
+| Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; DB dual-home target install and Restart switch |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |

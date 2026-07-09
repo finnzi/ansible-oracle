@@ -93,6 +93,15 @@ def test_patch_role_db_apply_contract():
     assert "Converge Oracle Grid home patch inventory" in grid_playbook
     assert "oracle_patch_target: grid" in grid_playbook
     assert "Converge Oracle DB dual-home patch switch" in dual_playbook
+    assert "Install Oracle DB dual-home target" in dual_playbook
+    assert "Fail before installing target homes for Data Guard dual-home switch" in dual_playbook
+    assert "playbooks/07-patch-standbyfirst.yml" in dual_playbook
+    assert dual_playbook.index("Install Oracle DB dual-home target") < dual_playbook.index(
+        "Converge Oracle DB dual-home patch switch"
+    )
+    assert "oracle_db_install_home_selection: selected" in dual_playbook
+    assert "oracle_db_install_home_suffixes" in dual_playbook
+    assert "oracle_patch_dual_home_path | default('') | length == 0" in dual_playbook
     assert "oracle_patch_mode: oop_dual" in dual_playbook
     assert "Validate standby-first patch eligibility" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook

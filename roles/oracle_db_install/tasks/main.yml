@@ -2,7 +2,7 @@
 # tasks/main.yml for oracle_db_install
 #
 # Install the Oracle 19c Database software (no DBCA here — that's
-# oracle_db_manage). One pass per declared home suffix per instance.
+# oracle_db_manage). One pass per selected home suffix per instance.
 # Out-of-place friendly: each home lives in its own directory so a future
 # patch can install a fresh home alongside the running one.
 
@@ -10,13 +10,27 @@
 # ORACLE_HOME, contains runInstaller. So we unzip into the home directory
 # and run it from there with a silent response file.
 
-- name: Resolve per-instance/per-home install targets (current homes only)
+- name: Fail when DB home install selection is invalid
+  ansible.builtin.fail:
+    msg: >-
+      oracle_db_install_home_selection={{ oracle_db_install_home_selection }}
+      is invalid. Supported values are current and selected.
+  when: oracle_db_install_home_selection not in ['current', 'selected']
+
+- name: Resolve per-instance/per-home install targets
   ansible.builtin.set_fact:
     _install_targets: >-
       {%- set out=[] -%}
+      {%- set selected_suffixes = oracle_db_install_home_suffixes | default([]) -%}
       {%- for inst in (oracle_instances | default([])) -%}
         {%- for home in inst.db_homes -%}
-          {%- if home.current | default(false) | bool -%}
+          {%- set selected = (
+                (oracle_db_install_home_selection == 'current' and
+                 home.current | default(false) | bool) or
+                (oracle_db_install_home_selection == 'selected' and
+                 home.suffix in selected_suffixes)
+              ) -%}
+          {%- if selected -%}
             {%- set _ = out.append({
                 'name':  inst.name,
                 'oracle_base': inst.oracle_base,

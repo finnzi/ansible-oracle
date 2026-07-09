@@ -25,10 +25,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_install_role_applies_extracted_database_ru_directory():
+    defaults = (
+        REPO_ROOT / "roles/oracle_db_install/defaults/main.yml"
+    ).read_text(encoding="utf-8")
+    main_tasks = (
+        REPO_ROOT / "roles/oracle_db_install/tasks/main.yml"
+    ).read_text(encoding="utf-8")
     tasks = (
         REPO_ROOT / "roles/oracle_db_install/tasks/install-home.yml"
     ).read_text(encoding="utf-8")
 
+    assert "oracle_db_install_home_selection: current" in defaults
+    assert "oracle_db_install_home_suffixes: []" in defaults
+    assert "Fail when DB home install selection is invalid" in main_tasks
+    assert "Supported values are current and selected" in main_tasks
+    assert "oracle_db_install_home_selection == 'all'" not in main_tasks
+    assert "oracle_db_install_home_selection == 'current'" in main_tasks
+    assert "oracle_db_install_home_selection == 'selected'" in main_tasks
+    assert "home.suffix in selected_suffixes" in main_tasks
     assert "Remove incomplete Oracle home left by a failed installer run" in tasks
     assert "Remove bundled OPatch before upgrade" in tasks
     assert "Extract DB RU bundle for runInstaller -applyRU" in tasks

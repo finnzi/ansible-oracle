@@ -6,7 +6,7 @@
 # Data Guard standby-first orchestration playbook.
 #
 # WHAT REMAINS:
-#   - Automated installation/cloning of a new dual-home target before switching.
+#   - Live new dual-home target install and switch proof in the KVM lab.
 #
 #   Standby-first branch (Data Guard only, playbooks/07-patch-standbyfirst.yml):
 #     1. Call patch_standbyfirst_info to read eligibility from the README.
@@ -26,7 +26,9 @@
 #   oracle_patch_extra_homes: additional brownfield DB homes to patch
 #   oracle_patch_discover_olr: include Grid home discovered from /etc/oracle/olr.loc
 #   oracle_patch_extra_grid_homes: additional brownfield Grid homes to patch
-#   oracle_patch_dual_home_suffix/path: existing target DB home for oop_dual switching
+#   oracle_patch_dual_home_suffix/path: target DB home for oop_dual switching.
+#     Suffix targets are installed by playbooks/07-patch-dual-db.yml before
+#     patch/switch; explicit path targets must already exist.
 #   oracle_patch_standbyfirst_require_eligible: precheck gate in standby-first playbook
 
 oracle_user: oracle
@@ -59,11 +61,12 @@ oracle_patch_discover_oratab: true
 # a dict with at least home_path, plus optional name/oracle_base/home_suffix.
 oracle_patch_extra_homes: []
 
-# Dual-home DB patching. The target home must already exist. When
-# oracle_patch_mode=oop_dual, the target home is oracle_patch_dual_home_path if
-# set, otherwise oracle_base/oracle_patch_dual_home_suffix if set, otherwise the
-# inventory current home. Keeping the current home as the default makes the mode
-# idempotently verifiable before a second home is staged.
+# Dual-home DB patching. When oracle_patch_mode=oop_dual, the target home is
+# oracle_patch_dual_home_path if set, otherwise
+# oracle_base/oracle_patch_dual_home_suffix if set, otherwise the inventory
+# current home. The dual-home playbook automatically installs suffix targets
+# declared in inventory before patch/switch. Explicit path targets must already
+# exist because they are outside the inventory home model.
 oracle_patch_dual_home_suffix: ""
 oracle_patch_dual_home_path: ""
 

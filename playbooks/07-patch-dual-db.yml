@@ -1,9 +1,51 @@
 ---
 # playbooks/07-patch-dual-db.yml - dual-home Oracle DB patching.
-# The target home must already exist and is controlled by
-# oracle_patch_dual_home_path or oracle_patch_dual_home_suffix. If neither is
-# set, the current inventory home is used, making the playbook an idempotent
-# no-op in the current lab.
+# A target home is controlled by oracle_patch_dual_home_suffix or
+# oracle_patch_dual_home_path. A suffix target is installed from inventory before
+# patch/switch; an explicit path target must already exist because the installer
+# has no inventory metadata for arbitrary paths. If neither is set, the current
+# inventory home is used, making the playbook an idempotent no-op in the current
+# lab.
+
+- name: Install Oracle DB dual-home target
+  hosts: oracle_db_hosts
+  become: true
+  pre_tasks:
+    - name: Fail before installing target homes for Data Guard dual-home switch
+      ansible.builtin.fail:
+        msg: >-
+          playbooks/07-patch-dual-db.yml cannot install or switch a Data Guard
+          dual-home target directly. Use playbooks/07-patch-standbyfirst.yml for
+          Data Guard patch orchestration.
+      when:
+        - >-
+          (oracle_patch_dual_home_suffix | default('') | length > 0) or
+          (oracle_patch_dual_home_path | default('') | length > 0)
+        - >-
+          (
+            (
+              oracle_instances | default([])
+            ) | oracle_apply_instance_overrides(
+              oracle_instance_overrides | default({}),
+              false
+            ) | selectattr('dataguard', 'defined')
+              | selectattr('dataguard', 'equalto', true)
+              | list
+              | length
+          ) > 0
+  roles:
+    - role: oracle_db_install
+      vars:
+        oracle_db_install_home_selection: selected
+        oracle_db_install_home_suffixes: >-
+          {{
+            [oracle_patch_dual_home_suffix]
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 and
+              oracle_patch_dual_home_path | default('') | length == 0
+            )
+            else []
+          }}
 
 - name: Converge Oracle DB dual-home patch switch
   hosts: oracle_db_hosts
