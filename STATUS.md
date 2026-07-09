@@ -45,6 +45,9 @@ The supported lab path is now KVM/libvirt:
 - Preflight checks for host tools, libvirt access, SSH key, source media
   readability, and required Oracle installer/patch files.
 - Inventory defaults for the KVM fixed IPs.
+- Multi-instance inventory example for `super`, `duper`, and `fluff`, with
+  distinct filesystem trees, listener names/ports, services, and host-specific
+  Data Guard overrides covered by unit tests.
 - Existing Ansible role scaffolding for OS prep, storage, DB home install,
   network/listener, DB create/manage, Restart, Data Guard, observer, service,
   and patching.
@@ -173,6 +176,7 @@ The supported lab path is now KVM/libvirt:
 ## Not Yet Proven End To End
 
 - Live destructive automatic failover simulation and reinstate execution.
+- Live creation of multiple database instances on the same DB host.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU.
 

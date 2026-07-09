@@ -47,6 +47,9 @@ Implemented:
   listener services, and broker TNS aliases.
 - Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
   separate from VM management IPs.
+- Multi-instance inventory example for `super`, `duper`, and `fluff`, with
+  distinct filesystem trees, listener names/ports, services, and host-specific
+  Data Guard overrides covered by unit tests.
 - Standby-first patch eligibility parser and dedicated Data Guard standby-first
   orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
@@ -68,6 +71,7 @@ Implemented:
 Still scaffolded or not yet proven end to end:
 
 - Destructive automatic failover simulation and reinstate workflow.
+- Live creation of multiple database instances on the same DB host.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
@@ -158,7 +162,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Data Guard availability mode | `oracle_dataguard` sets broker protection mode to Maximum Availability |
 | FSFO failover/reinstate rehearsal | `playbooks/08-failover-reinstate.yml` validates readiness by default; destructive VM crash/reinstate requires explicit confirmation |
 | Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
-| Multiple instances per host | `oracle_instances` list |
+| Multiple instances per host | `oracle_instances` list; `inventory/examples/multi-instance.yml`; `tests/test_instance_overrides.py` |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
 | Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |

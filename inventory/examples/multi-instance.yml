@@ -1,0 +1,132 @@
+---
+# Example vars for managing several database instances on the same DB host.
+# Copy the oracle_instances entries into inventory/group_vars/all.yml or a
+# host/group vars file and adjust memory, listener names, and services.
+#
+# Each instance keeps a dedicated filesystem tree under /<name>/ and a distinct
+# listener/service identity. Data Guard instances still receive host-specific
+# listener and db_unique_name overrides from primary.yml / standby.yml.
+
+oracle_instances:
+  - name: super
+    oracle_base: /super/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /super/d01
+      archive: /super/a01
+      flashback: /super/f01
+      redo: /super/r01
+    dataguard: true
+    archivelog: true
+    flashback: true
+    force_logging: true
+    memory:
+      sga_target: 2G
+      pga_aggregate_target: 1G
+    listener_vip: superdb.domain.is
+    listener_port: 1521
+    service_name: super_svc
+
+  - name: duper
+    oracle_base: /duper/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /duper/d01
+      archive: /duper/a01
+      flashback: /duper/f01
+      redo: /duper/r01
+    dataguard: false
+    archivelog: true
+    flashback: false
+    force_logging: true
+    memory:
+      sga_target: 1536M
+      pga_aggregate_target: 768M
+    listener_vip: duperdb.domain.is
+    listener_port: 1522
+    service_name: duper_svc
+
+  - name: fluff
+    oracle_base: /fluff/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /fluff/d01
+      archive: /fluff/a01
+      flashback: /fluff/f01
+      redo: /fluff/r01
+    dataguard: false
+    archivelog: false
+    flashback: false
+    force_logging: false
+    memory:
+      sga_target: 1G
+      pga_aggregate_target: 512M
+    listener_vip: fluffdb.domain.is
+    listener_port: 1523
+    service_name: fluff_svc
+
+oracle_instance_overrides:
+  super:
+    dataguard: true
+    listener_vip: superdc1.domain.is
+    dg_role: primary
+    db_unique_name: super
+
+oracle_lab_guest_hosts:
+  - ip: 192.168.87.21
+    names: superdb.domain.is superdb
+    modes: [standalone]
+  - ip: 192.168.87.22
+    names: duperdb.domain.is duperdb
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.23
+    names: fluffdb.domain.is fluffdb
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.31
+    names: superdc1.domain.is superdc1
+    modes: [dataguard]
+  - ip: 192.168.87.32
+    names: superdc2.domain.is superdc2
+    modes: [dataguard]
+
+oracle_lab_listener_vips:
+  - ip: 192.168.87.21
+    names: superdb.domain.is superdb
+  - ip: 192.168.87.22
+    names: duperdb.domain.is duperdb
+  - ip: 192.168.87.23
+    names: fluffdb.domain.is fluffdb
+  - ip: 192.168.87.31
+    names: superdc1.domain.is superdc1
+  - ip: 192.168.87.32
+    names: superdc2.domain.is superdc2
