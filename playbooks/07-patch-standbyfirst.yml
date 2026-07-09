@@ -1,7 +1,8 @@
 ---
 # playbooks/07-patch-standbyfirst.yml - Data Guard standby-first DB patching.
-# Flow: prove the patch is standby-first eligible, patch the current standby,
-# switchover through broker, then patch the old primary as the new standby.
+# Flow: prove the patch is standby-first eligible, stage optional target homes,
+# patch the current standby, switchover through broker, then patch the old
+# primary as the new standby.
 
 - name: Validate standby-first patch eligibility
   hosts: primary
@@ -59,6 +60,12 @@
         _patch_sf_local_unique_name: "{{ _patch_sf_instance.db_unique_name | default(_patch_sf_instance.name) }}"
         _patch_sf_home_path: >-
           {{ _patch_sf_instance.oracle_base }}/{{ ((_patch_sf_instance.db_homes | selectattr('current', 'equalto', true) | list | first) | default(_patch_sf_instance.db_homes[0])).suffix }}
+        _patch_sf_patch_home_path: >-
+          {%- set current_home = (_patch_sf_instance.db_homes | selectattr('current', 'equalto', true) | list | first) | default(_patch_sf_instance.db_homes[0]) -%}
+          {%- if oracle_patch_dual_home_path | default('') | length > 0 -%}
+          {{ oracle_patch_dual_home_path }}{%- elif oracle_patch_dual_home_suffix | default('') | length > 0 -%}
+          {{ _patch_sf_instance.oracle_base }}/{{ oracle_patch_dual_home_suffix }}{%- else -%}
+          {{ _patch_sf_instance.oracle_base }}/{{ current_home.suffix }}{%- endif -%}
 
     - name: Read Data Guard broker roles and protection mode  # noqa: run-once[task]
       ansible.builtin.shell: |
@@ -135,6 +142,29 @@
       when: hostvars[item]._patch_sf_local_unique_name | default('') == _patch_sf_current_primary
       run_once: true
 
+- name: Install current Data Guard standby DB target homes
+  hosts: patch_current_standby
+  become: true
+  roles:
+    - role: oracle_db_install
+      vars:
+        oracle_db_install_home_selection: selected
+        oracle_db_install_home_suffixes: >-
+          {{
+            [oracle_patch_dual_home_suffix]
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 and
+              oracle_patch_dual_home_path | default('') | length == 0
+            )
+            else []
+          }}
+        oracle_db_install_home_paths: >-
+          {{
+            [oracle_patch_dual_home_path]
+            if (oracle_patch_dual_home_path | default('') | length > 0)
+            else []
+          }}
+
 - name: Patch current Data Guard standby DB homes
   hosts: patch_current_standby
   become: true
@@ -142,8 +172,42 @@
     - role: oracle_patch
       vars:
         oracle_patch_target: db
+        oracle_patch_mode: >-
+          {{
+            'oop_dual'
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 or
+              oracle_patch_dual_home_path | default('') | length > 0
+            )
+            else 'inplace'
+          }}
         oracle_patch_apply_enabled: true
+        oracle_patch_run_datapatch: false
         oracle_patch_dg_standbyfirst: false
+        oracle_patch_allow_dataguard_dual_home_switch: true
+
+- name: Validate current Data Guard standby after target-home patch
+  hosts: primary
+  become: true
+  tasks:
+    - name: Validate current standby is read-only with apply before switchover
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_home_path }}
+        "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_standby }}_dgb as sysdba" <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+        EXIT;
+        SQL
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_current_standby_after_patch
+      changed_when: false
+      failed_when: >-
+        _patch_sf_current_standby_after_patch.rc != 0 or
+        'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_current_standby_after_patch.stdout | default(''))
+      no_log: true
 
 - name: Switchover Data Guard primary for standby-first patch
   hosts: primary
@@ -158,6 +222,48 @@
         oracle_dataguard_prepare_standby: false
         oracle_dataguard_duplicate_standby: false
 
+- name: Run datapatch on promoted Data Guard primary
+  hosts: patch_current_standby
+  become: true
+  tasks:
+    - name: Run datapatch after standby-first switchover
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        export ORACLE_SID={{ _patch_sf_instance.name | quote }}
+        "$ORACLE_HOME/OPatch/datapatch" -verbose
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_promoted_datapatch
+      changed_when: _patch_sf_promoted_datapatch.rc == 0
+      failed_when: >-
+        _patch_sf_promoted_datapatch.rc != 0 or
+        'Patch installation complete' not in (_patch_sf_promoted_datapatch.stdout | default(''))
+
+- name: Install new Data Guard standby DB target homes
+  hosts: patch_current_primary
+  become: true
+  roles:
+    - role: oracle_db_install
+      vars:
+        oracle_db_install_home_selection: selected
+        oracle_db_install_home_suffixes: >-
+          {{
+            [oracle_patch_dual_home_suffix]
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 and
+              oracle_patch_dual_home_path | default('') | length == 0
+            )
+            else []
+          }}
+        oracle_db_install_home_paths: >-
+          {{
+            [oracle_patch_dual_home_path]
+            if (oracle_patch_dual_home_path | default('') | length > 0)
+            else []
+          }}
+
 - name: Patch new Data Guard standby DB homes
   hosts: patch_current_primary
   become: true
@@ -165,8 +271,19 @@
     - role: oracle_patch
       vars:
         oracle_patch_target: db
+        oracle_patch_mode: >-
+          {{
+            'oop_dual'
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 or
+              oracle_patch_dual_home_path | default('') | length > 0
+            )
+            else 'inplace'
+          }}
         oracle_patch_apply_enabled: true
+        oracle_patch_run_datapatch: false
         oracle_patch_dg_standbyfirst: false
+        oracle_patch_allow_dataguard_dual_home_switch: true
 
 - name: Validate Data Guard broker after standby-first patching
   hosts: primary
@@ -180,6 +297,16 @@
         SHOW CONFIGURATION;
         EXIT;
         DGMGRL
+        "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_standby }}_dgb as sysdba" <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+        EXIT;
+        SQL
+        "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_primary }}_dgb as sysdba" <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+        EXIT;
+        SQL
       args: { executable: /bin/bash }
       become: true
       become_user: "{{ oracle_user }}"
@@ -189,5 +316,7 @@
         _patch_sf_broker_after.rc != 0 or
         'Protection Mode: MaxAvailability' not in (_patch_sf_broker_after.stdout | default('')) or
         'Configuration Status:' not in (_patch_sf_broker_after.stdout | default('')) or
-        'SUCCESS' not in (_patch_sf_broker_after.stdout | default(''))
+        'SUCCESS' not in (_patch_sf_broker_after.stdout | default('')) or
+        'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_broker_after.stdout | default('')) or
+        'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_broker_after.stdout | default(''))
       no_log: true

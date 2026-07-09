@@ -10,7 +10,8 @@
 #
 #   Standby-first branch (Data Guard only, playbooks/07-patch-standbyfirst.yml):
 #     1. Call patch_standbyfirst_info to read eligibility from the README.
-#     2. If eligible: patch standby -> DGMGRL SWITCHOVER -> patch new standby.
+#     2. If eligible: stage/patch standby target -> DGMGRL SWITCHOVER ->
+#        stage/patch new standby target.
 #     3. If not eligible (OJVM in the RU): fail before touching DB homes so the
 #        operator can follow the patch's documented special procedure.
 #
@@ -47,6 +48,7 @@ oracle_patch_dg_standbyfirst: auto
 # Actually run opatchauto/datapatch when a target home is missing the expected
 # patch id(s). Detection and inventory validation run regardless.
 oracle_patch_apply_enabled: false
+oracle_patch_run_datapatch: true
 oracle_patch_expected_patch_ids: []
 oracle_patch_expected_grid_patch_ids: []
 oracle_patch_grid_apply_component_id: "{{ oracle_gi_install_apply_ru_component_id | default('') }}"
@@ -70,6 +72,10 @@ oracle_patch_extra_homes: []
 # the inventory home model.
 oracle_patch_dual_home_suffix: ""
 oracle_patch_dual_home_path: ""
+
+# Set only from the dedicated standby-first playbook, where Data Guard role
+# changes are explicitly orchestrated around DB-home switches.
+oracle_patch_allow_dataguard_dual_home_switch: false
 
 # The dedicated standby-first playbook refuses non-eligible patch bundles by
 # default. Keep this true unless following a vendor-documented special path.

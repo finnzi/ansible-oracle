@@ -108,10 +108,13 @@ The supported lab path is now KVM/libvirt:
     Restart database/listener home when needed, restarts the database, and runs
     datapatch. The current lab verifies the idempotent current-home no-op path.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
-    patch orchestration for eligible DB patch bundles: precheck README
-    eligibility, patch current standby hosts, switchover through broker, then
-    patch the old primary as the new standby. The current staged OJVM+RU bundle
-    is not standby-first eligible and is rejected before touching DB homes.
+    patch orchestration mechanics for eligible DB patch bundles: precheck
+    README eligibility, optional target-home staging on the current standby,
+    patch/switch that standby home, validate `MAXIMUM AVAILABILITY` and
+    `READ ONLY WITH APPLY`, switchover through broker, then optional target-home
+    staging and patch/switch on the old primary as the new standby. The current
+    staged OJVM+RU bundle is not standby-first eligible and is rejected before
+    touching DB homes; an eligible live RU apply remains not yet proven.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
     `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
     `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.

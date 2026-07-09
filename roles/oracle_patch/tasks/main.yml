@@ -418,6 +418,7 @@
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | selectattr('dataguard', 'equalto', true) | list | length) > 0
+    - not oracle_patch_allow_dataguard_dual_home_switch | default(false) | bool
 
 # ── Home apply path (only when inventory says work is needed) ──────────
 - name: Upgrade OPatch in homes that need patching
@@ -628,6 +629,59 @@
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
 
+- name: Reopen Data Guard standby read-only with apply after dual-home switch
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.home_path | quote }}
+    export ORACLE_SID={{ item.name | quote }}
+    "$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+    SET SERVEROUTPUT ON PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    DECLARE
+      v_database_role v$database.database_role%TYPE;
+      v_open_mode v$database.open_mode%TYPE;
+    BEGIN
+      SELECT database_role, open_mode INTO v_database_role, v_open_mode
+      FROM v$database;
+      IF v_database_role != 'PHYSICAL STANDBY' THEN
+        DBMS_OUTPUT.PUT_LINE('OK');
+      ELSIF v_open_mode != 'READ ONLY WITH APPLY' THEN
+        BEGIN
+          EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL';
+        EXCEPTION
+          WHEN OTHERS THEN NULL;
+        END;
+        IF v_open_mode = 'MOUNTED' THEN
+          EXECUTE IMMEDIATE 'ALTER DATABASE OPEN';
+        END IF;
+        EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION';
+        DBMS_OUTPUT.PUT_LINE('CHANGED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('OK');
+      END IF;
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dg_standby_open_apply
+  changed_when: "'CHANGED' in (_patch_dg_standby_open_apply.stdout | default(''))"
+  failed_when: >-
+    _patch_dg_standby_open_apply.rc != 0 or
+    'ORA-' in (_patch_dg_standby_open_apply.stdout | default('')) or
+    'SP2-' in (_patch_dg_standby_open_apply.stdout | default('')) or
+    'PLS-' in (_patch_dg_standby_open_apply.stdout | default(''))
+  loop: "{{ _patch_dual_switch_targets | default([]) | selectattr('dataguard', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.restart_db_name }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_allow_dataguard_dual_home_switch | default(false) | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
 - name: Run datapatch for patched DB homes
   ansible.builtin.shell: |
     set -o pipefail
@@ -652,5 +706,6 @@
     label: "{{ item.name }}:{{ item.home_suffix }}"
   when:
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_run_datapatch | bool
     - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
     - oracle_patch_target == 'db'

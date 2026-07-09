@@ -61,6 +61,8 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_extra_grid_homes: []" in defaults
     assert "oracle_patch_dual_home_suffix: \"\"" in defaults
     assert "oracle_patch_dual_home_path: \"\"" in defaults
+    assert "oracle_patch_allow_dataguard_dual_home_switch: false" in defaults
+    assert "oracle_patch_run_datapatch: true" in defaults
     assert "oracle_patch_standbyfirst_require_eligible: true" in defaults
     assert "oracle_patch_dual_home_restart" not in defaults
     assert "Fail when patch target is invalid" in tasks
@@ -86,9 +88,19 @@ def test_patch_role_db_apply_contract():
     assert "Read Restart database home for dual-home DB targets" in tasks
     assert "Record dual-home DB switch targets" in tasks
     assert "Fail when dual-home switch would need Data Guard orchestration" in tasks
+    assert "oracle_patch_allow_dataguard_dual_home_switch | default(false)" in tasks
     assert "Switch Restart database to dual-home target" in tasks
     assert "Start DBs after dual-home Restart switch" in tasks
+    assert "Reopen Data Guard standby read-only with apply after dual-home switch" in tasks
+    assert (
+        "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION"
+        in tasks
+    )
+    assert tasks.index(
+        "Reopen Data Guard standby read-only with apply after dual-home switch"
+    ) < tasks.index("Run datapatch for patched DB homes")
     assert "Run datapatch for patched DB homes" in tasks
+    assert "oracle_patch_run_datapatch | bool" in tasks
     assert "Converge Oracle DB home patch inventory" in playbook
     assert "Converge Oracle Grid home patch inventory" in grid_playbook
     assert "oracle_patch_target: grid" in grid_playbook
@@ -115,15 +127,43 @@ def test_patch_role_db_apply_contract():
     assert "Fail when broker is not in Maximum Availability" in standbyfirst_playbook
     assert "patch_current_standby" in standbyfirst_playbook
     assert "patch_current_primary" in standbyfirst_playbook
+    assert "Install current Data Guard standby DB target homes" in standbyfirst_playbook
+    assert "Install new Data Guard standby DB target homes" in standbyfirst_playbook
+    assert "oracle_db_install_home_selection: selected" in standbyfirst_playbook
+    assert "oracle_db_install_home_suffixes" in standbyfirst_playbook
+    assert "oracle_db_install_home_paths" in standbyfirst_playbook
     assert "Patch current Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_standby" in standbyfirst_playbook
+    assert "Validate current Data Guard standby after target-home patch" in standbyfirst_playbook
+    assert "Validate current standby is read-only with apply before switchover" in standbyfirst_playbook
     assert "Switchover Data Guard primary for standby-first patch" in standbyfirst_playbook
     assert "oracle_dataguard_run_switchover: true" in standbyfirst_playbook
     assert 'oracle_dataguard_switchover_target: "{{ _patch_sf_current_standby }}"' in standbyfirst_playbook
+    assert "_patch_sf_patch_home_path" in standbyfirst_playbook
+    assert "oracle_patch_run_datapatch: false" in standbyfirst_playbook
+    assert "Run datapatch on promoted Data Guard primary" in standbyfirst_playbook
+    assert "Run datapatch after standby-first switchover" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Switchover Data Guard primary for standby-first patch"
+    ) < standbyfirst_playbook.index("Run datapatch on promoted Data Guard primary")
+    assert standbyfirst_playbook.index(
+        "Run datapatch on promoted Data Guard primary"
+    ) < standbyfirst_playbook.index("Install new Data Guard standby DB target homes")
     assert "Patch new Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_primary" in standbyfirst_playbook
+    assert "oracle_patch_mode: >-" in standbyfirst_playbook
     assert "oracle_patch_apply_enabled: true" in standbyfirst_playbook
     assert "oracle_patch_dg_standbyfirst: false" in standbyfirst_playbook
+    assert "oracle_patch_allow_dataguard_dual_home_switch: true" in standbyfirst_playbook
+    assert "READ ONLY WITH APPLY" in standbyfirst_playbook
+    assert (
+        "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY"
+        in standbyfirst_playbook
+    )
+    assert (
+        "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY"
+        in standbyfirst_playbook
+    )
     assert "Validate Data Guard broker after standby-first patching" in standbyfirst_playbook
     assert "Validate Maximum Availability after standby-first patching" in standbyfirst_playbook
 

@@ -153,7 +153,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Multiple instances per host | `oracle_instances` list |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
-| Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |
+| Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
 | No ASM for database files | database files use filesystem paths; Grid uses a small lab ASM disk for Oracle Restart metadata |
