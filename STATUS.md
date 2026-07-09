@@ -80,6 +80,12 @@ The supported lab path is now KVM/libvirt:
   - Observer-node Oracle Client Administrator home, broker TNS aliases, FSFO
     enablement, and foreground systemd observer ownership are managed by
     `oracle_observer`; DGMGRL FSFO status is verified from the third KVM VM.
+  - `playbooks/08-failover-reinstate.yml` provides an opt-in destructive FSFO
+    failover/reinstate rehearsal: readiness validation is the default, while
+    crashing the current primary VM, waiting for automatic promotion, broker
+    reinstate, and switchback require an explicit confirmation variable.
+    The readiness-only path has been run live against the KVM lab with
+    `changed=0`.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
@@ -133,7 +139,7 @@ The supported lab path is now KVM/libvirt:
 
 ## Not Yet Proven End To End
 
-- Destructive automatic failover simulation and reinstate workflow.
+- Live destructive automatic failover simulation and reinstate execution.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU.
 

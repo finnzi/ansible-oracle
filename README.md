@@ -37,6 +37,8 @@ Implemented:
   `READ ONLY WITH APPLY`.
 - Observer-node Oracle Client installation, broker TNS aliases, FSFO enablement,
   and foreground systemd observer ownership verified from the third KVM VM.
+- Opt-in FSFO failover/reinstate rehearsal playbook with a safe readiness-only
+  default and explicit destructive confirmation gate.
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.
@@ -149,6 +151,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |
 | Data Guard availability mode | `oracle_dataguard` sets broker protection mode to Maximum Availability |
+| FSFO failover/reinstate rehearsal | `playbooks/08-failover-reinstate.yml` validates readiness by default; destructive VM crash/reinstate requires explicit confirmation |
 | Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
 | Multiple instances per host | `oracle_instances` list |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
