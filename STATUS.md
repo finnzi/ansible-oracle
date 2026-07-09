@@ -101,6 +101,11 @@ The supported lab path is now KVM/libvirt:
     staged GI RU OPatch inventory metadata, checks Grid OPatch inventory on
     both DB VMs, and contains the in-place opatchauto apply path for homes
     missing the expected patch set.
+  - `playbooks/07-patch-dual-db.yml` supports DB dual-home mode against an
+    existing configured target home: the role verifies/patches the target home,
+    compares Restart's registered Oracle home, modifies the Restart
+    database/listener home when needed, restarts the database, and runs
+    datapatch. The current lab verifies the idempotent current-home no-op path.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
     `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
     `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.
@@ -113,7 +118,7 @@ The supported lab path is now KVM/libvirt:
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
 - Destructive automatic failover simulation and reinstate workflow.
-- Dual-home patch apply and home switch.
+- Automated staging/install of a new dual-home target before switching.
 
 ## Host Findings From This Run
 

@@ -46,17 +46,18 @@ Implemented:
 - Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
   separate from VM management IPs.
 - Standby-first patch eligibility parser with unit coverage.
-- DB-home and Grid-home patch inventory and in-place apply paths: expected RU
-  IDs are derived from the staged patch metadata, OPatch inventory is checked on
+- DB-home and Grid-home patch inventory and in-place apply paths, plus DB
+  dual-home Restart switching to an existing configured target home. Expected
+  RU IDs are derived from staged patch metadata, OPatch inventory is checked on
   both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
   brownfield Grid homes from `/etc/oracle/olr.loc`, and the current 19.31 RU
-  convergence is verified as idempotent.
+  convergence plus current-home dual mode are verified as idempotent.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
 Still scaffolded or not yet proven end to end:
 
 - Destructive automatic failover simulation and reinstate workflow.
-- Dual-home patch application and home switch.
+- Automated staging/install of a new dual-home target before switching.
 
 ## Quickstart
 
@@ -135,7 +136,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 |---|---|
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
-| Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; dual-home switch remains pending |
+| Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; DB dual-home Restart switch to a configured target |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |

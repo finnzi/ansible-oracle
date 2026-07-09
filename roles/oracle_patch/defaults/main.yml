@@ -1,14 +1,13 @@
 ---
 # defaults/main.yml for oracle_patch
 #
-# SCOPE: DB-home and Grid-home patch inventory and idempotent in-place apply.
-# The standby-first DETECTION (the part the user explicitly called out) is
-# fully implemented in library/patch_standbyfirst_info.py and is unit-tested.
+# SCOPE: DB-home and Grid-home patch inventory and idempotent in-place apply,
+# plus DB dual-home Restart switching to a configured target home. The
+# standby-first DETECTION (the part the user explicitly called out) is fully
+# implemented in library/patch_standbyfirst_info.py and is unit-tested.
 #
 # WHAT REMAINS:
-#   - Dual-home mode (oracle_patch_mode: oop_dual): install/patch new home,
-#     `srvctl modify database -oraclehome <new_home>`, restart, datapatch, and
-#     leave the old home in place for rollback.
+#   - Automated installation/cloning of a new dual-home target before switching.
 #
 #   Standby-first branch (Data Guard only):
 #     1. Call patch_standbyfirst_info to read eligibility from the README.
@@ -28,6 +27,7 @@
 #   oracle_patch_extra_homes: additional brownfield DB homes to patch
 #   oracle_patch_discover_olr: include Grid home discovered from /etc/oracle/olr.loc
 #   oracle_patch_extra_grid_homes: additional brownfield Grid homes to patch
+#   oracle_patch_dual_home_suffix/path: existing target DB home for oop_dual switching
 
 oracle_user: oracle
 oracle_group: oinstall
@@ -58,6 +58,14 @@ oracle_patch_discover_oratab: true
 # Additional brownfield DB homes. Each item may be either a home path string or
 # a dict with at least home_path, plus optional name/oracle_base/home_suffix.
 oracle_patch_extra_homes: []
+
+# Dual-home DB patching. The target home must already exist. When
+# oracle_patch_mode=oop_dual, the target home is oracle_patch_dual_home_path if
+# set, otherwise oracle_base/oracle_patch_dual_home_suffix if set, otherwise the
+# inventory current home. Keeping the current home as the default makes the mode
+# idempotently verifiable before a second home is staged.
+oracle_patch_dual_home_suffix: ""
+oracle_patch_dual_home_path: ""
 
 # Brownfield Grid support: Oracle Restart records the active CRS home here.
 oracle_patch_discover_olr: true

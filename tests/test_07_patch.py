@@ -35,6 +35,9 @@ def test_patch_role_db_apply_contract():
     grid_playbook = (REPO_ROOT / "playbooks/07-patch-grid.yml").read_text(
         encoding="utf-8"
     )
+    dual_playbook = (REPO_ROOT / "playbooks/07-patch-dual-db.yml").read_text(
+        encoding="utf-8"
+    )
 
     assert "oracle_patch_apply_enabled: false" in defaults
     assert "oracle_patch_expected_patch_ids: []" in defaults
@@ -45,7 +48,12 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_extra_homes: []" in defaults
     assert "oracle_patch_discover_olr: true" in defaults
     assert "oracle_patch_extra_grid_homes: []" in defaults
+    assert "oracle_patch_dual_home_suffix: \"\"" in defaults
+    assert "oracle_patch_dual_home_path: \"\"" in defaults
+    assert "oracle_patch_dual_home_restart" not in defaults
     assert "Fail when patch target is invalid" in tasks
+    assert "Fail when patch mode is invalid" in tasks
+    assert "Fail when dual-home mode is requested for Grid homes" in tasks
     assert "Resolve expected DB patch IDs" in tasks
     assert "Resolve expected Grid patch IDs" in tasks
     assert "'Database Release Update' in description" in tasks
@@ -62,10 +70,17 @@ def test_patch_role_db_apply_contract():
     assert "Fail when patches are missing but apply is disabled" in tasks
     assert "Fail when standby-first orchestration is required but not implemented" in tasks
     assert "Apply Oracle home patch with opatchauto" in tasks
+    assert "Read Restart database home for dual-home DB targets" in tasks
+    assert "Record dual-home DB switch targets" in tasks
+    assert "Fail when dual-home switch would need Data Guard orchestration" in tasks
+    assert "Switch Restart database to dual-home target" in tasks
+    assert "Start DBs after dual-home Restart switch" in tasks
     assert "Run datapatch for patched DB homes" in tasks
     assert "Converge Oracle DB home patch inventory" in playbook
     assert "Converge Oracle Grid home patch inventory" in grid_playbook
     assert "oracle_patch_target: grid" in grid_playbook
+    assert "Converge Oracle DB dual-home patch switch" in dual_playbook
+    assert "oracle_patch_mode: oop_dual" in dual_playbook
 
 
 def test_patch_applied_to_db_home(lab_exec):
@@ -144,8 +159,37 @@ def test_grid_patch_playbook_converges_when_ru_already_present():
     assert "changed=0" in r.stdout
 
 
-def test_dual_home_switch():
-    pytest.skip(
-        "Dual-home patching is not implemented yet. Once implemented, this asserts "
-        "srvctl config database -d super points at the NEW home post-switch."
+def test_dual_home_switch_playbook_converges_when_target_is_current_home():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-dual-db.yml",
+        "-e",
+        "oracle_patch_apply_enabled=true",
+    ]
+    env = os.environ.copy()
+    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
+    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=900,
     )
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "failed=0" in r.stdout
+    assert "changed=0" in r.stdout
+
+
+def test_restart_database_uses_current_oracle_home_after_dual_home_noop(lab_exec):
+    cmd = (
+        "/grid/19c/gi_home1/bin/srvctl config database -db super | "
+        "awk -F': ' '$1 == \"Oracle home\" {print $2}'"
+    )
+    r = lab_exec(f"su - oracle -c {shlex.quote(cmd)}", timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.strip() == ORACLE_HOME

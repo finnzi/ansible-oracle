@@ -1,0 +1,15 @@
+---
+# playbooks/07-patch-dual-db.yml - dual-home Oracle DB patching.
+# The target home must already exist and is controlled by
+# oracle_patch_dual_home_path or oracle_patch_dual_home_suffix. If neither is
+# set, the current inventory home is used, making the playbook an idempotent
+# no-op in the current lab.
+
+- name: Converge Oracle DB dual-home patch switch
+  hosts: oracle_db_hosts
+  become: true
+  roles:
+    - role: oracle_patch
+      vars:
+        oracle_patch_target: db
+        oracle_patch_mode: oop_dual

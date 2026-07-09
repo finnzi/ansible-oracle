@@ -18,13 +18,21 @@
       targets are db and grid.
   when: oracle_patch_target not in ['db', 'grid']
 
-- name: Fail when patch mode is not implemented
+- name: Fail when patch mode is invalid
   ansible.builtin.fail:
     msg: >-
-      oracle_patch_mode={{ oracle_patch_mode }} is not implemented by this role
-      slice yet. In-place DB-home patching is implemented; dual-home switching
-      remains explicit future work.
-  when: oracle_patch_mode != 'inplace'
+      oracle_patch_mode={{ oracle_patch_mode }} is invalid. Supported modes are
+      inplace and oop_dual.
+  when: oracle_patch_mode not in ['inplace', 'oop_dual']
+
+- name: Fail when dual-home mode is requested for Grid homes
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_mode=oop_dual is currently implemented for DB homes only.
+      Use oracle_patch_target=db, or use inplace mode for Grid homes.
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target != 'db'
 
 # ── Standby-first eligibility from the patch README (fully implemented) ─
 - name: Read standby-first eligibility from the patch README
@@ -97,11 +105,20 @@
       {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
       {%- for inst in instances -%}
         {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+        {%- set target_suffix = oracle_patch_dual_home_suffix if (oracle_patch_dual_home_suffix | length > 0) else current_home.suffix -%}
+        {%- set target_home_path = oracle_patch_dual_home_path if (oracle_patch_dual_home_path | length > 0) else inst.oracle_base ~ '/' ~ target_suffix -%}
+        {%- set resolved_home_path = target_home_path if oracle_patch_mode == 'oop_dual' else inst.oracle_base ~ '/' ~ current_home.suffix -%}
+        {%- set resolved_suffix = target_home_path.rsplit('/', 1)[1] if (oracle_patch_mode == 'oop_dual' and oracle_patch_dual_home_path | length > 0) else (target_suffix if oracle_patch_mode == 'oop_dual' else current_home.suffix) -%}
         {%- set _ = out.append({
           'name': inst.name,
+          'restart_db_name': inst.db_unique_name | default(inst.name),
+          'service_name': inst.service_name | default(inst.name ~ '_svc'),
+          'dataguard': inst.dataguard | default(false) | bool,
           'oracle_base': inst.oracle_base,
-          'home_suffix': current_home.suffix,
-          'home_path': inst.oracle_base ~ '/' ~ current_home.suffix
+          'home_suffix': resolved_suffix,
+          'home_path': resolved_home_path,
+          'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+          'source': 'inventory'
         }) -%}
       {%- endfor -%}
       {{ out }}
@@ -130,6 +147,7 @@
           {%- set suffix = home_path.rsplit('/', 1)[1] -%}
           {%- set _ = out.append({
             'name': parts[0],
+            'restart_db_name': parts[0],
             'oracle_base': parent,
             'home_suffix': suffix,
             'home_path': home_path,
@@ -151,6 +169,7 @@
           {%- set suffix = home_path.rsplit('/', 1)[1] -%}
           {%- set _ = out.append({
             'name': (suffix if item is string else item.name | default(suffix)),
+            'restart_db_name': (suffix if item is string else item.restart_db_name | default(item.name | default(suffix))),
             'oracle_base': (parent if item is string else item.oracle_base | default(parent)),
             'home_suffix': (suffix if item is string else item.home_suffix | default(suffix)),
             'home_path': home_path,
@@ -259,6 +278,17 @@
       brownfield discovery, or extra-home variables.
   when: _patch_targets | length == 0
 
+- name: Fail when dual-home target is not inventory-backed
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_mode=oop_dual requires inventory-backed DB targets so the
+      role can safely resolve Restart database names and target homes.
+      Configure oracle_instances or use inplace mode for brownfield-only homes.
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_targets | rejectattr('source', 'equalto', 'inventory') | list | length) > 0
+
 - name: Check Oracle home patch inventory
   ansible.builtin.shell: |
     set -o pipefail
@@ -333,8 +363,64 @@
     - oracle_patch_target == 'db'
     - oracle_patch_use_standbyfirst | default(false) | bool
 
-# ── DB-home apply path (only when inventory says work is needed) ───────
-- name: Upgrade OPatch in DB homes that need patching
+- name: Read Restart database home for dual-home DB targets
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ item.restart_db_name | quote }} 2>/dev/null |
+      awk -F': ' '$1 == "Oracle home" {print $2}'
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_restart_homes
+  changed_when: false
+  failed_when: false
+  loop: "{{ _patch_targets }}"
+  loop_control:
+    label: "{{ item.restart_db_name | default(item.name) }}:{{ item.home_suffix }}"
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+
+- name: Record dual-home DB switch targets
+  ansible.builtin.set_fact:
+    _patch_dual_switch_targets: >-
+      {%- set out = [] -%}
+      {%- for result in _patch_restart_homes.results | default([]) -%}
+        {%- set current_home = result.stdout | default('') | trim -%}
+        {%- if result.rc == 0 and current_home | length > 0 and current_home != result.item.home_path -%}
+          {%- set _ = out.append(result.item | combine({'restart_home_path': current_home})) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+
+- name: Fail when dual-home switch is needed but apply is disabled
+  ansible.builtin.fail:
+    msg: >-
+      {{ _patch_dual_switch_targets | default([]) | length }} DB home switch(es)
+      are needed, but oracle_patch_apply_enabled=false. Set
+      oracle_patch_apply_enabled=true to modify Restart metadata and restart DBs.
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+    - not oracle_patch_apply_enabled | bool
+
+- name: Fail when dual-home switch would need Data Guard orchestration
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_mode=oop_dual would switch a Data Guard database home.
+      Data Guard-aware standby-first patch orchestration is not implemented in
+      this role slice yet, so switch standalone DB homes only.
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | selectattr('dataguard', 'equalto', true) | list | length) > 0
+
+# ── Home apply path (only when inventory says work is needed) ──────────
+- name: Upgrade OPatch in homes that need patching
   ansible.builtin.unarchive:
     src: "{{ oracle_patch_opatch_zip }}"
     dest: "{{ item.home_path }}"
@@ -452,6 +538,96 @@
     - oracle_patch_apply_enabled | bool
     - _patch_missing_targets | length > 0
 
+- name: Stop DBs before dual-home Restart switch
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" stop database -db {{ item.restart_db_name | quote }} -stopoption IMMEDIATE
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_stop
+  changed_when: _patch_dual_stop.rc == 0
+  failed_when: >-
+    _patch_dual_stop.rc != 0 and
+    'PRCD-1120' not in (_patch_dual_stop.stdout | default('')) and
+    'PRCR-1005' not in (_patch_dual_stop.stdout | default('')) and
+    'not running' not in (_patch_dual_stop.stdout | default('') | lower)
+  loop: "{{ _patch_dual_switch_targets | default([]) }}"
+  loop_control:
+    label: "{{ item.restart_db_name }} -> {{ item.home_path }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
+- name: Switch Restart database to dual-home target
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify database \
+      -db {{ item.restart_db_name | quote }} \
+      -oraclehome {{ item.home_path | quote }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_modify_db
+  changed_when: _patch_dual_modify_db.rc == 0
+  failed_when: _patch_dual_modify_db.rc != 0
+  loop: "{{ _patch_dual_switch_targets | default([]) }}"
+  loop_control:
+    label: "{{ item.restart_db_name }} -> {{ item.home_path }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
+- name: Switch Restart listener to dual-home target
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify listener \
+      -listener LISTENER_{{ item.name | upper }} \
+      -oraclehome {{ item.home_path | quote }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_modify_listener
+  changed_when: _patch_dual_modify_listener.rc == 0
+  failed_when: >-
+    _patch_dual_modify_listener.rc != 0 and
+    'PRCN-2044' not in (_patch_dual_modify_listener.stdout | default('')) and
+    'PRCR-1001' not in (_patch_dual_modify_listener.stdout | default(''))
+  loop: "{{ _patch_dual_switch_targets | default([]) }}"
+  loop_control:
+    label: "LISTENER_{{ item.name | upper }} -> {{ item.home_path }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
+- name: Start DBs after dual-home Restart switch
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" start database -db {{ item.restart_db_name | quote }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_start
+  changed_when: _patch_dual_start.rc == 0
+  failed_when: >-
+    _patch_dual_start.rc != 0 and
+    'already running' not in (_patch_dual_start.stdout | default('') | lower) and
+    'PRCR-1079' not in (_patch_dual_start.stdout | default(''))
+  loop: "{{ _patch_dual_switch_targets | default([]) }}"
+  loop_control:
+    label: "{{ item.restart_db_name }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
 - name: Run datapatch for patched DB homes
   ansible.builtin.shell: |
     set -o pipefail
@@ -466,10 +642,15 @@
   failed_when: >-
     _patch_datapatch.rc != 0 or
     'Patch installation complete' not in (_patch_datapatch.stdout | default(''))
-  loop: "{{ _patch_missing_targets }}"
+  loop: >-
+    {{
+      ((_patch_missing_targets + (_patch_dual_switch_targets | default([]))) | unique(attribute='home_path'))
+      if oracle_patch_mode == 'oop_dual'
+      else _patch_missing_targets
+    }}
   loop_control:
     label: "{{ item.name }}:{{ item.home_suffix }}"
   when:
     - oracle_patch_apply_enabled | bool
-    - _patch_missing_targets | length > 0
+    - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
     - oracle_patch_target == 'db'
