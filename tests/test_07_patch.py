@@ -24,6 +24,14 @@ EXPECTED_GI_PATCH_IDS = [
 pytestmark = pytest.mark.slice
 
 
+def _ansible_subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
+    env.setdefault("ANSIBLE_SSH_CONTROL_PATH_DIR", "/tmp/ansible-cp")
+    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
+    return env
+
+
 def test_patch_role_db_apply_contract():
     defaults = (REPO_ROOT / "roles/oracle_patch/defaults/main.yml").read_text(
         encoding="utf-8"
@@ -141,13 +149,10 @@ def test_patch_playbook_converges_when_ru_already_present():
         "-e",
         "oracle_patch_apply_enabled=true",
     ]
-    env = os.environ.copy()
-    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
-    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
     r = subprocess.run(
         cmd,
         cwd=REPO_ROOT,
-        env=env,
+        env=_ansible_subprocess_env(),
         capture_output=True,
         text=True,
         timeout=900,
@@ -167,13 +172,10 @@ def test_grid_patch_playbook_converges_when_ru_already_present():
         "-e",
         "oracle_patch_apply_enabled=true",
     ]
-    env = os.environ.copy()
-    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
-    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
     r = subprocess.run(
         cmd,
         cwd=REPO_ROOT,
-        env=env,
+        env=_ansible_subprocess_env(),
         capture_output=True,
         text=True,
         timeout=900,
@@ -193,13 +195,10 @@ def test_dual_home_switch_playbook_converges_when_target_is_current_home():
         "-e",
         "oracle_patch_apply_enabled=true",
     ]
-    env = os.environ.copy()
-    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
-    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
     r = subprocess.run(
         cmd,
         cwd=REPO_ROOT,
-        env=env,
+        env=_ansible_subprocess_env(),
         capture_output=True,
         text=True,
         timeout=900,
@@ -227,13 +226,10 @@ def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
         "inventory/hosts.yml",
         "playbooks/07-patch-standbyfirst.yml",
     ]
-    env = os.environ.copy()
-    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
-    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
     r = subprocess.run(
         cmd,
         cwd=REPO_ROOT,
-        env=env,
+        env=_ansible_subprocess_env(),
         capture_output=True,
         text=True,
         timeout=300,

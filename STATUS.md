@@ -118,10 +118,15 @@ The supported lab path is now KVM/libvirt:
   - The current lab converges the 19.31 DB RU (`39034528`) as an idempotent
     no-op on both DB homes and the 19.31 GI RU component set as an idempotent
     no-op on both Grid homes.
+- Umbrella site orchestration now imports the non-destructive flow through Data
+  Guard Maximum Availability, FSFO observer setup, DB/Grid patch inventory, and
+  current-home dual-home validation. Standby-first patching remains a dedicated
+  opt-in playbook because it can switch broker roles and apply patches.
 
 ## Not Yet Proven End To End
 
-- Full `playbooks/site.yml` including Data Guard/observer/patch stages.
+- Live full `playbooks/site.yml` run including Data Guard/observer/DB+Grid
+  patch inventory and dual-home validation stages.
 - Destructive automatic failover simulation and reinstate workflow.
 - Automated staging/install of a new dual-home target before switching.
 - Live standby-first patch apply with an actually eligible DB RU.

@@ -538,6 +538,7 @@ def _run_dataguard_switchover(target: str) -> subprocess.CompletedProcess:
     ]
     env = os.environ.copy()
     env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
+    env.setdefault("ANSIBLE_SSH_CONTROL_PATH_DIR", "/tmp/ansible-cp")
     env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
     return subprocess.run(
         cmd,

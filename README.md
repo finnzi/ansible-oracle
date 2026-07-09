@@ -53,6 +53,10 @@ Implemented:
   both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
   brownfield Grid homes from `/etc/oracle/olr.loc`, and the current 19.31 RU
   convergence plus current-home dual mode are verified as idempotent.
+- `playbooks/site.yml` imports the non-destructive umbrella flow through Data
+  Guard, observer, DB/Grid patch inventory, and current-home dual-home
+  validation. Role-changing standby-first patching remains opt-in through its
+  dedicated playbook.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
 Still scaffolded or not yet proven end to end:
@@ -143,6 +147,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |
+| Data Guard availability mode | `oracle_dataguard` sets broker protection mode to Maximum Availability |
 | Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
 | Multiple instances per host | `oracle_instances` list |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |

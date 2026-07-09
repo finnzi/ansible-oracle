@@ -1,13 +1,16 @@
 ---
 # playbooks/site.yml — the umbrella playbook.
 #
-# Vertical-slice order:
-#   00 prep OS  -> 02 install DB home -> 03 create instance + listener ->
-#   04 register with Restart + create service -> 99 run tests.
+# End-to-end order:
+#   prep OS -> Grid/Restart -> DB home -> instance/listener -> Restart/service
+#   -> Data Guard in Maximum Availability -> FSFO observer -> patch inventory
+#   and conservative no-op dual-home validation -> tests.
 #
-# Media-dependent playbooks such as 01 grid install are imported with opt-in
-# defaults. Data Guard, observer, and patch application remain scaffolded or
-# partial; run numbered playbooks directly when developing a specific slice.
+# Patch imports here use safe defaults: DB/Grid homes are inspected by default
+# and only patched when oracle_patch_apply_enabled=true. The dual-home playbook
+# defaults to the current home unless an existing target home is configured.
+# Standby-first patching intentionally remains an explicit opt-in playbook
+# because it performs broker role changes and can apply patches.
 #
 # Note: import_playbook does not accept a `name:` on the import itself, so
 # each imported playbook carries a clearly-named top-level play.
@@ -27,14 +30,20 @@
 - name: Register with Oracle Restart and create client services
   ansible.builtin.import_playbook: 04-register-restart.yml
 
-- name: Scaffolded — configure Data Guard
+- name: Configure Data Guard in Maximum Availability mode
   ansible.builtin.import_playbook: 05-dataguard.yml
 
-- name: Scaffolded — configure FSFO observer
+- name: Configure FSFO observer
   ansible.builtin.import_playbook: 06-observer.yml
 
-- name: Analyse patch for standby-first eligibility (apply scaffolded)
+- name: Converge Oracle DB home patch inventory
   ansible.builtin.import_playbook: 07-patch.yml
+
+- name: Converge Oracle Grid home patch inventory
+  ansible.builtin.import_playbook: 07-patch-grid.yml
+
+- name: Validate Oracle DB dual-home patch switch target
+  ansible.builtin.import_playbook: 07-patch-dual-db.yml
 
 - name: Run the ansible-oracle test suite
   ansible.builtin.import_playbook: 99-test.yml
