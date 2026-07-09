@@ -44,6 +44,11 @@ The supported lab path is now KVM/libvirt:
 - SSH-based pytest execution against the primary VM.
 - Preflight checks for host tools, libvirt access, SSH key, source media
   readability, and required Oracle installer/patch files.
+- Fedora host preparation installs Python packages for the project venv and
+  adds a Python 3.12 package fallback when the default interpreter is too old.
+- Python bootstrap creates or refreshes `.venv` with Python 3.12 or newer, and
+  the interpreter selection can be validated offline with
+  `scripts/bootstrap-venv.sh --check`.
 - Inventory defaults for the KVM fixed IPs.
 - Multi-instance inventory example for `super`, `duper`, and `fluff`, with
   distinct filesystem trees, listener names/ports, services, and host-specific

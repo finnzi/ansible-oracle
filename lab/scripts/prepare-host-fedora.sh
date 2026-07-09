@@ -63,6 +63,23 @@ as_root() {
   fi
 }
 
+python_supports_bootstrap() {
+  local bin="$1"
+  command -v "${bin}" >/dev/null 2>&1 || return 1
+  "${bin}" - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 12) else 1)
+PY
+}
+
+has_supported_python() {
+  local cand
+  for cand in python3.14 python3.13 python3.12 python3; do
+    python_supports_bootstrap "${cand}" && return 0
+  done
+  return 1
+}
+
 if [ "${SKIP_PACKAGE_INSTALL}" != "1" ]; then
   require_cmd sudo
   require_cmd dnf
@@ -72,9 +89,22 @@ if [ "${SKIP_PACKAGE_INSTALL}" != "1" ]; then
     genisoimage \
     libvirt-daemon-driver-qemu \
     openssh-clients \
+    python3 \
+    python3-pip \
     qemu-img \
     qemu-kvm \
     rsync
+
+  if ! has_supported_python; then
+    log "Installing Python 3.12 for the project venv bootstrap"
+    if ! as_root dnf install -y python3.12 python3.12-pip; then
+      as_root dnf install -y python3.12
+    fi
+  fi
+
+  if ! has_supported_python; then
+    die "Python 3.12 or newer is still unavailable after package installation"
+  fi
 
   log "Starting libvirt sockets"
   as_root systemctl enable --now \

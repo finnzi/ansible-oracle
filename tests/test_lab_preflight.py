@@ -255,6 +255,18 @@ def test_prepare_host_fedora_rejects_unknown_options():
     assert "Unknown option: --bogus" in result.stderr
 
 
+def test_prepare_host_fedora_installs_python_for_bootstrap():
+    script = (REPO_ROOT / "lab/scripts/prepare-host-fedora.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "has_supported_python" in script
+    assert "python3 \\" in script
+    assert "python3-pip \\" in script
+    assert "python3.12 python3.12-pip" in script
+    assert "Python 3.12 or newer is still unavailable" in script
+
+
 def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     key_path = tmp_path / "lab_oracle"
     keygen = subprocess.run(

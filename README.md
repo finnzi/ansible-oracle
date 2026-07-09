@@ -91,10 +91,6 @@ libvirt daemon.
 # One-time: key used for root SSH into the lab VMs.
 ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 
-# Python venv for Ansible and pytest.
-./scripts/bootstrap-venv.sh
-source .venv/bin/activate
-
 # Optional: pick OL10 instead of OL9.
 # export LAB_OS_VERSION=10
 
@@ -105,13 +101,20 @@ source .venv/bin/activate
 # export LAB_STATE_DIR=/var/tmp/ansible-oracle-lab
 
 # On Fedora, this installs/starts libvirt and stages Oracle media for system QEMU.
-# If it adds your user to libvirt/kvm groups, log out and back in before continuing.
+# It also installs Python packages for the project venv. If it adds your user to
+# libvirt/kvm groups, log out and back in before continuing.
 ./lab/scripts/prepare-host-fedora.sh
 
 # Manual equivalent for host setup:
 # sudo systemctl enable --now virtlogd.socket virtqemud.socket virtnetworkd.socket virtstoraged.socket
+# sudo dnf install -y python3 python3-pip
+# sudo dnf install -y python3.12 python3.12-pip   # if python3 is older than 3.12
 # sudo usermod -aG libvirt,kvm "$USER"
 # Then log out and back in before continuing.
+
+# Python 3.12+ venv for Ansible and pytest.
+./scripts/bootstrap-venv.sh
+source .venv/bin/activate
 
 # Check host prerequisites before creating any lab state.
 ./lab/scripts/preflight.sh
@@ -173,7 +176,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
 | No ASM for database files | DBCA uses `storageType=FS`; `oracle_db_manage` reconciles data/archive/FRA/redo paths; live tests assert no database file path starts with `+` |
-| Python venv | `scripts/bootstrap-venv.sh` |
+| Python venv | `scripts/bootstrap-venv.sh` selects Python 3.12+ and can validate with `--check` |
 
 ## License
 
