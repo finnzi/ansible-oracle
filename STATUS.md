@@ -92,22 +92,28 @@ The supported lab path is now KVM/libvirt:
     `local_listener` registration on `superdc1.domain.is`, standby SYSDBA
     connectivity on `super_sby_dgb`, and physical standby role are verified in
     the KVM lab.
-- DB-home patching:
+- Oracle home patching:
   - `playbooks/07-patch.yml` derives expected DB RU patch IDs from the staged
     patch README metadata, checks OPatch inventory on both DB VMs, and contains
     the in-place OPatch/opatchauto/datapatch apply path for homes missing the
     expected patch.
+  - `playbooks/07-patch-grid.yml` derives expected Grid patch IDs from the
+    staged GI RU OPatch inventory metadata, checks Grid OPatch inventory on
+    both DB VMs, and contains the in-place opatchauto apply path for homes
+    missing the expected patch set.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
-    `oracle_patch_extra_homes`; duplicate home paths are deduplicated before
-    inventory/apply.
+    `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
+    `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.
+    Duplicate home paths are deduplicated before inventory/apply.
   - The current lab converges the 19.31 DB RU (`39034528`) as an idempotent
-    no-op on both DB homes.
+    no-op on both DB homes and the 19.31 GI RU component set as an idempotent
+    no-op on both Grid homes.
 
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
 - Destructive automatic failover simulation and reinstate workflow.
-- Grid-home patch apply and dual-home switch.
+- Dual-home patch apply and home switch.
 
 ## Host Findings From This Run
 

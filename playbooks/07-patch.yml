@@ -1,7 +1,7 @@
 ---
 # playbooks/07-patch.yml — Oracle home patching.
 # Detection (standby-first eligibility) runs against the staged RU zip. DB-home
-# patch inventory is converged; opatchauto/datapatch only run when
+# patch inventory is converged by default; opatchauto/datapatch only run when
 # oracle_patch_apply_enabled=true and the expected patch ID is missing.
 
 - name: Converge Oracle DB home patch inventory

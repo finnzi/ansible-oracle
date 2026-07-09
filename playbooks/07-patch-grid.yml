@@ -1,0 +1,11 @@
+---
+# playbooks/07-patch-grid.yml - Oracle Grid home patching.
+# Converges the current Oracle Restart/Grid home against the staged GI RU.
+
+- name: Converge Oracle Grid home patch inventory
+  hosts: oracle_db_hosts
+  become: true
+  roles:
+    - role: oracle_patch
+      vars:
+        oracle_patch_target: grid

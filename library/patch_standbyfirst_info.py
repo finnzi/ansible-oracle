@@ -29,8 +29,9 @@
 #   - debug: var=sf
 #
 # RETURNS
-#   eligible:   bool                # overall verdict (AND of components)
-#   components: list of {name, patch_number, standby_first, evidence}
+#   eligible:   bool                # overall verdict (AND of README components)
+#   components: list of {name, patch_number, description, standby_first, evidence}
+#   patch_inventory: list of {patch_number, description, parent_patch_number, path}
 #   reason:     str                 # human-readable summary
 #   readme_files_examined: int
 
@@ -188,6 +189,7 @@ def _extract_patch_description(text: str, patch_num: str) -> str:
 # "combo" component.
 
 README_RE = re.compile(r"([0-9]+)/README\.(html|txt)$")
+PATCH_INVENTORY_RE = re.compile(r"(^|/)([0-9]+)/etc/config/inventory\.xml$")
 
 
 def _list_readmes_in_zip(zf: zipfile.ZipFile) -> list[tuple[str, str, str]]:
@@ -227,17 +229,42 @@ def _read_zip_member(zf: zipfile.ZipFile, member: str) -> str:
         return fh.read().decode("utf-8", errors="replace")
 
 
+def _extract_inventory_patch(text: str, path: str) -> dict | None:
+    """Return patch metadata from an OPatch etc/config/inventory.xml file."""
+    m = re.search(r"<patch_id\s+number=\"([0-9]+)\"", text)
+    if not m:
+        return None
+    patch_num = m.group(1)
+    desc = ""
+    desc_match = re.search(r"<patch_description>(.*?)</patch_description>", text, re.S)
+    if desc_match:
+        desc = re.sub(r"\s+", " ", desc_match.group(1)).strip()
+
+    parts = path.split("/")
+    patch_dir_index = parts.index("etc") - 1 if "etc" in parts else len(parts) - 4
+    parent = parts[patch_dir_index - 1] if patch_dir_index > 0 else ""
+    top = parts[0] if parts else ""
+    return {
+        "patch_number": patch_num,
+        "description": desc,
+        "parent_patch_number": parent if parent != patch_num else "",
+        "top_patch_number": top,
+        "path": path,
+    }
+
+
 def analyze_zip(zip_path: str) -> dict:
     """
     Open an Oracle patch zip and return the standby-first analysis.
 
-    Returns a dict with keys: eligible, components, reason,
+    Returns a dict with keys: eligible, components, patch_inventory, reason,
     readme_files_examined. Raises FileNotFoundError / ValueError on bad input.
     """
     if not os.path.isfile(zip_path):
         raise FileNotFoundError(zip_path)
 
     components: list[dict] = []
+    patch_inventory: list[dict] = []
     with zipfile.ZipFile(zip_path) as zf:
         readmes = _list_readmes_in_zip(zf)
         # De-duplicate by patch_number, preferring .html over .txt for each.
@@ -263,6 +290,16 @@ def analyze_zip(zip_path: str) -> dict:
                 }
             )
 
+        seen_inventory: set[str] = set()
+        for path in sorted(zf.namelist()):
+            if not PATCH_INVENTORY_RE.search(path):
+                continue
+            text = _read_zip_member(zf, path)
+            patch = _extract_inventory_patch(text, path)
+            if patch and patch["patch_number"] not in seen_inventory:
+                patch_inventory.append(patch)
+                seen_inventory.add(patch["patch_number"])
+
     overall = bool(components) and all(c["standby_first"] for c in components)
     if not components:
         reason = "no README files found in patch zip; cannot determine standby-first eligibility"
@@ -279,6 +316,7 @@ def analyze_zip(zip_path: str) -> dict:
     return {
         "eligible": overall,
         "components": components,
+        "patch_inventory": patch_inventory,
         "reason": reason,
         "readme_files_examined": len(components),
     }

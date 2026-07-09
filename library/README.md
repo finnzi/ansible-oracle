@@ -18,7 +18,9 @@ Installable**, by parsing the README files bundled inside the zip.
 
 Returns `eligible` (bool), `components` (per-component verdicts with patch
 number, README-derived description, standby-first evidence snippet, and README
-path), `reason` (human-readable summary), and `readme_files_examined`.
+path), `patch_inventory` (OPatch `etc/config/inventory.xml` entries with patch
+number, description, parent patch number, top-level patch number, and zip path),
+`reason` (human-readable summary), and `readme_files_examined`.
 
 **Detection rule.** Oracle documents standby-first eligibility only as prose in
 the README — there is no machine-readable flag. The module normalises the

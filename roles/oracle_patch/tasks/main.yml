@@ -2,7 +2,7 @@
 # tasks/main.yml for oracle_patch
 #
 # The standby-first DETECTION is real and runs now (the user explicitly asked
-# for auto-detection from release notes). DB-home patching is converged by
+# for auto-detection from release notes). DB and Grid homes are converged by
 # comparing opatch lspatches with the patch IDs derived from the staged bundle.
 
 - name: Verify the patch zip is staged
@@ -11,13 +11,12 @@
   register: _patch_zip
   failed_when: not _patch_zip.stat.exists
 
-- name: Fail when patch target is not implemented
+- name: Fail when patch target is invalid
   ansible.builtin.fail:
     msg: >-
-      oracle_patch_target={{ oracle_patch_target }} is not implemented by this
-      role slice yet. DB-home patch inventory/apply is implemented; Grid-home
-      patching remains explicit future work.
-  when: oracle_patch_target != 'db'
+      oracle_patch_target={{ oracle_patch_target }} is invalid. Supported
+      targets are db and grid.
+  when: oracle_patch_target not in ['db', 'grid']
 
 - name: Fail when patch mode is not implemented
   ansible.builtin.fail:
@@ -52,12 +51,27 @@
         {%- endif -%}
       {%- endfor -%}
       {{ oracle_patch_expected_patch_ids if (oracle_patch_expected_patch_ids | length > 0) else ids }}
+  when: oracle_patch_target == 'db'
 
-- name: Fail when no expected DB patch IDs could be derived
+- name: Resolve expected Grid patch IDs
+  ansible.builtin.set_fact:
+    _patch_expected_ids: >-
+      {%- set ids = [] -%}
+      {%- for patch in _sf.patch_inventory | default([]) -%}
+        {%- set description = patch.description | default('') -%}
+        {%- if not (description is search('(?i)(OJVM|JavaVM)')) -%}
+          {%- set _ = ids.append(patch.patch_number) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ oracle_patch_expected_grid_patch_ids if (oracle_patch_expected_grid_patch_ids | length > 0) else ids }}
+  when: oracle_patch_target == 'grid'
+
+- name: Fail when no expected patch IDs could be derived
   ansible.builtin.fail:
     msg: >-
-      Could not derive expected DB patch IDs from {{ oracle_patch_zip | basename }}.
-      Set oracle_patch_expected_patch_ids explicitly.
+      Could not derive expected {{ oracle_patch_target }} patch IDs from
+      {{ oracle_patch_zip | basename }}. Set oracle_patch_expected_patch_ids or
+      oracle_patch_expected_grid_patch_ids explicitly.
   when: _patch_expected_ids | length == 0
 
 - name: Report standby-first verdict
@@ -91,6 +105,7 @@
         }) -%}
       {%- endfor -%}
       {{ out }}
+  when: oracle_patch_target == 'db'
 
 - name: Read /etc/oratab DB homes for brownfield patching
   ansible.builtin.shell: |
@@ -99,7 +114,9 @@
   args: { executable: /bin/bash }
   register: _patch_oratab
   changed_when: false
-  when: oracle_patch_discover_oratab | bool
+  when:
+    - oracle_patch_target == 'db'
+    - oracle_patch_discover_oratab | bool
 
 - name: Resolve /etc/oratab DB patch targets
   ansible.builtin.set_fact:
@@ -121,6 +138,7 @@
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
+  when: oracle_patch_target == 'db'
 
 - name: Resolve extra brownfield DB patch targets
   ansible.builtin.set_fact:
@@ -141,13 +159,92 @@
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
+  when: oracle_patch_target == 'db'
 
-- name: Resolve DB patch targets
+- name: Resolve inventory Grid patch targets
+  ansible.builtin.set_fact:
+    _patch_inventory_grid_targets: >-
+      {%- set out=[] -%}
+      {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+      {%- for inst in instances -%}
+        {%- if inst.gi_homes is defined and inst.gi_base is defined -%}
+          {%- set current_home = (inst.gi_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.gi_homes[0]) -%}
+          {%- set _ = out.append({
+            'name': inst.name ~ '_grid',
+            'oracle_base': inst.gi_base,
+            'home_suffix': current_home.suffix,
+            'home_path': inst.gi_base ~ '/' ~ current_home.suffix,
+            'source': 'inventory'
+          }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: oracle_patch_target == 'grid'
+
+- name: Read /etc/oracle/olr.loc Grid home for brownfield patching
+  ansible.builtin.shell: |
+    set -o pipefail
+    awk -F= '$1 == "crs_home" && $2 ~ /^\// {print $2}' /etc/oracle/olr.loc 2>/dev/null || true
+  args: { executable: /bin/bash }
+  register: _patch_olr
+  changed_when: false
+  when:
+    - oracle_patch_target == 'grid'
+    - oracle_patch_discover_olr | bool
+
+- name: Resolve /etc/oracle/olr.loc Grid patch targets
+  ansible.builtin.set_fact:
+    _patch_olr_targets: >-
+      {%- set out=[] -%}
+      {%- for home_path in _patch_olr.stdout_lines | default([]) -%}
+        {%- if home_path | length > 0 -%}
+          {%- set parent = home_path.rsplit('/', 1)[0] -%}
+          {%- set suffix = home_path.rsplit('/', 1)[1] -%}
+          {%- set _ = out.append({
+            'name': 'grid',
+            'oracle_base': parent,
+            'home_suffix': suffix,
+            'home_path': home_path,
+            'source': 'olr'
+          }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: oracle_patch_target == 'grid'
+
+- name: Resolve extra brownfield Grid patch targets
+  ansible.builtin.set_fact:
+    _patch_extra_grid_targets: >-
+      {%- set out=[] -%}
+      {%- for item in oracle_patch_extra_grid_homes | default([]) -%}
+        {%- set home_path = item if item is string else item.home_path | default('') -%}
+        {%- if home_path | length > 0 -%}
+          {%- set parent = home_path.rsplit('/', 1)[0] -%}
+          {%- set suffix = home_path.rsplit('/', 1)[1] -%}
+          {%- set _ = out.append({
+            'name': (suffix if item is string else item.name | default(suffix)),
+            'oracle_base': (parent if item is string else item.oracle_base | default(parent)),
+            'home_suffix': (suffix if item is string else item.home_suffix | default(suffix)),
+            'home_path': home_path,
+            'source': 'extra'
+          }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+  when: oracle_patch_target == 'grid'
+
+- name: Resolve Oracle patch targets
   ansible.builtin.set_fact:
     _patch_targets: >-
       {%- set out = [] -%}
       {%- set seen = [] -%}
-      {%- for target in (_patch_inventory_targets | default([])) + (_patch_oratab_targets | default([])) + (_patch_extra_targets | default([])) -%}
+      {%- set candidate_targets = [] -%}
+      {%- if oracle_patch_target == 'grid' -%}
+        {%- set candidate_targets = (_patch_inventory_grid_targets | default([])) + (_patch_olr_targets | default([])) + (_patch_extra_grid_targets | default([])) -%}
+      {%- else -%}
+        {%- set candidate_targets = (_patch_inventory_targets | default([])) + (_patch_oratab_targets | default([])) + (_patch_extra_targets | default([])) -%}
+      {%- endif -%}
+      {%- for target in candidate_targets -%}
         {%- if target.home_path not in seen -%}
           {%- set _ = seen.append(target.home_path) -%}
           {%- set _ = out.append(target) -%}
@@ -155,14 +252,14 @@
       {%- endfor -%}
       {{ out }}
 
-- name: Fail when no DB patch targets were resolved
+- name: Fail when no patch targets were resolved
   ansible.builtin.fail:
     msg: >-
-      No DB homes were resolved from oracle_instances, /etc/oratab, or
-      oracle_patch_extra_homes.
+      No {{ oracle_patch_target }} homes were resolved from inventory,
+      brownfield discovery, or extra-home variables.
   when: _patch_targets | length == 0
 
-- name: Check DB home patch inventory
+- name: Check Oracle home patch inventory
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ item.home_path | quote }}
@@ -207,7 +304,8 @@
 - name: Report DB patch inventory status
   ansible.builtin.debug:
     msg: >-
-      DB patch inventory: {{ (_patch_targets | length) - (_patch_missing_targets | length) }}
+      {{ oracle_patch_target }} patch inventory:
+      {{ (_patch_targets | length) - (_patch_missing_targets | length) }}
       of {{ _patch_targets | length }} home(s) already contain expected patch
       ID(s) {{ _patch_expected_ids | join(',') }}.
 
@@ -232,6 +330,7 @@
   when:
     - _patch_missing_targets | length > 0
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_target == 'db'
     - oracle_patch_use_standbyfirst | default(false) | bool
 
 # ── DB-home apply path (only when inventory says work is needed) ───────
@@ -301,7 +400,27 @@
     set -o pipefail
     root={{ oracle_patch_bundle_extract_dir | quote }}
     bundle={{ oracle_patch_zip | basename | regex_replace('^p([0-9]+)_.*$', '\\1') | quote }}
-    if [ -d "$root/$bundle" ]; then
+    target={{ oracle_patch_target | quote }}
+    configured={{ (oracle_patch_grid_apply_component_id | default('')) | quote }}
+
+    if [ "$target" = "grid" ] && [ -n "$configured" ]; then
+      found="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$configured" -print -quit)"
+      if [ -n "$found" ]; then
+        printf '%s\n' "$found"
+        exit 0
+      fi
+    fi
+
+    if [ "$target" = "grid" ]; then
+      while IFS= read -r candidate; do
+        readme="${candidate}/README.html"
+        if [ -f "$readme" ] &&
+           head -80 "$readme" | grep -Eiq 'GI Release Update|Grid Infrastructure.*Release Update'; then
+          printf '%s\n' "$candidate"
+          exit 0
+        fi
+      done < <(find "$root" -mindepth 2 -maxdepth 2 -type d -print | sort)
+    elif [ -d "$root/$bundle" ]; then
       printf '%s\n' "$root/$bundle"
       exit 0
     fi
@@ -314,7 +433,7 @@
     - oracle_patch_apply_enabled | bool
     - _patch_missing_targets | length > 0
 
-- name: Apply DB patch with opatchauto
+- name: Apply Oracle home patch with opatchauto
   ansible.builtin.shell: |
     set -o pipefail
     {{ item.home_path }}/OPatch/opatchauto apply {{ _patch_apply_dir.stdout | trim | quote }} -oh {{ item.home_path | quote }}
@@ -353,3 +472,4 @@
   when:
     - oracle_patch_apply_enabled | bool
     - _patch_missing_targets | length > 0
+    - oracle_patch_target == 'db'

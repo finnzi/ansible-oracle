@@ -112,6 +112,7 @@ class TestAnalyzeZip:
         assert result["readme_files_examined"] >= 2
         descriptions = {c["patch_number"]: c["description"] for c in result["components"]}
         assert descriptions["39034528"] == ""
+        assert result["patch_inventory"] == []
         # OJVM should be named in the reason.
         assert "38906621" in result["reason"] or "OJVM" in result["reason"].upper() \
             or "ineligible" in result["reason"].lower()
@@ -170,3 +171,9 @@ def test_real_gi_ru_19_31_returns_a_verdict():
     assert "eligible" in result
     assert isinstance(result["components"], list)
     assert result["readme_files_examined"] >= 1
+    inventory = {p["patch_number"]: p for p in result["patch_inventory"]}
+    assert {"39034528", "39039430", "39055473", "39107825", "39107855"}.issubset(
+        inventory
+    )
+    assert inventory["39107855"]["description"].startswith("TOMCAT RELEASE UPDATE")
+    assert inventory["39107855"]["parent_patch_number"] == "39036936"
