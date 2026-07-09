@@ -38,6 +38,9 @@ def test_patch_role_db_apply_contract():
     dual_playbook = (REPO_ROOT / "playbooks/07-patch-dual-db.yml").read_text(
         encoding="utf-8"
     )
+    standbyfirst_playbook = (
+        REPO_ROOT / "playbooks/07-patch-standbyfirst.yml"
+    ).read_text(encoding="utf-8")
 
     assert "oracle_patch_apply_enabled: false" in defaults
     assert "oracle_patch_expected_patch_ids: []" in defaults
@@ -50,6 +53,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_extra_grid_homes: []" in defaults
     assert "oracle_patch_dual_home_suffix: \"\"" in defaults
     assert "oracle_patch_dual_home_path: \"\"" in defaults
+    assert "oracle_patch_standbyfirst_require_eligible: true" in defaults
     assert "oracle_patch_dual_home_restart" not in defaults
     assert "Fail when patch target is invalid" in tasks
     assert "Fail when patch mode is invalid" in tasks
@@ -68,7 +72,8 @@ def test_patch_role_db_apply_contract():
     assert "Check Oracle home patch inventory" in tasks
     assert "installed_patch_ids" in tasks
     assert "Fail when patches are missing but apply is disabled" in tasks
-    assert "Fail when standby-first orchestration is required but not implemented" in tasks
+    assert "Fail when standby-first orchestration is requested in per-host role" in tasks
+    assert "playbooks/07-patch-standbyfirst.yml" in tasks
     assert "Apply Oracle home patch with opatchauto" in tasks
     assert "Read Restart database home for dual-home DB targets" in tasks
     assert "Record dual-home DB switch targets" in tasks
@@ -81,6 +86,25 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_target: grid" in grid_playbook
     assert "Converge Oracle DB dual-home patch switch" in dual_playbook
     assert "oracle_patch_mode: oop_dual" in dual_playbook
+    assert "Validate standby-first patch eligibility" in standbyfirst_playbook
+    assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
+    assert "Discover current Data Guard roles for standby-first patching" in standbyfirst_playbook
+    assert "Read Data Guard broker roles and protection mode" in standbyfirst_playbook
+    assert "Publish standby-first broker facts to static primary hosts" in standbyfirst_playbook
+    assert "Fail when broker is not in Maximum Availability" in standbyfirst_playbook
+    assert "patch_current_standby" in standbyfirst_playbook
+    assert "patch_current_primary" in standbyfirst_playbook
+    assert "Patch current Data Guard standby DB homes" in standbyfirst_playbook
+    assert "hosts: patch_current_standby" in standbyfirst_playbook
+    assert "Switchover Data Guard primary for standby-first patch" in standbyfirst_playbook
+    assert "oracle_dataguard_run_switchover: true" in standbyfirst_playbook
+    assert 'oracle_dataguard_switchover_target: "{{ _patch_sf_current_standby }}"' in standbyfirst_playbook
+    assert "Patch new Data Guard standby DB homes" in standbyfirst_playbook
+    assert "hosts: patch_current_primary" in standbyfirst_playbook
+    assert "oracle_patch_apply_enabled: true" in standbyfirst_playbook
+    assert "oracle_patch_dg_standbyfirst: false" in standbyfirst_playbook
+    assert "Validate Data Guard broker after standby-first patching" in standbyfirst_playbook
+    assert "Validate Maximum Availability after standby-first patching" in standbyfirst_playbook
 
 
 def test_patch_applied_to_db_home(lab_exec):
@@ -193,3 +217,27 @@ def test_restart_database_uses_current_oracle_home_after_dual_home_noop(lab_exec
     r = lab_exec(f"su - oracle -c {shlex.quote(cmd)}", timeout=180)
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.strip() == ORACLE_HOME
+
+
+def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-standbyfirst.yml",
+    ]
+    env = os.environ.copy()
+    env.setdefault("ANSIBLE_LOCAL_TEMP", "/tmp/ansible-local")
+    env.setdefault("XDG_CACHE_HOME", "/tmp/ansible-cache")
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert r.returncode != 0, r.stdout + r.stderr
+    assert "not Data Guard standby-first installable" in r.stdout
+    assert "Patch current Data Guard standby DB homes" not in r.stdout

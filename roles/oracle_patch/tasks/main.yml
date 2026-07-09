@@ -350,13 +350,13 @@
     - _patch_missing_targets | length > 0
     - not oracle_patch_apply_enabled | bool
 
-- name: Fail when standby-first orchestration is required but not implemented
+- name: Fail when standby-first orchestration is requested in per-host role
   ansible.builtin.fail:
     msg: >-
       {{ oracle_patch_zip | basename }} is standby-first eligible and
       oracle_patch_dg_standbyfirst resolves to true, but standby-first patch
-      orchestration is not implemented in this role slice yet. Required flow:
-      patch standby, switchover, then patch the new standby.
+      orchestration must run through playbooks/07-patch-standbyfirst.yml.
+      Required flow: patch standby, switchover, then patch the new standby.
   when:
     - _patch_missing_targets | length > 0
     - oracle_patch_apply_enabled | bool

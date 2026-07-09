@@ -45,7 +45,8 @@ Implemented:
   listener services, and broker TNS aliases.
 - Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
   separate from VM management IPs.
-- Standby-first patch eligibility parser with unit coverage.
+- Standby-first patch eligibility parser and dedicated Data Guard standby-first
+  orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
   dual-home Restart switching to an existing configured target home. Expected
   RU IDs are derived from staged patch metadata, OPatch inventory is checked on
@@ -58,6 +59,8 @@ Still scaffolded or not yet proven end to end:
 
 - Destructive automatic failover simulation and reinstate workflow.
 - Automated staging/install of a new dual-home target before switching.
+- Live standby-first patch apply with an actually eligible DB RU; the staged
+  OJVM+RU bundle is correctly rejected by the standby-first precheck.
 
 ## Quickstart
 
@@ -144,7 +147,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Multiple instances per host | `oracle_instances` list |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
-| Standby-first patch detection | `library/patch_standbyfirst_info.py` |
+| Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
 | No ASM for database files | database files use filesystem paths; Grid uses a small lab ASM disk for Oracle Restart metadata |
