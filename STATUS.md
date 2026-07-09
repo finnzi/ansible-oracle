@@ -85,7 +85,9 @@ The supported lab path is now KVM/libvirt:
     crashing the current primary VM, waiting for automatic promotion, broker
     reinstate, and switchback require an explicit confirmation variable.
     The readiness-only path has been run live against the KVM lab with
-    `changed=0`.
+    `changed=0`, and the live readiness test asserts FSFO is enabled,
+    protection mode is `MaxAvailability`, the current primary is `super`, the
+    active failover target is `super_sby`, and an observer is present.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before

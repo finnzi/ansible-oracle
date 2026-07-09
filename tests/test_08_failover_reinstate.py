@@ -30,6 +30,10 @@ def test_failover_reinstate_playbook_contract():
     assert "SHOW FAST_START FAILOVER" in playbook
     assert "Fast-Start Failover:[[:space:]]+Enabled" in playbook
     assert "Protection Mode:[[:space:]]+MaxAvailability" in playbook
+    assert "Fast-Start Failover is enabled" in playbook
+    assert "protection mode is MaxAvailability" in playbook
+    assert "active failover target is" in playbook
+    assert "and an observer is present" in playbook
     assert "Report readiness-only mode" in playbook
     assert "Fail when destructive rehearsal confirmation is missing" in playbook
     assert "Destroy current primary VM to trigger FSFO" in playbook
@@ -89,5 +93,10 @@ def test_failover_reinstate_readiness_playbook_converges_without_destructive_cha
     assert "failed=0" in r.stdout
     assert "changed=0" in r.stdout
     assert "FSFO readiness validated" in r.stdout
+    assert "Fast-Start Failover is enabled" in r.stdout
+    assert "protection mode is MaxAvailability" in r.stdout
+    assert "current primary is super" in r.stdout
+    assert "active failover target is super_sby" in r.stdout
+    assert "and an observer is present" in r.stdout
     assert "TASK [Destroy current primary VM to trigger FSFO]" in r.stdout
     assert "skipping: [observer1]" in r.stdout

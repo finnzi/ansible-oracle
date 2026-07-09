@@ -54,8 +54,11 @@
     - name: Report readiness-only mode
       ansible.builtin.debug:
         msg: >-
-          FSFO readiness validated. Destructive rehearsal is disabled by
-          default; re-run with
+          FSFO readiness validated: Fast-Start Failover is enabled,
+          protection mode is MaxAvailability, current primary is
+          {{ oracle_failover_original_primary }}, active failover target is
+          {{ oracle_failover_target }}, and an observer is present.
+          Destructive rehearsal is disabled by default; re-run with
           oracle_failover_reinstate_execute=true and
           oracle_failover_reinstate_confirm={{ oracle_failover_reinstate_confirm_required }}
           to destroy {{ oracle_failover_primary_vm }}, let FSFO promote
