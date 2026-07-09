@@ -150,6 +150,34 @@ def analyze_readme_text(text: str) -> tuple[bool, str]:
     return False, "no Standby-First statement found (defaulting to not eligible)"
 
 
+def _extract_patch_description(text: str, patch_num: str) -> str:
+    """Return the README title/heading text that describes a patch component."""
+    if not text:
+        return ""
+
+    # Oracle READMEs usually include this exact phrase in the HTML title or
+    # first heading. Match raw HTML so the CSS block does not bury it.
+    m = re.search(
+        r"Oracle\s+Database\s+Patch\s+"
+        + re.escape(patch_num)
+        + r"\s*-\s*([^<\r\n]+)",
+        text,
+        re.I,
+    )
+    if m:
+        return re.sub(r"\s+", " ", m.group(1)).strip()
+
+    normalised = _html_to_text(text)
+    m = re.search(
+        r"Oracle\s+Database\s+Patch\s+"
+        + re.escape(patch_num)
+        + r"\s*-\s*([^.]+)",
+        normalised,
+        re.I,
+    )
+    return re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+
+
 # ── Zip inspection ────────────────────────────────────────────────────
 # A patch zip layout (verified for the 19.31 combo patches):
 #   <bugnum>/README.html              # combo overview (often silent on SF)
@@ -223,10 +251,12 @@ def analyze_zip(zip_path: str) -> dict:
         for patch_num, (component, path, _ext) in sorted(seen.items()):
             text = _read_zip_member(zf, path)
             eligible, evidence = analyze_readme_text(text)
+            description = _extract_patch_description(text, patch_num)
             components.append(
                 {
                     "name": component,
                     "patch_number": patch_num,
+                    "description": description,
                     "standby_first": eligible,
                     "evidence": evidence,
                     "readme": path,

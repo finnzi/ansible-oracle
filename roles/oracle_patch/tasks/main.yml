@@ -2,7 +2,8 @@
 # tasks/main.yml for oracle_patch
 #
 # The standby-first DETECTION is real and runs now (the user explicitly asked
-# for auto-detection from release notes). The APPLY is scaffolded.
+# for auto-detection from release notes). DB-home patching is converged by
+# comparing opatch lspatches with the patch IDs derived from the staged bundle.
 
 - name: Verify the patch zip is staged
   ansible.builtin.stat:
@@ -10,12 +11,27 @@
   register: _patch_zip
   failed_when: not _patch_zip.stat.exists
 
+- name: Fail when patch target is not implemented
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_target={{ oracle_patch_target }} is not implemented by this
+      role slice yet. DB-home patch inventory/apply is implemented; Grid-home
+      patching remains explicit future work.
+  when: oracle_patch_target != 'db'
+
+- name: Fail when patch mode is not implemented
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_mode={{ oracle_patch_mode }} is not implemented by this role
+      slice yet. In-place DB-home patching is implemented; dual-home switching
+      remains explicit future work.
+  when: oracle_patch_mode != 'inplace'
+
 # ── Standby-first eligibility from the patch README (fully implemented) ─
 - name: Read standby-first eligibility from the patch README
   patch_standbyfirst_info:
     zip: "{{ oracle_patch_zip }}"
   register: _sf
-  when: oracle_patch_dg_standbyfirst | default('auto') in ('auto', true)
 
 - name: Resolve whether to use standby-first patching
   ansible.builtin.set_fact:
@@ -25,13 +41,33 @@
          else (oracle_patch_dg_standbyfirst | bool) }}
   when: oracle_patch_dg_standbyfirst | default('auto') in ('auto', true)
 
+- name: Resolve expected DB patch IDs
+  ansible.builtin.set_fact:
+    _patch_expected_ids: >-
+      {%- set ids = [] -%}
+      {%- for component in _sf.components | default([]) -%}
+        {%- set description = component.description | default('') -%}
+        {%- if component.name != 'combo' and 'Database Release Update' in description -%}
+          {%- set _ = ids.append(component.patch_number) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ oracle_patch_expected_patch_ids if (oracle_patch_expected_patch_ids | length > 0) else ids }}
+
+- name: Fail when no expected DB patch IDs could be derived
+  ansible.builtin.fail:
+    msg: >-
+      Could not derive expected DB patch IDs from {{ oracle_patch_zip | basename }}.
+      Set oracle_patch_expected_patch_ids explicitly.
+  when: _patch_expected_ids | length == 0
+
 - name: Report standby-first verdict
   ansible.builtin.debug:
     msg: >-
       Patch {{ oracle_patch_zip | basename }}: standby-first eligible =
       {{ _sf.eligible | default('n/a') }}. Reason:
       {{ _sf.reason | default('n/a') }}. Apply mode: {{ oracle_patch_mode }}.
-      Target: {{ oracle_patch_target }}.
+      Target: {{ oracle_patch_target }}. Expected patch IDs:
+      {{ _patch_expected_ids | join(',') }}.
 
 - name: Verify OPatch upgrade zip is staged
   ansible.builtin.stat:
@@ -39,15 +75,281 @@
   register: _opatch_zip
   failed_when: not _opatch_zip.stat.exists
 
-# ── Apply (stubbed) ────────────────────────────────────────────────────
-- name: Not implemented — fail only if apply is explicitly enabled
+# ── Resolve DB-home patch targets ──────────────────────────────────────
+- name: Resolve inventory DB patch targets
+  ansible.builtin.set_fact:
+    _patch_inventory_targets: >-
+      {%- set out=[] -%}
+      {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+      {%- for inst in instances -%}
+        {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+        {%- set _ = out.append({
+          'name': inst.name,
+          'oracle_base': inst.oracle_base,
+          'home_suffix': current_home.suffix,
+          'home_path': inst.oracle_base ~ '/' ~ current_home.suffix
+        }) -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Read /etc/oratab DB homes for brownfield patching
+  ansible.builtin.shell: |
+    set -o pipefail
+    awk -F: 'NF >= 2 && $1 !~ /^[#[:space:]]*$/ && $1 !~ /^\+/ && $2 ~ /^\// {print $1 "|" $2}' /etc/oratab 2>/dev/null || true
+  args: { executable: /bin/bash }
+  register: _patch_oratab
+  changed_when: false
+  when: oracle_patch_discover_oratab | bool
+
+- name: Resolve /etc/oratab DB patch targets
+  ansible.builtin.set_fact:
+    _patch_oratab_targets: >-
+      {%- set out=[] -%}
+      {%- for line in _patch_oratab.stdout_lines | default([]) -%}
+        {%- set parts = line.split('|') -%}
+        {%- if parts | length >= 2 and parts[1] | length > 0 -%}
+          {%- set home_path = parts[1] -%}
+          {%- set parent = home_path.rsplit('/', 1)[0] -%}
+          {%- set suffix = home_path.rsplit('/', 1)[1] -%}
+          {%- set _ = out.append({
+            'name': parts[0],
+            'oracle_base': parent,
+            'home_suffix': suffix,
+            'home_path': home_path,
+            'source': 'oratab'
+          }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Resolve extra brownfield DB patch targets
+  ansible.builtin.set_fact:
+    _patch_extra_targets: >-
+      {%- set out=[] -%}
+      {%- for item in oracle_patch_extra_homes | default([]) -%}
+        {%- set home_path = item if item is string else item.home_path | default('') -%}
+        {%- if home_path | length > 0 -%}
+          {%- set parent = home_path.rsplit('/', 1)[0] -%}
+          {%- set suffix = home_path.rsplit('/', 1)[1] -%}
+          {%- set _ = out.append({
+            'name': (suffix if item is string else item.name | default(suffix)),
+            'oracle_base': (parent if item is string else item.oracle_base | default(parent)),
+            'home_suffix': (suffix if item is string else item.home_suffix | default(suffix)),
+            'home_path': home_path,
+            'source': 'extra'
+          }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Resolve DB patch targets
+  ansible.builtin.set_fact:
+    _patch_targets: >-
+      {%- set out = [] -%}
+      {%- set seen = [] -%}
+      {%- for target in (_patch_inventory_targets | default([])) + (_patch_oratab_targets | default([])) + (_patch_extra_targets | default([])) -%}
+        {%- if target.home_path not in seen -%}
+          {%- set _ = seen.append(target.home_path) -%}
+          {%- set _ = out.append(target) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Fail when no DB patch targets were resolved
   ansible.builtin.fail:
     msg: >-
-      oracle_patch APPLY is scaffolded, not implemented, in this engagement.
-      Detection above is real. To apply, implement per defaults/main.yml:
-      OPatch upgrade from {{ oracle_patch_opatch_zip | basename }}; opatchauto
-      apply on the {{ oracle_patch_target }} home{% if oracle_patch_mode == 'oop_dual' %} in dual-home
-      mode (install new home, patch, srvctl modify -oraclehome, restart){% endif %};
-      datapatch. Standby-first branch when oracle_patch_use_standbyfirst.
-      Then set oracle_patch_apply_enabled: true.
-  when: oracle_patch_apply_enabled | bool
+      No DB homes were resolved from oracle_instances, /etc/oratab, or
+      oracle_patch_extra_homes.
+  when: _patch_targets | length == 0
+
+- name: Check DB home patch inventory
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.home_path | quote }}
+    {{ item.home_path }}/OPatch/opatch lspatches
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_lspatches
+  changed_when: false
+  failed_when: >-
+    _patch_lspatches.rc != 0 or
+    'OPatch succeeded' not in (_patch_lspatches.stdout | default(''))
+  loop: "{{ _patch_targets }}"
+  loop_control:
+    label: "{{ item.name }}:{{ item.home_suffix }}"
+
+- name: Record DB homes missing expected patch IDs
+  ansible.builtin.set_fact:
+    _patch_missing_targets: >-
+      {%- set missing = [] -%}
+      {%- for result in _patch_lspatches.results | default([]) -%}
+        {%- set installed_patch_ids = [] -%}
+        {%- for line in result.stdout_lines | default([]) -%}
+          {%- set candidate = line.split(';', 1)[0] | trim -%}
+          {%- if candidate is match('^[0-9]+$') -%}
+            {%- set _ = installed_patch_ids.append(candidate) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- set missing_ids = [] -%}
+        {%- for patch_id in _patch_expected_ids -%}
+          {%- if patch_id not in installed_patch_ids -%}
+            {%- set _ = missing_ids.append(patch_id) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if missing_ids | length > 0 -%}
+          {%- set target = result.item | combine({'missing_patch_ids': missing_ids}) -%}
+          {%- set _ = missing.append(target) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ missing }}
+
+- name: Report DB patch inventory status
+  ansible.builtin.debug:
+    msg: >-
+      DB patch inventory: {{ (_patch_targets | length) - (_patch_missing_targets | length) }}
+      of {{ _patch_targets | length }} home(s) already contain expected patch
+      ID(s) {{ _patch_expected_ids | join(',') }}.
+
+- name: Fail when patches are missing but apply is disabled
+  ansible.builtin.fail:
+    msg: >-
+      {{ _patch_missing_targets | length }} DB home(s) are missing expected
+      patch ID(s) {{ _patch_expected_ids | join(',') }}, but
+      oracle_patch_apply_enabled=false. Set oracle_patch_apply_enabled=true to
+      run OPatch/opatchauto/datapatch.
+  when:
+    - _patch_missing_targets | length > 0
+    - not oracle_patch_apply_enabled | bool
+
+- name: Fail when standby-first orchestration is required but not implemented
+  ansible.builtin.fail:
+    msg: >-
+      {{ oracle_patch_zip | basename }} is standby-first eligible and
+      oracle_patch_dg_standbyfirst resolves to true, but standby-first patch
+      orchestration is not implemented in this role slice yet. Required flow:
+      patch standby, switchover, then patch the new standby.
+  when:
+    - _patch_missing_targets | length > 0
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_use_standbyfirst | default(false) | bool
+
+# ── DB-home apply path (only when inventory says work is needed) ───────
+- name: Upgrade OPatch in DB homes that need patching
+  ansible.builtin.unarchive:
+    src: "{{ oracle_patch_opatch_zip }}"
+    dest: "{{ item.home_path }}"
+    remote_src: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  loop: "{{ _patch_missing_targets }}"
+  loop_control:
+    label: "{{ item.name }}:{{ item.home_suffix }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+
+- name: Ensure patch bundle extraction directory exists
+  ansible.builtin.file:
+    path: "{{ oracle_patch_bundle_extract_dir }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+
+- name: Check whether patch bundle is already extracted
+  ansible.builtin.stat:
+    path: "{{ oracle_patch_bundle_extract_dir }}/.{{ oracle_patch_zip | basename }}.extracted"
+  register: _patch_extract_marker
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+
+- name: Extract patch bundle for opatchauto
+  ansible.builtin.unarchive:
+    src: "{{ oracle_patch_zip }}"
+    dest: "{{ oracle_patch_bundle_extract_dir }}"
+    remote_src: true
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+    - not _patch_extract_marker.stat.exists
+
+- name: Mark patch bundle extraction complete
+  ansible.builtin.file:
+    path: "{{ oracle_patch_bundle_extract_dir }}/.{{ oracle_patch_zip | basename }}.extracted"
+    state: touch
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+    - not _patch_extract_marker.stat.exists
+
+- name: Resolve extracted patch directory
+  ansible.builtin.shell: |
+    set -o pipefail
+    root={{ oracle_patch_bundle_extract_dir | quote }}
+    bundle={{ oracle_patch_zip | basename | regex_replace('^p([0-9]+)_.*$', '\\1') | quote }}
+    if [ -d "$root/$bundle" ]; then
+      printf '%s\n' "$root/$bundle"
+      exit 0
+    fi
+    find "$root" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -print | sort | tail -1
+  args: { executable: /bin/bash }
+  register: _patch_apply_dir
+  changed_when: false
+  failed_when: _patch_apply_dir.rc != 0 or (_patch_apply_dir.stdout | trim | length) == 0
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+
+- name: Apply DB patch with opatchauto
+  ansible.builtin.shell: |
+    set -o pipefail
+    {{ item.home_path }}/OPatch/opatchauto apply {{ _patch_apply_dir.stdout | trim | quote }} -oh {{ item.home_path | quote }}
+  args: { executable: /bin/bash }
+  register: _patch_opatchauto
+  changed_when: >-
+    _patch_opatchauto.rc == 0 and
+    'OPatchAuto successful' in (_patch_opatchauto.stdout | default(''))
+  failed_when: >-
+    _patch_opatchauto.rc != 0 or
+    'OPatchAuto successful' not in (_patch_opatchauto.stdout | default(''))
+  loop: "{{ _patch_missing_targets }}"
+  loop_control:
+    label: "{{ item.name }}:{{ item.home_suffix }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0
+
+- name: Run datapatch for patched DB homes
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.home_path | quote }}
+    export ORACLE_SID={{ item.name | quote }}
+    {{ item.home_path }}/OPatch/datapatch -verbose
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_datapatch
+  changed_when: _patch_datapatch.rc == 0
+  failed_when: >-
+    _patch_datapatch.rc != 0 or
+    'Patch installation complete' not in (_patch_datapatch.stdout | default(''))
+  loop: "{{ _patch_missing_targets }}"
+  loop_control:
+    label: "{{ item.name }}:{{ item.home_suffix }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - _patch_missing_targets | length > 0

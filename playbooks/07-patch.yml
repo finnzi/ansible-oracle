@@ -1,9 +1,10 @@
 ---
 # playbooks/07-patch.yml — Oracle home patching.
-# Detection (standby-first eligibility) is real and runs against the staged
-# RU zip; the apply itself is scaffolded.
+# Detection (standby-first eligibility) runs against the staged RU zip. DB-home
+# patch inventory is converged; opatchauto/datapatch only run when
+# oracle_patch_apply_enabled=true and the expected patch ID is missing.
 
-- name: Analyse patch for standby-first eligibility — scaffolded apply
+- name: Converge Oracle DB home patch inventory
   hosts: oracle_db_hosts
   become: true
   roles:

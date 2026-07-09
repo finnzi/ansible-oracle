@@ -1,8 +1,8 @@
 # ansible-oracle
 
 Ansible playbooks and roles for managing Oracle 19c databases on Oracle Linux:
-single-instance and Data Guard configurations, Oracle Restart, out-of-place
-home patching, and a KVM/libvirt lab for testing the automation end to end.
+single-instance and Data Guard configurations, Oracle Restart, Oracle home
+patching, and a KVM/libvirt lab for testing the automation end to end.
 
 ## Current Status
 
@@ -31,6 +31,7 @@ Implemented:
 - Data Guard broker configuration `dg_super`, with SYNC transport,
   `MAXIMUM AVAILABILITY` protection mode/protection level, and the standby open
   `READ ONLY WITH APPLY`.
+- Goal requirement: Data Guard availability mode is Maximum Availability.
 - Manual broker switchover and automatic standby target selection, verified by
   switching from `super` to `super_sby` and back while preserving
   `READ ONLY WITH APPLY`.
@@ -45,12 +46,17 @@ Implemented:
 - Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
   separate from VM management IPs.
 - Standby-first patch eligibility parser with unit coverage.
+- DB-home patch inventory and in-place apply path: expected RU IDs are derived
+  from the staged patch README metadata, OPatch inventory is checked on both DB
+  VMs, brownfield DB homes can be discovered from `/etc/oratab` or supplied via
+  `oracle_patch_extra_homes`, and the current 19.31 RU convergence is verified
+  as idempotent.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
 Still scaffolded or not yet proven end to end:
 
 - Destructive automatic failover simulation and reinstate workflow.
-- Actual patch application and dual-home switch.
+- Grid-home patch application and dual-home switch.
 
 ## Quickstart
 
@@ -129,7 +135,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 |---|---|
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
-| Patch DB homes and Grid homes | `oracle_patch` |
+| Patch DB homes and Grid homes | DB-home inventory/apply in `oracle_patch`; Grid-home apply remains pending |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |

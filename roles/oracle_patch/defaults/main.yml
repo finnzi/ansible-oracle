@@ -1,25 +1,15 @@
 ---
 # defaults/main.yml for oracle_patch
 #
-# SCOPE: stubbed in the vertical slice. The standby-first DETECTION (the part
-# the user explicitly called out) is fully implemented in
-# library/patch_standbyfirst_info.py and is unit-tested. The APPLY logic here
-# is scaffolded with a fixed interface.
+# SCOPE: DB-home patch inventory and idempotent apply. The standby-first
+# DETECTION (the part the user explicitly called out) is fully implemented in
+# library/patch_standbyfirst_info.py and is unit-tested.
 #
-# WHAT TO IMPLEMENT (next engagement):
-#   Single-home mode (oracle_patch_mode: inplace):
-#     1. Upgrade OPatch from p6880880 (unzip into <ORACLE_HOME>).
-#     2. For Grid patch: `opatchauto apply <gi_ru_zip> -oh <GI_HOME>`.
-#        For DB patch:   `opatchauto apply <db_ru_zip> -oh <ORACLE_HOME>`.
-#     3. Run datapatch (the SQL side of the RU) on each open DB.
-#
-#   Dual-home mode (oracle_patch_mode: oop_dual) — preferred for zero-downtime:
-#     1. Install a NEW Oracle home (oracle_db_install) at <base>/<db_homeN+1>.
-#     2. Patch the new home in place (above).
-#     3. `srvctl modify database -db <name> -oraclehome <new_home>`.
-#     4. Restart the DB under Restart (`srvctl stop/start database`).
-#     5. Run datapatch.
-#     6. Leave the old home in place for rollback.
+# WHAT REMAINS:
+#   - Grid-home patch apply.
+#   - Dual-home mode (oracle_patch_mode: oop_dual): install/patch new home,
+#     `srvctl modify database -oraclehome <new_home>`, restart, datapatch, and
+#     leave the old home in place for rollback.
 #
 #   Standby-first branch (Data Guard only):
 #     1. Call patch_standbyfirst_info to read eligibility from the README.
@@ -33,6 +23,9 @@
 #   oracle_patch_zip:    path to the RU zip under stage_dir
 #   oracle_patch_opatch_zip: path to the p6880880 zip
 #   oracle_patch_dg_standbyfirst: auto | true | false  (auto = ask the module)
+#   oracle_patch_expected_patch_ids: [] means derive DB RU IDs from README
+#   oracle_patch_discover_oratab: include DB homes discovered from /etc/oratab
+#   oracle_patch_extra_homes: additional brownfield DB homes to patch
 
 oracle_user: oracle
 oracle_group: oinstall
@@ -45,5 +38,17 @@ oracle_patch_zip: "{{ oracle_stage_dir }}/p39062931_190000_Linux-x86-64.zip"
 oracle_patch_opatch_zip: "{{ oracle_stage_dir }}/p6880880_190000_Linux-x86-64.zip"
 oracle_patch_dg_standbyfirst: auto
 
-# Actually run the (unimplemented) apply. Detection runs regardless.
+# Actually run opatchauto/datapatch when a target home is missing the expected
+# patch id(s). Detection and inventory validation run regardless.
 oracle_patch_apply_enabled: false
+oracle_patch_expected_patch_ids: []
+oracle_patch_bundle_extract_dir: /var/tmp/ansible-oracle-patches
+
+# Brownfield support: include database homes that were installed outside this
+# inventory but are registered in /etc/oratab. Entries whose SID starts with '+'
+# are ignored because they are ASM/Grid homes, not DB homes.
+oracle_patch_discover_oratab: true
+
+# Additional brownfield DB homes. Each item may be either a home path string or
+# a dict with at least home_path, plus optional name/oracle_base/home_suffix.
+oracle_patch_extra_homes: []

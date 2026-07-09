@@ -110,6 +110,8 @@ class TestAnalyzeZip:
         result = analyze_zip(z)
         assert result["eligible"] is False
         assert result["readme_files_examined"] >= 2
+        descriptions = {c["patch_number"]: c["description"] for c in result["components"]}
+        assert descriptions["39034528"] == ""
         # OJVM should be named in the reason.
         assert "38906621" in result["reason"] or "OJVM" in result["reason"].upper() \
             or "ineligible" in result["reason"].lower()
@@ -150,10 +152,12 @@ def test_real_db_ru_19_31_standbyfirst_verdict():
         f"Got: {result}"
     )
     components = {c["name"]: c["standby_first"] for c in result["components"]}
+    descriptions = {c["patch_number"]: c["description"] for c in result["components"]}
     # The DB RU sub-component (39034528) should itself be eligible.
     assert components.get("39034528") is True, (
         f"DB RU component should be standby-first installable. Components: {components}"
     )
+    assert descriptions["39034528"].startswith("Database Release Update")
 
 
 @pytest.mark.slice

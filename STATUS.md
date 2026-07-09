@@ -9,6 +9,8 @@ Oracle Restart, Data Guard, Fast-Start Failover observer nodes, and patching.
 The test environment is now being moved from Docker containers to KVM VMs after
 the container lab proved unsafe and unreliable on the host.
 Data Guard configurations must use MAXIMUM AVAILABILITY protection mode.
+Project goal update: Data Guard availability mode is required to be
+Maximum Availability.
 
 ## Current Lab Direction
 
@@ -90,12 +92,22 @@ The supported lab path is now KVM/libvirt:
     `local_listener` registration on `superdc1.domain.is`, standby SYSDBA
     connectivity on `super_sby_dgb`, and physical standby role are verified in
     the KVM lab.
+- DB-home patching:
+  - `playbooks/07-patch.yml` derives expected DB RU patch IDs from the staged
+    patch README metadata, checks OPatch inventory on both DB VMs, and contains
+    the in-place OPatch/opatchauto/datapatch apply path for homes missing the
+    expected patch.
+  - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
+    `oracle_patch_extra_homes`; duplicate home paths are deduplicated before
+    inventory/apply.
+  - The current lab converges the 19.31 DB RU (`39034528`) as an idempotent
+    no-op on both DB homes.
 
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
 - Destructive automatic failover simulation and reinstate workflow.
-- Actual patch apply and dual-home switch.
+- Grid-home patch apply and dual-home switch.
 
 ## Host Findings From This Run
 
