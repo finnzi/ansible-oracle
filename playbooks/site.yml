@@ -6,6 +6,11 @@
 #   -> Data Guard in Maximum Availability -> FSFO observer -> patch inventory
 #   and conservative no-op dual-home validation -> tests.
 #
+# The site playbook is the Data Guard lab path, so the instance and service
+# imports run their oracle_network dependency in Data Guard mode from the
+# beginning. Running the standalone listener pass first would churn listener
+# files before the Data Guard play corrected them.
+#
 # Patch imports here use safe defaults: DB/Grid homes are inspected by default
 # and only patched when oracle_patch_apply_enabled=true. The dual-home playbook
 # defaults to the current home unless an existing target home is configured.
@@ -26,9 +31,16 @@
 
 - name: Create database instances and listeners
   ansible.builtin.import_playbook: 03-create-instance.yml
+  vars:
+    oracle_network_dataguard_enabled: true
+    oracle_lab_host_map_mode: dataguard
 
 - name: Register with Oracle Restart and create client services
   ansible.builtin.import_playbook: 04-register-restart.yml
+  vars:
+    oracle_network_dataguard_enabled: true
+    oracle_lab_host_map_mode: dataguard
+    oracle_restart_apply_instance_overrides_require_dataguard: false
 
 - name: Configure Data Guard in Maximum Availability mode
   ansible.builtin.import_playbook: 05-dataguard.yml

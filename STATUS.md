@@ -8,9 +8,8 @@ This repo is intended to manage Oracle Database installations, upgrades,
 Oracle Restart, Data Guard, Fast-Start Failover observer nodes, and patching.
 The test environment is now being moved from Docker containers to KVM VMs after
 the container lab proved unsafe and unreliable on the host.
-Data Guard configurations must use MAXIMUM AVAILABILITY protection mode.
-Project goal update: Data Guard availability mode is required to be
-Maximum Availability.
+Goal requirement: Data Guard availability mode is Maximum Availability
+(`MAXIMUM AVAILABILITY` protection mode).
 
 ## Current Lab Direction
 
@@ -122,11 +121,13 @@ The supported lab path is now KVM/libvirt:
   Guard Maximum Availability, FSFO observer setup, DB/Grid patch inventory, and
   current-home dual-home validation. Standby-first patching remains a dedicated
   opt-in playbook because it can switch broker roles and apply patches.
+- Live full `playbooks/site.yml` run verified on the KVM lab on 2026-07-09,
+  including Data Guard Maximum Availability, FSFO observer setup, DB/Grid patch
+  inventory, current-home dual-home validation, and embedded pytest
+  (`97 passed, 6 skipped`).
 
 ## Not Yet Proven End To End
 
-- Live full `playbooks/site.yml` run including Data Guard/observer/DB+Grid
-  patch inventory and dual-home validation stages.
 - Destructive automatic failover simulation and reinstate workflow.
 - Automated staging/install of a new dual-home target before switching.
 - Live standby-first patch apply with an actually eligible DB RU.

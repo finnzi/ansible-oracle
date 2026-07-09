@@ -15,6 +15,79 @@
     _dg_standby_pwfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
 
+- name: Check for conflicting standalone Restart registration on standby
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ inst.name }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_conflict_db
+  changed_when: false
+  failed_when: false
+  when: inst.name != _dg_standby_unique_name
+
+- name: Remove conflicting standalone Restart registration on standby
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" remove database -db {{ inst.name }} -force
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_conflict_remove
+  changed_when: _dg_standby_conflict_remove.rc == 0
+  failed_when: _dg_standby_conflict_remove.rc != 0
+  when:
+    - inst.name != _dg_standby_unique_name
+    - "'NOT_REGISTERED' not in (_dg_standby_conflict_db.stdout | default(''))"
+
+- name: Check registered standby database status before duplicate
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_registered_status_before
+  changed_when: false
+  failed_when: false
+
+- name: Start registered physical standby before role probe
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    changed=0
+
+    listener_status="$("$gi_home/bin/srvctl" status listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || true)"
+    printf '%s\n' "$listener_status"
+    if ! printf '%s\n' "$listener_status" | grep -Eiq 'is running|running on'; then
+      "$gi_home/bin/srvctl" start listener -listener LISTENER_{{ inst.name | upper }}
+      changed=1
+    fi
+
+    db_status="$("$gi_home/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || true)"
+    printf '%s\n' "$db_status"
+    if pgrep -x "ora_pmon_{{ inst.name }}" >/dev/null 2>&1; then
+      printf '%s\n' DATABASE_ALREADY_RUNNING_OUTSIDE_RESTART
+    elif ! printf '%s\n' "$db_status" | grep -Eiq 'is running|running on'; then
+      "$gi_home/bin/srvctl" start database -db {{ _dg_standby_unique_name }} -startoption MOUNT
+      changed=1
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+      echo CHANGED
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_registered_start
+  changed_when: "'CHANGED' in (_dg_standby_registered_start.stdout | default(''))"
+  failed_when: >-
+    _dg_standby_registered_start.rc != 0 or
+    'PRCR-1001' in (_dg_standby_registered_start.stdout | default('')) or
+    'PRCD-1120' in (_dg_standby_registered_start.stdout | default(''))
+  when: "'NOT_REGISTERED' not in (_dg_standby_registered_status_before.stdout | default(''))"
+
 - name: Read standby database role before duplicate
   ansible.builtin.shell: |
     set -o pipefail
@@ -79,6 +152,30 @@
     'PHYSICAL STANDBY' not in (_dg_standby_role_after.stdout | default('')) or
     'ORA-' in (_dg_standby_role_after.stdout | default('')) or
     'SP2-' in (_dg_standby_role_after.stdout | default(''))
+
+- name: Configure standby Data Guard initialization parameters
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<SQL
+    ALTER SYSTEM SET standby_file_management='AUTO' SCOPE=BOTH;
+    ALTER SYSTEM SET dg_broker_start=TRUE SCOPE=BOTH;
+    ALTER SYSTEM SET log_archive_config='DG_CONFIG=({{ _dg_primary_unique_name }},{{ _dg_standby_unique_name }})' SCOPE=BOTH;
+    ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH;
+    ALTER SYSTEM SET fal_client='{{ _dg_standby_unique_name }}_dgb' SCOPE=BOTH;
+    ALTER SYSTEM SET local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST={{ inst.listener_vip }})(PORT={{ inst.listener_port | default(1521) }}))' SCOPE=BOTH;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_params
+  changed_when: false
+  failed_when: >-
+    _dg_standby_params.rc != 0 or
+    'ORA-' in (_dg_standby_params.stdout | default('')) or
+    'SP2-' in (_dg_standby_params.stdout | default(''))
 
 - name: Check standby spfile for Restart registration
   ansible.builtin.stat:
@@ -160,6 +257,7 @@
   when:
     - oracle_dataguard_configure_broker | default(false) | bool
     - _dg_standby_spfile not in (_dg_standby_spfile_in_use.stdout | default(''))
+    - "'NOT_REGISTERED' in (_dg_standby_registered_status_before.stdout | default(''))"
 
 - name: Check local CSS status before standby Restart registration
   ansible.builtin.shell: |

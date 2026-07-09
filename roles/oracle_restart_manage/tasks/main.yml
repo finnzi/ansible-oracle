@@ -70,8 +70,23 @@
 # ── Register each instance + its listener with Restart ─────────────────
 - name: Register instance, listener, and start them under Restart
   ansible.builtin.include_tasks: register-instance.yml
-  loop: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | oracle_apply_instance_overrides(
+          oracle_instance_overrides | default({}),
+          oracle_restart_apply_instance_overrides_require_dataguard | default(true)
+        )
+    }}
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"
-  when: oracle_restart_available
+  when:
+    - oracle_restart_available
+    - not (
+        inst.dataguard | default(false) | bool and
+        (
+          'standby' in group_names or
+          inst.dg_role | default('') == 'standby'
+        )
+      )

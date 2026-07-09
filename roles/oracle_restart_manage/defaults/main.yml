@@ -19,3 +19,8 @@ oracle_gi_home: /grid/19c/gi_home1
 
 # Whether to hard-fail when Restart is missing. False in the slice; true later.
 oracle_restart_required: false
+
+# Keep primary/standby inventory overrides dormant for standalone runs by
+# default. The Data Guard site path sets this false so generic Restart
+# registration can skip standby instances and leave them to oracle_dataguard.
+oracle_restart_apply_instance_overrides_require_dataguard: true

@@ -63,6 +63,12 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     dataguard_duplicate_standby = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/duplicate-standby.yml"
     ).read_text(encoding="utf-8")
+    restart_tasks = (
+        REPO_ROOT / "roles/oracle_restart_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+    restart_defaults = (
+        REPO_ROOT / "roles/oracle_restart_manage/defaults/main.yml"
+    ).read_text(encoding="utf-8")
     dataguard_flashback = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/ensure-flashback.yml"
     ).read_text(encoding="utf-8")
@@ -135,6 +141,11 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_switchover_instance" in dataguard_tasks
     assert "'primary' in group_names" in dataguard_tasks
     assert "oracle_dataguard_switchover_target in [" in dataguard_tasks
+    assert "Register instance, listener, and start them under Restart" in restart_tasks
+    assert "oracle_restart_apply_instance_overrides_require_dataguard: true" in restart_defaults
+    assert "oracle_restart_apply_instance_overrides_require_dataguard | default(true)" in restart_tasks
+    assert "'standby' in group_names" in restart_tasks
+    assert "inst.dg_role | default('') == 'standby'" in restart_tasks
     assert "hosts: oracle_db_hosts" in dataguard_playbook
     assert "oracle_network_dataguard_enabled: true" in dataguard_playbook
     assert "oracle_lab_host_map_mode: dataguard" in dataguard_playbook
@@ -154,6 +165,11 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "ALTER SYSTEM REGISTER" in dataguard_prepare
     assert "ALTER DATABASE ADD STANDBY LOGFILE" in dataguard_prepare
     assert "STARTUP NOMOUNT" in dataguard_prepare_standby
+    assert "Check registered physical standby before auxiliary startup" in dataguard_prepare_standby
+    assert "Start registered physical standby instead of auxiliary NOMOUNT" in dataguard_prepare_standby
+    assert "'ORA-19838' not in (_dg_registered_standby_start.stdout | default(''))" in dataguard_prepare_standby
+    assert "'ORA-19838' in (_dg_registered_standby_start.stdout | default(''))" in dataguard_prepare_standby
+    assert "'NOT_REGISTERED' in (_dg_registered_standby_status.stdout | default(''))" in dataguard_prepare_standby
     assert "Restart standby auxiliary when pfile changes" in dataguard_prepare_standby
     assert "orapwd" in dataguard_prepare_standby
     assert "{{ _dg_standby_unique_name }}_dgb as sysdba" in dataguard_prepare_standby
@@ -161,13 +177,22 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "FROM ACTIVE DATABASE" in dataguard_duplicate_standby
     assert "PHYSICAL STANDBY" in dataguard_duplicate_standby
     assert "Read standby spfile in use" in dataguard_duplicate_standby
+    assert "Configure standby Data Guard initialization parameters" in dataguard_duplicate_standby
+    assert "ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH" in dataguard_duplicate_standby
+    assert "Remove conflicting standalone Restart registration on standby" in dataguard_duplicate_standby
+    assert "Start registered physical standby before role probe" in dataguard_duplicate_standby
+    assert "DATABASE_ALREADY_RUNNING_OUTSIDE_RESTART" in dataguard_duplicate_standby
     assert "Restart standby from spfile for broker management" in dataguard_duplicate_standby
+    assert "'NOT_REGISTERED' in (_dg_standby_registered_status_before.stdout | default(''))" in dataguard_duplicate_standby
     assert "oracle_dataguard_configure_broker | default(false) | bool" in dataguard_duplicate_standby
     assert "STARTUP MOUNT" in dataguard_duplicate_standby
     assert "-role PHYSICAL_STANDBY" in dataguard_duplicate_standby
     assert "srvctl\" add database" in dataguard_duplicate_standby
     assert "Validate standby Restart registration" in dataguard_duplicate_standby
     assert "ALTER DATABASE FLASHBACK ON" in dataguard_flashback
+    assert "SHUTDOWN ABORT" in dataguard_flashback
+    assert "replace('ORA-01109', '')" in dataguard_flashback
+    assert "replace('ORA-16136', '')" in dataguard_flashback
     assert "ALTER DATABASE OPEN READ ONLY" in dataguard_flashback
     assert "PHYSICAL STANDBY|" in dataguard_flashback
     assert "oracle_dataguard_observer_user:" in dataguard_defaults

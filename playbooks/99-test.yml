@@ -10,34 +10,47 @@
   vars:
     # pytest is run from the repo root so tests/conftest.py resolves imports.
     repo_root: "{{ playbook_dir | dirname }}"
+    oracle_test_timeout_seconds: 1800
+    oracle_test_pytest_args: "tests/ -v --tb=short -ra"
+    oracle_test_environment:
+      ANSIBLE_LOCAL_TEMP: /tmp/ansible-local
+      ANSIBLE_SSH_CONTROL_PATH_DIR: /tmp/ansible-cp
+      XDG_CACHE_HOME: /tmp/ansible-cache
+      PYTHONUNBUFFERED: "1"
   tasks:
     - name: Locate the venv pytest
       ansible.builtin.stat:
         path: "{{ repo_root }}/.venv/bin/pytest"
       register: _pytest
 
-    - name: Run pytest from the venv
+    - name: Resolve pytest command
+      ansible.builtin.set_fact:
+        _pytest_command: "{{ './.venv/bin/pytest' if _pytest.stat.exists else 'pytest' }}"
+
+    - name: Run pytest against the lab
       ansible.builtin.shell: |
         set -o pipefail
         cd {{ repo_root }}
-        ./.venv/bin/pytest tests/ -v
+        timeout {{ oracle_test_timeout_seconds | int }} {{ _pytest_command }} {{ oracle_test_pytest_args }}
       args:
         executable: /bin/bash
+      environment: "{{ oracle_test_environment }}"
       register: _pytest_run
       changed_when: false
-      when: _pytest.stat.exists
-
-    - name: Run pytest from PATH (no venv)
-      ansible.builtin.shell: |
-        set -o pipefail
-        cd {{ repo_root }}
-        pytest tests/ -v
-      args:
-        executable: /bin/bash
-      register: _pytest_run_path
-      changed_when: false
-      when: not _pytest.stat.exists
+      failed_when: false
 
     - name: Show test output
       ansible.builtin.debug:
-        msg: "{{ (_pytest_run.stdout if _pytest.stat.exists else _pytest_run_path.stdout) | default('') }}"
+        msg: "{{ _pytest_run.stdout | default('') }}"
+
+    - name: Fail when pytest does not pass
+      ansible.builtin.fail:
+        msg: |-
+          pytest failed with rc={{ _pytest_run.rc }}.
+
+          STDOUT:
+          {{ _pytest_run.stdout | default('') }}
+
+          STDERR:
+          {{ _pytest_run.stderr | default('') }}
+      when: _pytest_run.rc != 0

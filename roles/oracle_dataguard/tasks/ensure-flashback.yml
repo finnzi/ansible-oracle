@@ -59,9 +59,10 @@
     export ORACLE_HOME={{ _dg_flashback_home_path }}
     export ORACLE_SID={{ inst.name }}
     "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
-    WHENEVER SQLERROR EXIT SQL.SQLCODE
+    WHENEVER SQLERROR CONTINUE
     ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;
-    SHUTDOWN IMMEDIATE;
+    SHUTDOWN ABORT;
+    WHENEVER SQLERROR EXIT SQL.SQLCODE
     STARTUP MOUNT;
     ALTER DATABASE FLASHBACK ON;
     ALTER DATABASE OPEN READ ONLY;
@@ -75,7 +76,12 @@
   changed_when: true
   failed_when: >-
     _dg_flashback_standby_enable.rc != 0 or
-    'ORA-' in (_dg_flashback_standby_enable.stdout | default('')) or
+    (
+      (_dg_flashback_standby_enable.stdout | default(''))
+      | replace('ORA-01109', '')
+      | replace('ORA-16136', '')
+      is search('ORA-')
+    ) or
     'SP2-' in (_dg_flashback_standby_enable.stdout | default(''))
   no_log: true
   when:

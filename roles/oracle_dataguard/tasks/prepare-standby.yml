@@ -98,6 +98,67 @@
   failed_when: false
   when: _dg_standby_pmon.rc == 0
 
+- name: Check registered physical standby before auxiliary startup
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_registered_standby_status
+  changed_when: false
+  failed_when: false
+
+- name: Start registered physical standby instead of auxiliary NOMOUNT
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    changed=0
+
+    if pgrep -x "ora_pmon_{{ inst.name }}" >/dev/null 2>&1 &&
+       ! printf '%s\n' "{{ _dg_standby_role_during_prep.stdout | default('') }}" | grep -F 'PHYSICAL STANDBY' >/dev/null; then
+      printf 'SHUTDOWN ABORT;\nEXIT;\n' | "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
+      changed=1
+    fi
+
+    listener_status="$("$gi_home/bin/srvctl" status listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || true)"
+    printf '%s\n' "$listener_status"
+    if ! printf '%s\n' "$listener_status" | grep -Eiq 'is running|running on'; then
+      "$gi_home/bin/srvctl" start listener -listener LISTENER_{{ inst.name | upper }}
+      changed=1
+    fi
+
+    db_status="$("$gi_home/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || true)"
+    printf '%s\n' "$db_status"
+    if ! printf '%s\n' "$db_status" | grep -Eiq 'is running|running on'; then
+      "$gi_home/bin/srvctl" start database -db {{ _dg_standby_unique_name }} -startoption MOUNT || start_rc=$?
+      changed=1
+      if [ "${start_rc:-0}" -ne 0 ]; then
+        exit "$start_rc"
+      fi
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+      echo CHANGED
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_registered_standby_start
+  changed_when: "'CHANGED' in (_dg_registered_standby_start.stdout | default(''))"
+  failed_when: >-
+    (
+      _dg_registered_standby_start.rc != 0 and
+      'ORA-19838' not in (_dg_registered_standby_start.stdout | default(''))
+    ) or
+    'PRCR-1001' in (_dg_registered_standby_start.stdout | default('')) or
+    'PRCD-1120' in (_dg_registered_standby_start.stdout | default(''))
+  when:
+    - "'NOT_REGISTERED' not in (_dg_registered_standby_status.stdout | default(''))"
+    - _dg_standby_pmon.rc != 0 or 'PHYSICAL STANDBY' not in (_dg_standby_role_during_prep.stdout | default(''))
+
 - name: Restart standby auxiliary when pfile changes
   ansible.builtin.shell: |
     set -o pipefail
@@ -121,6 +182,9 @@
     - _dg_standby_pmon.rc == 0
     - _dg_standby_pfile_result.changed | default(false)
     - "'PHYSICAL STANDBY' not in (_dg_standby_role_during_prep.stdout | default(''))"
+    - >-
+      'NOT_REGISTERED' in (_dg_registered_standby_status.stdout | default('')) or
+      'ORA-19838' in (_dg_registered_standby_start.stdout | default(''))
 
 - name: Start standby auxiliary instance NOMOUNT
   ansible.builtin.shell: |
@@ -143,6 +207,9 @@
   when:
     - _dg_standby_pmon.rc != 0
     - not (_dg_standby_restart.changed | default(false))
+    - >-
+      'NOT_REGISTERED' in (_dg_registered_standby_status.stdout | default('')) or
+      'ORA-19838' in (_dg_registered_standby_start.stdout | default(''))
 
 - name: Validate standby auxiliary static listener connection
   ansible.builtin.shell: |
