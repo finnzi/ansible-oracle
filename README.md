@@ -49,10 +49,9 @@ Implemented:
   orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
   dual-home Restart switching with automatic installation of inventory suffix
-  target homes before patch/switch. Explicit path targets must already exist.
+  and inventory-declared explicit-path target homes before patch/switch.
   Expected RU IDs are derived from staged patch metadata, OPatch inventory is
-  checked on
-  both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
+  checked on both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
   brownfield Grid homes from `/etc/oracle/olr.loc`, and the current 19.31 RU
   convergence plus current-home dual mode are verified as idempotent.
 - `playbooks/site.yml` imports the non-destructive umbrella flow through Data

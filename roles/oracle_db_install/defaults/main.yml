@@ -30,9 +30,10 @@ oracle_db_install_recreate_incomplete_home: true
 
 # Which inventory DB homes to install:
 #   current  - only homes marked current:true (normal greenfield install)
-#   selected - only suffixes listed in oracle_db_install_home_suffixes
-# Non-current dual-home targets can also be installed explicitly by suffix with
-# oracle_db_install_home_suffixes, preserving the current default behavior while
-# letting patch playbooks stage a new target home before switching.
+#   selected - only suffixes/paths listed below
+# Non-current dual-home targets can also be installed explicitly by suffix or
+# inventory-backed path, preserving the current default behavior while letting
+# patch playbooks stage a new target home before switching.
 oracle_db_install_home_selection: current
 oracle_db_install_home_suffixes: []
+oracle_db_install_home_paths: []

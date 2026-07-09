@@ -27,8 +27,8 @@
 #   oracle_patch_discover_olr: include Grid home discovered from /etc/oracle/olr.loc
 #   oracle_patch_extra_grid_homes: additional brownfield Grid homes to patch
 #   oracle_patch_dual_home_suffix/path: target DB home for oop_dual switching.
-#     Suffix targets are installed by playbooks/07-patch-dual-db.yml before
-#     patch/switch; explicit path targets must already exist.
+#     Inventory suffix and inventory-declared explicit path targets are
+#     installed by playbooks/07-patch-dual-db.yml before patch/switch.
 #   oracle_patch_standbyfirst_require_eligible: precheck gate in standby-first playbook
 
 oracle_user: oracle
@@ -65,8 +65,9 @@ oracle_patch_extra_homes: []
 # oracle_patch_dual_home_path if set, otherwise
 # oracle_base/oracle_patch_dual_home_suffix if set, otherwise the inventory
 # current home. The dual-home playbook automatically installs suffix targets
-# declared in inventory before patch/switch. Explicit path targets must already
-# exist because they are outside the inventory home model.
+# and explicit-path targets declared in inventory before patch/switch.
+# Brownfield explicit path targets must already exist because they are outside
+# the inventory home model.
 oracle_patch_dual_home_suffix: ""
 oracle_patch_dual_home_path: ""
 

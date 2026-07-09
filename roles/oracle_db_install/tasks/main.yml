@@ -22,20 +22,25 @@
     _install_targets: >-
       {%- set out=[] -%}
       {%- set selected_suffixes = oracle_db_install_home_suffixes | default([]) -%}
+      {%- set selected_paths = oracle_db_install_home_paths | default([]) -%}
       {%- for inst in (oracle_instances | default([])) -%}
         {%- for home in inst.db_homes -%}
+          {%- set home_path = inst.oracle_base ~ '/' ~ home.suffix -%}
           {%- set selected = (
                 (oracle_db_install_home_selection == 'current' and
                  home.current | default(false) | bool) or
                 (oracle_db_install_home_selection == 'selected' and
-                 home.suffix in selected_suffixes)
+                 (
+                   home.suffix in selected_suffixes or
+                   home_path in selected_paths
+                 ))
               ) -%}
           {%- if selected -%}
             {%- set _ = out.append({
                 'name':  inst.name,
                 'oracle_base': inst.oracle_base,
                 'home_suffix': home.suffix,
-                'home_path': inst.oracle_base ~ '/' ~ home.suffix,
+                'home_path': home_path,
                 'stage_dir': oracle_stage_dir,
                 'zip': oracle_install_files.db_zip}) -%}
           {%- endif -%}

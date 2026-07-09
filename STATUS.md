@@ -101,12 +101,12 @@ The supported lab path is now KVM/libvirt:
     both DB VMs, and contains the in-place opatchauto apply path for homes
     missing the expected patch set.
   - `playbooks/07-patch-dual-db.yml` supports DB dual-home mode against an
-    inventory suffix target or existing explicit path target. Inventory suffix
-    targets are installed before patch/switch; the patch role then
-    verifies/patches the target home, compares Restart's registered Oracle
-    home, modifies the Restart database/listener home when needed, restarts the
-    database, and runs datapatch. The current lab verifies the idempotent
-    current-home no-op path.
+    inventory suffix target, inventory-declared explicit path target, or
+    existing brownfield explicit path target. Inventory-backed targets are
+    installed before patch/switch; the patch role then verifies/patches the
+    target home, compares Restart's registered Oracle home, modifies the
+    Restart database/listener home when needed, restarts the database, and runs
+    datapatch. The current lab verifies the idempotent current-home no-op path.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration for eligible DB patch bundles: precheck README
     eligibility, patch current standby hosts, switchover through broker, then

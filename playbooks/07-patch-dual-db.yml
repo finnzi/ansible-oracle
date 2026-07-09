@@ -1,9 +1,8 @@
 ---
 # playbooks/07-patch-dual-db.yml - dual-home Oracle DB patching.
 # A target home is controlled by oracle_patch_dual_home_suffix or
-# oracle_patch_dual_home_path. A suffix target is installed from inventory before
-# patch/switch; an explicit path target must already exist because the installer
-# has no inventory metadata for arbitrary paths. If neither is set, the current
+# oracle_patch_dual_home_path. Inventory suffix and inventory-declared explicit
+# path targets are installed before patch/switch. If neither is set, the current
 # inventory home is used, making the playbook an idempotent no-op in the current
 # lab.
 
@@ -33,6 +32,39 @@
               | list
               | length
           ) > 0
+
+    - name: Resolve inventory DB home paths for dual-home target
+      ansible.builtin.set_fact:
+        _dual_inventory_home_paths: >-
+          {%- set out = [] -%}
+          {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+          {%- for inst in instances -%}
+            {%- for home in inst.db_homes | default([]) -%}
+              {%- set _ = out.append(inst.oracle_base ~ '/' ~ home.suffix) -%}
+            {%- endfor -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Check existing brownfield explicit dual-home path
+      ansible.builtin.stat:
+        path: "{{ oracle_patch_dual_home_path }}"
+      register: _dual_explicit_path_stat
+      when:
+        - oracle_patch_dual_home_path | default('') | length > 0
+        - oracle_patch_dual_home_path not in _dual_inventory_home_paths
+
+    - name: Fail when explicit dual-home path is neither inventory-declared nor existing
+      ansible.builtin.fail:
+        msg: >-
+          oracle_patch_dual_home_path={{ oracle_patch_dual_home_path }} is not
+          declared in oracle_instances[*].db_homes and does not exist on this
+          host. Use oracle_patch_dual_home_suffix for inventory homes, declare
+          the path in inventory for automatic installation, or pre-create
+          arbitrary brownfield homes before this dual-home switch playbook.
+      when:
+        - oracle_patch_dual_home_path | default('') | length > 0
+        - oracle_patch_dual_home_path not in _dual_inventory_home_paths
+        - not (_dual_explicit_path_stat.stat.exists | default(false))
   roles:
     - role: oracle_db_install
       vars:
@@ -44,6 +76,12 @@
               oracle_patch_dual_home_suffix | default('') | length > 0 and
               oracle_patch_dual_home_path | default('') | length == 0
             )
+            else []
+          }}
+        oracle_db_install_home_paths: >-
+          {{
+            [oracle_patch_dual_home_path]
+            if (oracle_patch_dual_home_path | default('') | length > 0)
             else []
           }}
 
