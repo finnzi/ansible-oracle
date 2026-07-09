@@ -212,6 +212,17 @@ def test_patch_role_db_apply_contract():
     assert "Validate standby-first patch eligibility" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
     assert "Discover current Data Guard roles for standby-first patching" in standbyfirst_playbook
+    standbyfirst_gate = standbyfirst_playbook.index(
+        "Fail when patch is not standby-first eligible"
+    )
+    for destructive_task in [
+        "Discover current Data Guard roles for standby-first patching",
+        "Install current Data Guard standby DB target homes",
+        "Patch current Data Guard standby DB homes",
+        "Switchover Data Guard primary for standby-first patch",
+        "Run datapatch on promoted Data Guard primary",
+    ]:
+        assert standbyfirst_gate < standbyfirst_playbook.index(destructive_task)
     assert "Read Data Guard broker roles and protection mode" in standbyfirst_playbook
     assert "Publish standby-first broker facts to static primary hosts" in standbyfirst_playbook
     assert "Fail when broker is not in Maximum Availability" in standbyfirst_playbook
@@ -575,6 +586,23 @@ def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
         text=True,
         timeout=300,
     )
+    output = r.stdout + r.stderr
+    if (
+        r.returncode != 0
+        and "not Data Guard standby-first installable" not in r.stdout
+        and ("unreachable=1" in output or "UNREACHABLE!" in output)
+    ):
+        pytest.skip("KVM lab host unreachable; standby-first live precheck not run")
     assert r.returncode != 0, r.stdout + r.stderr
     assert "not Data Guard standby-first installable" in r.stdout
-    assert "Patch current Data Guard standby DB homes" not in r.stdout
+    for skipped_task in [
+        "Discover current Data Guard roles for standby-first patching",
+        "Read Data Guard broker roles and protection mode",
+        "Install current Data Guard standby DB target homes",
+        "Patch current Data Guard standby DB homes",
+        "Switchover Data Guard primary for standby-first patch",
+        "Run datapatch on promoted Data Guard primary",
+        "Install new Data Guard standby DB target homes",
+        "Patch new Data Guard standby DB homes",
+    ]:
+        assert skipped_task not in r.stdout

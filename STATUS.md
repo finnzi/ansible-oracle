@@ -152,7 +152,8 @@ The supported lab path is now KVM/libvirt:
     `READ ONLY WITH APPLY`, switchover through broker, then optional target-home
     staging and patch/switch on the old primary as the new standby. The current
     staged OJVM+RU bundle is not standby-first eligible and is rejected before
-    touching DB homes; an eligible live RU apply remains not yet proven.
+    broker role discovery, target-home installation, DB-home patching,
+    switchover, or datapatch; an eligible live RU apply remains not yet proven.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
     `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
     `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.

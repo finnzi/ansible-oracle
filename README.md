@@ -70,7 +70,8 @@ Still scaffolded or not yet proven end to end:
 - Destructive automatic failover simulation and reinstate workflow.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
-  OJVM+RU bundle is correctly rejected by the standby-first precheck.
+  OJVM+RU bundle is correctly rejected by the standby-first precheck before
+  broker discovery, home installation, patching, switchover, or datapatch.
 
 ## Quickstart
 
