@@ -1,9 +1,8 @@
 ---
 # defaults/main.yml for oracle_observer
 #
-# SCOPE: installs the observer-side Oracle Client home and broker network
-# configuration. FSFO enable/start is still explicitly gated until the role also
-# owns the dedicated SYSDG user and observer lifecycle.
+# SCOPE: installs the observer-side Oracle Client home, broker network
+# configuration, and optional Fast-Start Failover observer lifecycle.
 #
 # INTERFACE (consumed by playbooks/06-observer.yml):
 #   observer_enabled:         bool
@@ -23,11 +22,18 @@ observer_oracle_base: /observer/app/oracle
 observer_client_home: /observer/app/oracle/client_home1
 observer_dg_connect_identifier: super_dgb
 observer_dg_standby_connect_identifier: super_sby_dgb
+observer_dg_primary_unique_name: super
+observer_dg_standby_unique_name: super_sby
 observer_sysdg_user: dgmonitor
-observer_sysdg_password: ""  # vault in real envs
+observer_sysdg_password: "{{ oracle_lab_dg_password | default('DgPassword1_') }}"
 observer_install_type: Administrator
 observer_config_dir: "{{ observer_client_home }}/network/admin"
 observer_stage_dir: "{{ observer_oracle_base }}/.stage_client_home1"
+observer_name: ansible_observer
+observer_state_dir: "{{ observer_oracle_base }}/fsfo"
+observer_log_dir: "{{ observer_oracle_base }}/diag/fsfo"
+observer_service_name: oracle-fsfo-observer
+observer_fast_start_failover_threshold: 30
 
 # Install the Oracle Client home and write observer-side network config.
 oracle_observer_install_client: false
@@ -38,5 +44,4 @@ oracle_observer_recreate_incomplete_home: true
 # /usr/lib64 on the observer node.
 observer_create_ol9_linker_compat_symlink: true
 
-# Reserved for the next slice: enable FSFO and manage the observer process.
 oracle_observer_enabled: false

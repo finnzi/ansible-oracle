@@ -76,6 +76,18 @@
     - oracle_dataguard_duplicate_standby | bool
     - "'standby' in group_names"
 
+- name: Ensure Data Guard flashback prerequisite
+  ansible.builtin.include_tasks: ensure-flashback.yml
+  loop: "{{ _dg_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+  when:
+    - oracle_dataguard_configure_broker | bool
+    - inst.dataguard | default(false) | bool
+    - inst.flashback | default(false) | bool
+    - "'primary' in group_names or 'standby' in group_names"
+
 - name: Configure Data Guard broker
   ansible.builtin.include_tasks: configure-broker.yml
   loop: "{{ _dg_instances }}"

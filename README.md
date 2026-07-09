@@ -12,7 +12,7 @@ Linux cloud images:
 
 - `superdb1` - primary or standalone DB node
 - `superdb2` - future Data Guard standby
-- `observer` - Fast-Start Failover observer candidate
+- `observer` - Fast-Start Failover observer node
 
 Implemented:
 
@@ -33,8 +33,8 @@ Implemented:
   `READ ONLY WITH APPLY`.
 - Manual broker switchover, verified by switching from `super` to `super_sby`
   and back while preserving `READ ONLY WITH APPLY`.
-- Observer-node Oracle Client installation and broker TNS aliases, verified by
-  running DGMGRL `SHOW CONFIGURATION` from the third KVM VM.
+- Observer-node Oracle Client installation, broker TNS aliases, FSFO enablement,
+  and foreground systemd observer ownership verified from the third KVM VM.
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.
@@ -48,8 +48,7 @@ Implemented:
 
 Still scaffolded or not yet proven end to end:
 
-- Data Guard automatic failover workflow.
-- FSFO enable/start lifecycle and observer systemd ownership.
+- Destructive automatic failover simulation and reinstate workflow.
 - Actual patch application and dual-home switch.
 
 ## Quickstart
@@ -127,7 +126,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 
 | Requirement | Where |
 |---|---|
-| Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; observer client in `oracle_observer`; FSFO lifecycle remains gated |
+| Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
 | Patch DB homes and Grid homes | `oracle_patch` |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |

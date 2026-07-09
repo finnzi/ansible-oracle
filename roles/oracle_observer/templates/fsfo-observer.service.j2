@@ -1,0 +1,19 @@
+[Unit]
+Description=Oracle Data Guard Fast-Start Failover Observer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ oracle_user }}
+Group={{ oracle_group }}
+EnvironmentFile=/etc/sysconfig/{{ observer_service_name }}
+ExecStart=/usr/local/bin/{{ observer_service_name }}-start
+ExecStop=/usr/local/bin/{{ observer_service_name }}-stop
+Restart=on-failure
+RestartSec=15
+TimeoutStartSec=180
+TimeoutStopSec=180
+
+[Install]
+WantedBy=multi-user.target

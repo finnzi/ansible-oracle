@@ -61,8 +61,14 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     dataguard_duplicate_standby = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/duplicate-standby.yml"
     ).read_text(encoding="utf-8")
+    dataguard_flashback = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/ensure-flashback.yml"
+    ).read_text(encoding="utf-8")
     dataguard_configure_broker = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/configure-broker.yml"
+    ).read_text(encoding="utf-8")
+    dataguard_defaults = (
+        REPO_ROOT / "roles/oracle_dataguard/defaults/main.yml"
     ).read_text(encoding="utf-8")
     dataguard_switchover = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/switchover.yml"
@@ -82,9 +88,11 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "192.168.87.32" in all_vars
     assert "superdc2.domain.is superdc2" in all_vars
     assert "dataguard: true" in primary_vars
+    assert "flashback: true" in primary_vars
     assert "listener_vip: \"superdc1.domain.is\"" in primary_vars
     assert "db_unique_name: super" in primary_vars
     assert "dataguard: true" in standby_vars
+    assert "flashback: true" in standby_vars
     assert "listener_vip: \"superdc2.domain.is\"" in standby_vars
     assert "db_unique_name: super_sby" in standby_vars
     assert "oracle_apply_instance_overrides" in network_tasks
@@ -112,6 +120,7 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "Prepare standby auxiliary for Data Guard" in dataguard_tasks
     assert "oracle_dataguard_prepare_standby | bool" in dataguard_tasks
     assert "Duplicate physical standby for Data Guard" in dataguard_tasks
+    assert "Ensure Data Guard flashback prerequisite" in dataguard_tasks
     assert "oracle_dataguard_duplicate_standby | bool" in dataguard_tasks
     assert "Configure Data Guard broker" in dataguard_tasks
     assert "oracle_dataguard_configure_broker | bool" in dataguard_tasks
@@ -153,6 +162,14 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "-role PHYSICAL_STANDBY" in dataguard_duplicate_standby
     assert "srvctl\" add database" in dataguard_duplicate_standby
     assert "Validate standby Restart registration" in dataguard_duplicate_standby
+    assert "ALTER DATABASE FLASHBACK ON" in dataguard_flashback
+    assert "ALTER DATABASE OPEN READ ONLY" in dataguard_flashback
+    assert "PHYSICAL STANDBY|" in dataguard_flashback
+    assert "oracle_dataguard_observer_user:" in dataguard_defaults
+    assert "oracle_dataguard_observer_password:" in dataguard_defaults
+    assert "Ensure observer SYSDG account exists on the primary" in dataguard_configure_broker
+    assert "GRANT SYSDG TO" in dataguard_configure_broker
+    assert "Validate observer SYSDG account can inspect broker" in dataguard_configure_broker
     assert "CREATE CONFIGURATION" in dataguard_configure_broker
     assert "Wait for standby broker member to be available" in dataguard_configure_broker
     assert "SHOW DATABASE '{{ _dg_standby_unique_name }}'" in dataguard_configure_broker

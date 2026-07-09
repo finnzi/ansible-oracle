@@ -1,7 +1,7 @@
 ---
 # playbooks/06-observer.yml — FSFO observer on the third node.
-# Installs the observer-side Oracle Client and validates DGMGRL connectivity.
-# FSFO enable/start remains gated behind oracle_observer_enabled.
+# Installs the observer-side Oracle Client, enables FSFO, and starts the
+# foreground systemd observer when oracle_observer_enabled=true.
 
 - name: Configure FSFO observer client
   hosts: observer

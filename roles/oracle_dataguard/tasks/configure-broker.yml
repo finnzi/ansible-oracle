@@ -73,37 +73,201 @@
   until: >-
     _dg_broker_standby_ready.rc == 0 and
     'Database Status:' in (_dg_broker_standby_ready.stdout | default('')) and
-    'SUCCESS' in (_dg_broker_standby_ready.stdout | default('')) and
-    'ORA-' not in (_dg_broker_standby_ready.stdout | default('')) and
-    'Error:' not in (_dg_broker_standby_ready.stdout | default(''))
+    (
+      'SUCCESS' in (_dg_broker_standby_ready.stdout | default('')) or
+      'ORA-16819' in (_dg_broker_standby_ready.stdout | default('')) or
+      'ORA-16820' in (_dg_broker_standby_ready.stdout | default(''))
+    ) and
+    (
+      'ORA-' not in (_dg_broker_standby_ready.stdout | default('')) or
+      (
+        (
+          'ORA-16819' in (_dg_broker_standby_ready.stdout | default('')) or
+          'ORA-16820' in (_dg_broker_standby_ready.stdout | default(''))
+        ) and
+        ((_dg_broker_standby_ready.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is not search('ORA-'))
+      )
+    ) and
+    (
+      'Error:' not in (_dg_broker_standby_ready.stdout | default('')) or
+      ((_dg_broker_standby_ready.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is not search('ORA-'))
+    )
   failed_when: >-
     _dg_broker_standby_ready.rc != 0 or
     'Database Status:' not in (_dg_broker_standby_ready.stdout | default('')) or
-    'SUCCESS' not in (_dg_broker_standby_ready.stdout | default('')) or
-    'ORA-' in (_dg_broker_standby_ready.stdout | default('')) or
-    'Error:' in (_dg_broker_standby_ready.stdout | default(''))
+    (
+      'SUCCESS' not in (_dg_broker_standby_ready.stdout | default('')) and
+      'ORA-16819' not in (_dg_broker_standby_ready.stdout | default('')) and
+      'ORA-16820' not in (_dg_broker_standby_ready.stdout | default(''))
+    ) or
+    (
+      'ORA-' in (_dg_broker_standby_ready.stdout | default('')) and
+      (
+        (
+          'ORA-16819' not in (_dg_broker_standby_ready.stdout | default('')) and
+          'ORA-16820' not in (_dg_broker_standby_ready.stdout | default(''))
+        ) or
+        ((_dg_broker_standby_ready.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is search('ORA-'))
+      )
+    ) or
+    (
+      'Error:' in (_dg_broker_standby_ready.stdout | default('')) and
+      ((_dg_broker_standby_ready.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is search('ORA-'))
+    )
   no_log: true
 
-- name: Configure broker transport and protection mode
+- name: Ensure observer SYSDG account exists on the primary
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET SERVEROUTPUT ON
+    DECLARE
+      v_count PLS_INTEGER;
+      v_user  VARCHAR2(128) := UPPER('{{ oracle_dataguard_observer_user }}');
+    BEGIN
+      SELECT COUNT(*) INTO v_count FROM dba_users WHERE username = v_user;
+      IF v_count = 0 THEN
+        EXECUTE IMMEDIATE 'CREATE USER ' || v_user ||
+          ' IDENTIFIED BY "{{ oracle_dataguard_observer_password }}" ACCOUNT UNLOCK';
+        DBMS_OUTPUT.PUT_LINE('CREATED');
+      ELSE
+        EXECUTE IMMEDIATE 'ALTER USER ' || v_user ||
+          ' IDENTIFIED BY "{{ oracle_dataguard_observer_password }}" ACCOUNT UNLOCK';
+        DBMS_OUTPUT.PUT_LINE('UPDATED');
+      END IF;
+      EXECUTE IMMEDIATE 'GRANT CREATE SESSION TO ' || v_user;
+      EXECUTE IMMEDIATE 'GRANT SYSDG TO ' || v_user;
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_observer_user
+  changed_when: "'CREATED' in (_dg_observer_user.stdout | default(''))"
+  failed_when: >-
+    _dg_observer_user.rc != 0 or
+    'ORA-' in (_dg_observer_user.stdout | default('')) or
+    'SP2-' in (_dg_observer_user.stdout | default('')) or
+    'PLS-' in (_dg_observer_user.stdout | default(''))
+  no_log: true
+
+- name: Validate observer SYSDG account can inspect broker
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "{{ oracle_dataguard_observer_user }}/{{ oracle_dataguard_observer_password }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_observer_user_broker
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: >-
+    _dg_observer_user_broker.rc == 0 and
+    'Configuration -' in (_dg_observer_user_broker.stdout | default('')) and
+    (
+      'ORA-' not in (_dg_observer_user_broker.stdout | default('')) or
+      (
+        (
+          'ORA-16819' in (_dg_observer_user_broker.stdout | default('')) or
+          'ORA-16820' in (_dg_observer_user_broker.stdout | default(''))
+        ) and
+        ((_dg_observer_user_broker.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is not search('ORA-'))
+      )
+    ) and
+    (
+      'Error:' not in (_dg_observer_user_broker.stdout | default('')) or
+      ((_dg_observer_user_broker.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is not search('ORA-'))
+    )
+  failed_when: >-
+    _dg_observer_user_broker.rc != 0 or
+    'Configuration -' not in (_dg_observer_user_broker.stdout | default('')) or
+    (
+      'ORA-' in (_dg_observer_user_broker.stdout | default('')) and
+      (
+        (
+          'ORA-16819' not in (_dg_observer_user_broker.stdout | default('')) and
+          'ORA-16820' not in (_dg_observer_user_broker.stdout | default(''))
+        ) or
+        ((_dg_observer_user_broker.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is search('ORA-'))
+      )
+    ) or
+    (
+      'Error:' in (_dg_observer_user_broker.stdout | default('')) and
+      ((_dg_observer_user_broker.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is search('ORA-'))
+    )
+  no_log: true
+
+- name: Configure broker synchronous transport
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
     "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
     EDIT DATABASE '{{ _dg_primary_unique_name }}' SET PROPERTY LogXptMode='SYNC';
     EDIT DATABASE '{{ _dg_standby_unique_name }}' SET PROPERTY LogXptMode='SYNC';
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_transport
+  changed_when: false
+  failed_when: >-
+    _dg_broker_transport.rc != 0 or
+    'Error:' in (_dg_broker_transport.stdout | default('')) or
+    'ORA-' in (_dg_broker_transport.stdout | default(''))
+  no_log: true
+
+- name: Read FSFO state before protection mode reconcile
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    SHOW FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_fsfo_state_for_protection
+  changed_when: false
+  failed_when: >-
+    _dg_fsfo_state_for_protection.rc != 0 or
+    'Fast-Start Failover:' not in (_dg_fsfo_state_for_protection.stdout | default('')) or
+    (
+      'Fast-Start Failover: Enabled' in (_dg_fsfo_state_for_protection.stdout | default('')) and
+      'Protection Mode:    MaxAvailability' not in (_dg_fsfo_state_for_protection.stdout | default(''))
+    ) or
+    'Error:' in (_dg_fsfo_state_for_protection.stdout | default(''))
+  no_log: true
+
+- name: Configure broker protection mode before FSFO is enabled
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
     EDIT CONFIGURATION SET PROTECTION MODE AS MAXAVAILABILITY;
     EXIT;
     DGMGRL
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
-  register: _dg_broker_configure
+  register: _dg_broker_protection
   changed_when: false
   failed_when: >-
-    _dg_broker_configure.rc != 0 or
-    'Error:' in (_dg_broker_configure.stdout | default('')) or
-    'ORA-' in (_dg_broker_configure.stdout | default(''))
+    _dg_broker_protection.rc != 0 or
+    'Error:' in (_dg_broker_protection.stdout | default('')) or
+    'ORA-' in (_dg_broker_protection.stdout | default(''))
   no_log: true
+  when: "'Fast-Start Failover: Enabled' not in (_dg_fsfo_state_for_protection.stdout | default(''))"
 
 - name: Read standby open mode before read-only apply correction
   ansible.builtin.shell: |
@@ -232,9 +396,13 @@
     output="$(printf '%s\n%s\n%s\n' "$broker" "$standby" "$primary")"
     printf '%s\n' "$output"
     case "$output" in
-      *ORA-*|*Error:*) exit 1 ;;
+      *ORA-*)
+        printf '%s\n' "$output" | sed 's/ORA-16819//g; s/ORA-16820//g' | grep -F 'ORA-' >/dev/null && exit 1
+        ;;
     esac
-    printf '%s\n' "$output" | grep -F 'SUCCESS' >/dev/null || exit 1
+    if ! printf '%s\n' "$output" | grep -F 'SUCCESS' >/dev/null; then
+      printf '%s\n' "$output" | grep -E 'ORA-16819|ORA-16820' >/dev/null || exit 1
+    fi
     printf '%s\n' "$output" | grep -F 'MAXIMUM AVAILABILITY' >/dev/null || exit 1
     printf '%s\n' "$output" | grep -F 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' >/dev/null || exit 1
     printf '%s\n' "$output" | grep -F 'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' >/dev/null || exit 1

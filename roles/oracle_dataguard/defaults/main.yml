@@ -64,6 +64,10 @@ oracle_dataguard_duplicate_standby: false
 # Availability, and keep the standby open READ ONLY WITH APPLY.
 oracle_dataguard_configure_broker: false
 
+# Dedicated broker observer account used by oracle_observer for FSFO.
+oracle_dataguard_observer_user: "{{ observer_sysdg_user | default('dgmonitor') }}"
+oracle_dataguard_observer_password: "{{ oracle_lab_dg_password | default('DgPassword1_') }}"
+
 # Run a manual broker switchover to oracle_dataguard_switchover_target. This is
 # deliberately opt-in so ordinary convergence does not change roles.
 oracle_dataguard_run_switchover: false

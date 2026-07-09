@@ -45,9 +45,9 @@
 - name: Record Data Guard switchover target role
   ansible.builtin.set_fact:
     _dg_switchover_target_is_primary: >-
-      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_switchover_target ~ '\s+- Primary database')) is not none }}
+      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_switchover_target ~ '\s+- (\(\*\) )?Primary database')) is not none }}
     _dg_switchover_target_is_physical_standby: >-
-      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_switchover_target ~ '\s+- Physical standby database')) is not none }}
+      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_switchover_target ~ '\s+- (\(\*\) )?Physical standby database')) is not none }}
 
 - name: Report Data Guard switchover target already primary
   ansible.builtin.debug:

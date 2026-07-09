@@ -76,9 +76,9 @@ The supported lab path is now KVM/libvirt:
   - Manual broker switchover has been verified in both directions:
     `super` -> `super_sby` -> `super`, with the resulting standby reopened
     `READ ONLY WITH APPLY`.
-  - Observer-node Oracle Client Administrator home and broker TNS aliases are
-    managed by `oracle_observer`; DGMGRL `SHOW CONFIGURATION` is verified from
-    the third KVM VM.
+  - Observer-node Oracle Client Administrator home, broker TNS aliases, FSFO
+    enablement, and foreground systemd observer ownership are managed by
+    `oracle_observer`; DGMGRL FSFO status is verified from the third KVM VM.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
@@ -94,7 +94,7 @@ The supported lab path is now KVM/libvirt:
 ## Not Yet Proven End To End
 
 - Full `playbooks/site.yml` including Data Guard/observer/patch stages.
-- Data Guard FSFO enable/start lifecycle and observer systemd ownership.
+- Destructive automatic failover simulation and reinstate workflow.
 - Actual patch apply and dual-home switch.
 
 ## Host Findings From This Run

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${DGMGRL_CONNECT:?}"
+: "${OBSERVER_CLIENT_HOME:?}"
+: "${TNS_ADMIN:?}"
+: "${OBSERVER_NAME:?}"
+
+export ORACLE_HOME="$OBSERVER_CLIENT_HOME"
+export TNS_ADMIN
+
+show="$("$ORACLE_HOME/bin/dgmgrl" -silent "$DGMGRL_CONNECT" 'SHOW FAST_START FAILOVER')"
+if printf '%s\n' "$show" | grep -Eq '^[[:space:]]*Observer:[[:space:]]+\(none\)'; then
+  exit 0
+fi
+
+"$ORACLE_HOME/bin/dgmgrl" -silent "$DGMGRL_CONNECT" <<DGMGRL
+STOP OBSERVER ${OBSERVER_NAME};
+EXIT;
+DGMGRL

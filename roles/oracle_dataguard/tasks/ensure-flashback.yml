@@ -1,0 +1,113 @@
+---
+# Enable flashback on both Data Guard members before FSFO is configured.
+# Existing physical standbys may need to be cycled through MOUNT locally.
+
+- name: Resolve current ORACLE_HOME for Data Guard flashback
+  ansible.builtin.set_fact:
+    _dg_flashback_home_path: >-
+      {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+
+- name: Read local Data Guard flashback state
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_flashback_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode || '|' || flashback_on
+      FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_flashback_state_before
+  changed_when: false
+  failed_when: >-
+    _dg_flashback_state_before.rc != 0 or
+    '|' not in (_dg_flashback_state_before.stdout | default('')) or
+    'ORA-' in (_dg_flashback_state_before.stdout | default('')) or
+    'SP2-' in (_dg_flashback_state_before.stdout | default(''))
+  no_log: true
+
+- name: Enable flashback on local Data Guard primary
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_flashback_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    ALTER DATABASE FLASHBACK ON;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_flashback_primary_enable
+  changed_when: true
+  failed_when: >-
+    _dg_flashback_primary_enable.rc != 0 or
+    'ORA-' in (_dg_flashback_primary_enable.stdout | default('')) or
+    'SP2-' in (_dg_flashback_primary_enable.stdout | default(''))
+  no_log: true
+  when:
+    - "'PRIMARY|' in (_dg_flashback_state_before.stdout | default(''))"
+    - "'|YES' not in (_dg_flashback_state_before.stdout | default(''))"
+
+- name: Enable flashback on local physical standby
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_flashback_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    WHENEVER SQLERROR EXIT SQL.SQLCODE
+    ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;
+    SHUTDOWN IMMEDIATE;
+    STARTUP MOUNT;
+    ALTER DATABASE FLASHBACK ON;
+    ALTER DATABASE OPEN READ ONLY;
+    ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_flashback_standby_enable
+  changed_when: true
+  failed_when: >-
+    _dg_flashback_standby_enable.rc != 0 or
+    'ORA-' in (_dg_flashback_standby_enable.stdout | default('')) or
+    'SP2-' in (_dg_flashback_standby_enable.stdout | default(''))
+  no_log: true
+  when:
+    - "'PHYSICAL STANDBY|' in (_dg_flashback_state_before.stdout | default(''))"
+    - "'|YES' not in (_dg_flashback_state_before.stdout | default(''))"
+
+- name: Validate local Data Guard flashback state
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_flashback_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode || '|' || flashback_on
+      FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_flashback_state_after
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: >-
+    _dg_flashback_state_after.rc == 0 and
+    '|YES' in (_dg_flashback_state_after.stdout | default('')) and
+    'ORA-' not in (_dg_flashback_state_after.stdout | default('')) and
+    'SP2-' not in (_dg_flashback_state_after.stdout | default(''))
+  failed_when: >-
+    _dg_flashback_state_after.rc != 0 or
+    '|YES' not in (_dg_flashback_state_after.stdout | default('')) or
+    'ORA-' in (_dg_flashback_state_after.stdout | default('')) or
+    'SP2-' in (_dg_flashback_state_after.stdout | default(''))
+  no_log: true

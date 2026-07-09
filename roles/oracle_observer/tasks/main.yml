@@ -238,23 +238,228 @@
     _observer_dgmgrl_show.rc == 0 and
     'Configuration -' in (_observer_dgmgrl_show.stdout | default('')) and
     'Protection Mode: MaxAvailability' in (_observer_dgmgrl_show.stdout | default('')) and
-    'SUCCESS' in (_observer_dgmgrl_show.stdout | default('')) and
-    'ORA-' not in (_observer_dgmgrl_show.stdout | default('')) and
-    'Error:' not in (_observer_dgmgrl_show.stdout | default(''))
+    (
+      'SUCCESS' in (_observer_dgmgrl_show.stdout | default('')) or
+      'ORA-16819' in (_observer_dgmgrl_show.stdout | default('')) or
+      'ORA-16820' in (_observer_dgmgrl_show.stdout | default(''))
+    ) and
+    (
+      'ORA-' not in (_observer_dgmgrl_show.stdout | default('')) or
+      (
+        (
+          'ORA-16819' in (_observer_dgmgrl_show.stdout | default('')) or
+          'ORA-16820' in (_observer_dgmgrl_show.stdout | default(''))
+        ) and
+        ((_observer_dgmgrl_show.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is not search('ORA-'))
+      )
+    ) and
+    (
+      'Error:' not in (_observer_dgmgrl_show.stdout | default('')) or
+      ((_observer_dgmgrl_show.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is not search('ORA-'))
+    )
   failed_when: >-
     _observer_dgmgrl_show.rc != 0 or
     'Configuration -' not in (_observer_dgmgrl_show.stdout | default('')) or
     'Protection Mode: MaxAvailability' not in (_observer_dgmgrl_show.stdout | default('')) or
-    'SUCCESS' not in (_observer_dgmgrl_show.stdout | default('')) or
-    'ORA-' in (_observer_dgmgrl_show.stdout | default('')) or
-    'Error:' in (_observer_dgmgrl_show.stdout | default(''))
+    (
+      'SUCCESS' not in (_observer_dgmgrl_show.stdout | default('')) and
+      'ORA-16819' not in (_observer_dgmgrl_show.stdout | default('')) and
+      'ORA-16820' not in (_observer_dgmgrl_show.stdout | default(''))
+    ) or
+    (
+      'ORA-' in (_observer_dgmgrl_show.stdout | default('')) and
+      (
+        (
+          'ORA-16819' not in (_observer_dgmgrl_show.stdout | default('')) and
+          'ORA-16820' not in (_observer_dgmgrl_show.stdout | default(''))
+        ) or
+        ((_observer_dgmgrl_show.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is search('ORA-'))
+      )
+    ) or
+    (
+      'Error:' in (_observer_dgmgrl_show.stdout | default('')) and
+      ((_observer_dgmgrl_show.stdout | default('')).replace('ORA-16819', '').replace('ORA-16820', '') is search('ORA-'))
+    )
   no_log: true
   when: oracle_observer_install_client | bool
+
+- name: Ensure FSFO observer runtime directories exist
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
+  loop:
+    - "{{ observer_state_dir }}"
+    - "{{ observer_log_dir }}"
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Write FSFO observer environment file
+  ansible.builtin.template:
+    src: fsfo-observer.env.j2
+    dest: "/etc/sysconfig/{{ observer_service_name }}"
+    owner: root
+    group: root
+    mode: "0600"
+  register: _observer_env
+  no_log: true
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Write FSFO observer start wrapper
+  ansible.builtin.template:
+    src: fsfo-observer-start.j2
+    dest: "/usr/local/bin/{{ observer_service_name }}-start"
+    owner: root
+    group: root
+    mode: "0755"
+  register: _observer_start_wrapper
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Write FSFO observer stop wrapper
+  ansible.builtin.template:
+    src: fsfo-observer-stop.j2
+    dest: "/usr/local/bin/{{ observer_service_name }}-stop"
+    owner: root
+    group: root
+    mode: "0755"
+  register: _observer_stop_wrapper
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Write FSFO observer systemd unit
+  ansible.builtin.template:
+    src: fsfo-observer.service.j2
+    dest: "/etc/systemd/system/{{ observer_service_name }}.service"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _observer_unit
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Read FSFO status before convergence
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ observer_client_home }}
+    export TNS_ADMIN={{ observer_config_dir }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ observer_dg_connect_identifier }}" <<'DGMGRL'
+    SHOW FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _observer_fsfo_before
+  changed_when: false
+  failed_when: >-
+    _observer_fsfo_before.rc != 0 or
+    'Fast-Start Failover:' not in (_observer_fsfo_before.stdout | default('')) or
+    'Protection Mode:    MaxAvailability' not in (_observer_fsfo_before.stdout | default('')) or
+    'ORA-' in (_observer_fsfo_before.stdout | default('')) or
+    'Error:' in (_observer_fsfo_before.stdout | default(''))
+  no_log: true
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Configure Fast-Start Failover target and threshold
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ observer_client_home }}
+    export TNS_ADMIN={{ observer_config_dir }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ observer_dg_connect_identifier }}" <<'DGMGRL'
+    EDIT DATABASE '{{ observer_dg_primary_unique_name }}' SET PROPERTY FastStartFailoverTarget='{{ observer_dg_standby_unique_name }}';
+    EDIT DATABASE '{{ observer_dg_standby_unique_name }}' SET PROPERTY FastStartFailoverTarget='{{ observer_dg_primary_unique_name }}';
+    EDIT CONFIGURATION SET PROPERTY FastStartFailoverThreshold='{{ observer_fast_start_failover_threshold }}';
+    {% if 'Fast-Start Failover: Enabled' not in (_observer_fsfo_before.stdout | default('')) -%}
+    ENABLE FAST_START FAILOVER;
+    {% endif -%}
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _observer_fsfo_configure
+  changed_when: "'Fast-Start Failover: Enabled' not in (_observer_fsfo_before.stdout | default(''))"
+  failed_when: >-
+    _observer_fsfo_configure.rc != 0 or
+    'Error:' in (_observer_fsfo_configure.stdout | default('')) or
+    'ORA-' in (_observer_fsfo_configure.stdout | default(''))
+  no_log: true
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Enable and start FSFO observer service
+  ansible.builtin.systemd_service:
+    name: "{{ observer_service_name }}.service"
+    enabled: true
+    state: >-
+      {{
+        'restarted'
+        if (
+          (_observer_env is changed) or
+          (_observer_start_wrapper is changed) or
+          (_observer_stop_wrapper is changed) or
+          (_observer_unit is changed) or
+          ('Observer:           (none)' in (_observer_fsfo_before.stdout | default('')))
+        )
+        else 'started'
+      }}
+    daemon_reload: true
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
+
+- name: Validate Fast-Start Failover observer status
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ observer_client_home }}
+    export TNS_ADMIN={{ observer_config_dir }}
+    fsfo="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ observer_dg_connect_identifier }}" <<'DGMGRL'
+    SHOW FAST_START FAILOVER;
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+    )"
+    printf '%s\n' "$fsfo"
+    case "$fsfo" in
+      *ORA-*|*Error:*) exit 1 ;;
+    esac
+    printf '%s\n' "$fsfo" | grep -E 'Fast-Start Failover:[[:space:]]+Enabled' >/dev/null || exit 1
+    printf '%s\n' "$fsfo" | grep -F 'Protection Mode:    MaxAvailability' >/dev/null || exit 1
+    printf '%s\n' "$fsfo" | grep -F 'Active Target:      {{ observer_dg_standby_unique_name }}' >/dev/null || exit 1
+    printf '%s\n' "$fsfo" | grep -E '^[[:space:]]*Observer:[[:space:]]+[^()]' >/dev/null || exit 1
+    printf '%s\n' "$fsfo" | grep -F 'SUCCESS' >/dev/null || exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _observer_fsfo_validate
+  changed_when: false
+  retries: 18
+  delay: 10
+  until: _observer_fsfo_validate.rc == 0
+  failed_when: _observer_fsfo_validate.rc != 0
+  no_log: true
+  when:
+    - oracle_observer_install_client | bool
+    - oracle_observer_enabled | bool
 
 - name: Probe observer process
   ansible.builtin.shell: |
     set -o pipefail
-    pgrep -fa 'dmobserver|Data Guard Broker Observer' 2>/dev/null || echo not_running
+    systemctl is-active {{ observer_service_name }}.service 2>/dev/null ||
+      pgrep -fa 'dmobserver|Data Guard Broker Observer' 2>/dev/null ||
+      echo not_running
   args: { executable: /bin/bash }
   register: _obs_proc
   changed_when: false
@@ -264,13 +469,3 @@
   ansible.builtin.set_fact:
     oracle_observer_client_installed: "{{ _observer_dgmgrl.stat.exists or (_observer_client_install is defined and _observer_client_install is changed) }}"
     oracle_observer_running: "{{ 'not_running' not in (_obs_proc.stdout | default('')) }}"
-
-- name: Not implemented - fail only if FSFO observer lifecycle is explicitly enabled
-  ansible.builtin.fail:
-    msg: >-
-      oracle_observer_enabled=true is reserved for the full FSFO lifecycle.
-      The observer client home and broker connectivity are implemented. Keep
-      oracle_observer_enabled=false until dedicated SYSDG user management,
-      ENABLE FAST_START FAILOVER, and systemd observer process ownership are
-      implemented.
-  when: oracle_observer_enabled | bool
