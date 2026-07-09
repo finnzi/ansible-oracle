@@ -117,9 +117,16 @@ The supported lab path is now KVM/libvirt:
     rehearsal that installs an inventory suffix target or uses an existing
     explicit target path, switches Restart to it, validates the registered
     Oracle home, switches back to the actual Restart-registered original home,
-    and validates again. The default readiness-only path is safe in the current
-    Data Guard lab, does not stop databases, and has been run live with
-    `changed=0`.
+    and validates again. Readiness-only mode can also discover
+    Restart-registered databases and de-duplicate them against inventory.
+    Destructive execution for discovered-only brownfield databases requires
+    explicit Restart database names, explicit listener resource mappings,
+    explicit local SID mappings, and a pre-existing target home because the
+    installer role is inventory-backed. The discovered target home is patched
+    through `oracle_patch` extra-home handling before the direct Restart switch,
+    and `datapatch` runs after the switched DB starts with the mapped SID. The
+    safe readiness path, including opt-in Restart discovery, has been run live
+    in the current Data Guard lab with `changed=0`.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration mechanics for eligible DB patch bundles: precheck
     README eligibility, optional target-home staging on the current standby,

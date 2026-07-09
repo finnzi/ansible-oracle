@@ -125,15 +125,53 @@ def test_patch_role_db_apply_contract():
     assert "Rehearse standalone DB dual-home switch and switchback" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_execute: false" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_target_path: \"\"" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_discover_restart: false" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_discovered_restart_names: []" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_listener_names: {}" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_sid_names: {}" in dual_switchback_playbook
     assert "SWITCH_DUAL_HOME_AND_BACK" in dual_switchback_playbook
+    assert "Read Restart database names for switchback discovery" in dual_switchback_playbook
+    assert "Read Restart database homes for switchback discovery" in dual_switchback_playbook
+    assert "Resolve Restart-discovered switchback targets" in dual_switchback_playbook
+    assert "Merge inventory and Restart-discovered switchback targets" in dual_switchback_playbook
     assert "Report readiness-only mode" in dual_switchback_playbook
     assert "Fail when switchback is requested for Data Guard hosts" in dual_switchback_playbook
+    assert (
+        "Fail when Restart-discovered switchback targets are not explicitly named"
+        in dual_switchback_playbook
+    )
+    assert (
+        "Fail when requested Restart-discovered switchback targets are missing"
+        in dual_switchback_playbook
+    )
+    assert (
+        "Fail when Restart-discovered listener names are not explicitly mapped"
+        in dual_switchback_playbook
+    )
+    assert (
+        "Fail when Restart-discovered SID names are not explicitly mapped"
+        in dual_switchback_playbook
+    )
     assert "Check existing brownfield switchback target path" in dual_switchback_playbook
+    assert "Check existing Restart-discovered switchback target paths" in dual_switchback_playbook
+    assert (
+        "Fail when Restart-discovered switchback target path does not exist"
+        in dual_switchback_playbook
+    )
     assert "Read actual Restart homes before dual-home switchback" in dual_switchback_playbook
     assert "Record actual original Restart homes for switchback" in dual_switchback_playbook
+    assert "Resolve Restart-discovered target homes for patching" in dual_switchback_playbook
     assert "Install dual-home switchback target" in dual_switchback_playbook
     assert "Switch Restart to dual-home target" in dual_switchback_playbook
     assert "oracle_patch_discover_oratab: false" in dual_switchback_playbook
+    assert "Patch Restart-discovered dual-home target homes" in dual_switchback_playbook
+    assert "oracle_patch_extra_homes" in dual_switchback_playbook
+    assert "oracle_patch_run_datapatch: false" in dual_switchback_playbook
+    assert "Stop Restart-discovered DBs before dual-home target switch" in dual_switchback_playbook
+    assert "Switch Restart-discovered database to dual-home target" in dual_switchback_playbook
+    assert "Switch Restart-discovered listener to dual-home target" in dual_switchback_playbook
+    assert "Start Restart-discovered DBs after dual-home target switch" in dual_switchback_playbook
+    assert "Run datapatch for Restart-discovered switched DBs" in dual_switchback_playbook
     assert "Validate Restart uses dual-home target" in dual_switchback_playbook
     assert "Stop DBs before dual-home switchback" in dual_switchback_playbook
     assert "Switch Restart database back to actual original home" in dual_switchback_playbook
@@ -290,6 +328,8 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
         "-i",
         "inventory/hosts.yml",
         "playbooks/07-patch-dual-db-switchback.yml",
+        "-e",
+        "oracle_patch_dual_home_switchback_discover_restart=true",
     ]
     r = subprocess.run(
         cmd,

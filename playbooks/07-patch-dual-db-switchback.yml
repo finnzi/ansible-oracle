@@ -1,10 +1,17 @@
 ---
 # playbooks/07-patch-dual-db-switchback.yml - reversible standalone dual-home
-# rehearsal. Default behavior resolves inventory only. To actually install the
-# target home, switch Restart to it, validate, and switch back, pass:
+# rehearsal. Default behavior resolves inventory plus safe Restart discovery
+# without switching. To actually install the target home, switch Restart to it,
+# validate, and switch back, pass:
 #
 #   -e oracle_patch_dual_home_switchback_execute=true
 #   -e oracle_patch_dual_home_switchback_confirm=SWITCH_DUAL_HOME_AND_BACK
+#
+# Restart-discovered, non-inventory DBs also require explicit names:
+#
+#   -e '{"oracle_patch_dual_home_switchback_discovered_restart_names":["super"],
+#        "oracle_patch_dual_home_switchback_listener_names":{"super":"LISTENER_SUPER"},
+#        "oracle_patch_dual_home_switchback_sid_names":{"super":"super"}}'
 #
 # Data Guard dual-home switching belongs to playbooks/07-patch-standbyfirst.yml.
 
@@ -17,6 +24,11 @@
     oracle_patch_dual_home_switchback_confirm_required: SWITCH_DUAL_HOME_AND_BACK
     oracle_patch_dual_home_switchback_target_suffix: db_home2
     oracle_patch_dual_home_switchback_target_path: ""
+    oracle_patch_dual_home_switchback_discover_restart: false
+    oracle_patch_dual_home_switchback_discovered_restart_names: []
+    oracle_patch_dual_home_switchback_listener_names: {}
+    oracle_patch_dual_home_switchback_sid_names: {}
+    oracle_patch_dual_home_switchback_discovered_listener_prefix: LISTENER_
   tasks:
     - name: Resolve inventory DB home paths for switchback target
       ansible.builtin.set_fact:
@@ -30,12 +42,27 @@
           {%- endfor -%}
           {{ out }}
 
-    - name: Resolve dual-home switchback targets
+    - name: Resolve inventory dual-home switchback targets
       ansible.builtin.set_fact:
-        _dual_switchback_targets: >-
+        _dual_switchback_inventory_targets: >-
           {%- set out = [] -%}
           {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
           {%- for inst in instances -%}
+            {%- set restart_name = inst.db_unique_name | default(inst.name) -%}
+            {%- set sid_name = (
+              oracle_patch_dual_home_switchback_sid_names[restart_name]
+              if restart_name in oracle_patch_dual_home_switchback_sid_names
+              else oracle_patch_dual_home_switchback_sid_names[inst.name]
+                if inst.name in oracle_patch_dual_home_switchback_sid_names
+                else inst.name
+            ) -%}
+            {%- set listener_name = (
+              oracle_patch_dual_home_switchback_listener_names[restart_name]
+              if restart_name in oracle_patch_dual_home_switchback_listener_names
+              else oracle_patch_dual_home_switchback_listener_names[inst.name]
+                if inst.name in oracle_patch_dual_home_switchback_listener_names
+                else oracle_patch_dual_home_switchback_discovered_listener_prefix ~ (inst.name | upper)
+            ) -%}
             {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
             {%- set target_home = (inst.db_homes | selectattr('suffix', 'equalto', oracle_patch_dual_home_switchback_target_suffix) | list | first) | default({}) -%}
             {%- set target_suffix = (
@@ -50,14 +77,112 @@
             ) -%}
             {%- set _ = out.append({
               'name': inst.name,
-              'restart_db_name': inst.db_unique_name | default(inst.name),
+              'restart_db_name': restart_name,
+              'sid_name': sid_name,
+              'listener_name': listener_name,
               'dataguard': inst.dataguard | default(false) | bool,
               'oracle_base': inst.oracle_base,
               'original_suffix': current_home.suffix,
               'original_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
               'target_suffix': target_suffix,
-              'target_home_path': target_home_path
+              'target_home_path': target_home_path,
+              'source': 'inventory'
             }) -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Read Restart database names for switchback discovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database 2>/dev/null || true
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_restart_database_names
+      changed_when: false
+      failed_when: false
+      when: >-
+        oracle_patch_dual_home_switchback_discover_restart | bool or
+        oracle_patch_dual_home_switchback_discovered_restart_names | length > 0
+
+    - name: Read Restart database homes for switchback discovery
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ item | quote }} 2>/dev/null |
+          awk -F': ' '$1 == "Oracle home" {print $2}'
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_restart_database_homes
+      changed_when: false
+      failed_when: false
+      loop: "{{ _dual_switchback_restart_database_names.stdout_lines | default([]) }}"
+      loop_control:
+        label: "{{ item }}"
+      when: >-
+        oracle_patch_dual_home_switchback_discover_restart | bool or
+        oracle_patch_dual_home_switchback_discovered_restart_names | length > 0
+
+    - name: Resolve Restart-discovered switchback targets
+      ansible.builtin.set_fact:
+        _dual_switchback_restart_targets: >-
+          {%- set out = [] -%}
+          {%- for result in _dual_switchback_restart_database_homes.results | default([]) -%}
+            {%- set current_home = result.stdout | default('') | trim -%}
+            {%- set include_discovered = (
+              oracle_patch_dual_home_switchback_discovered_restart_names | length == 0
+              or result.item in oracle_patch_dual_home_switchback_discovered_restart_names
+            ) -%}
+            {%- if include_discovered and result.rc == 0 and current_home | length > 0 -%}
+              {%- set oracle_base = current_home.rsplit('/', 1)[0] -%}
+              {%- set original_suffix = current_home.rsplit('/', 1)[1] -%}
+              {%- set listener_name = (
+                oracle_patch_dual_home_switchback_listener_names[result.item]
+                if result.item in oracle_patch_dual_home_switchback_listener_names
+                else oracle_patch_dual_home_switchback_discovered_listener_prefix ~ (result.item | upper)
+              ) -%}
+              {%- set sid_name = (
+                oracle_patch_dual_home_switchback_sid_names[result.item]
+                if result.item in oracle_patch_dual_home_switchback_sid_names
+                else result.item
+              ) -%}
+              {%- set target_suffix = (
+                oracle_patch_dual_home_switchback_target_path.rsplit('/', 1)[1]
+                if oracle_patch_dual_home_switchback_target_path | length > 0
+                else oracle_patch_dual_home_switchback_target_suffix
+              ) -%}
+              {%- set target_home_path = (
+                oracle_patch_dual_home_switchback_target_path
+                if oracle_patch_dual_home_switchback_target_path | length > 0
+                else oracle_base ~ '/' ~ target_suffix
+              ) -%}
+              {%- set _ = out.append({
+                'name': result.item,
+                'restart_db_name': result.item,
+                'sid_name': sid_name,
+                'listener_name': listener_name,
+                'dataguard': false,
+                'oracle_base': oracle_base,
+                'original_suffix': original_suffix,
+                'original_home_path': current_home,
+                'target_suffix': target_suffix,
+                'target_home_path': target_home_path,
+                'source': 'restart'
+              }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Merge inventory and Restart-discovered switchback targets
+      ansible.builtin.set_fact:
+        _dual_switchback_targets: >-
+          {%- set out = [] -%}
+          {%- set seen = [] -%}
+          {%- for target in (_dual_switchback_inventory_targets | default([])) + (_dual_switchback_restart_targets | default([])) -%}
+            {%- if target.restart_db_name not in seen -%}
+              {%- set _ = seen.append(target.restart_db_name) -%}
+              {%- set _ = out.append(target) -%}
+            {%- endif -%}
           {%- endfor -%}
           {{ out }}
 
@@ -103,6 +228,76 @@
         - oracle_patch_dual_home_switchback_execute | bool
         - _dual_switchback_targets | selectattr('dataguard', 'equalto', true) | list | length > 0
 
+    - name: Fail when Restart-discovered switchback targets are not explicitly named
+      ansible.builtin.fail:
+        msg: >-
+          Restart-discovered DBs are visible for readiness reporting, but
+          destructive switchback execution for brownfield-only databases
+          requires oracle_patch_dual_home_switchback_discovered_restart_names.
+          This playbook cannot infer whether an unmodeled Restart database is
+          part of Data Guard; model Data Guard databases in oracle_instances so
+          standby-first orchestration can handle them, or explicitly name only
+          discovered standalone databases.
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - oracle_patch_dual_home_switchback_discovered_restart_names | length == 0
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Fail when requested Restart-discovered switchback targets are missing
+      ansible.builtin.fail:
+        msg: >-
+          The requested Restart-discovered DB name(s) were not found on this
+          host: {{
+            oracle_patch_dual_home_switchback_discovered_restart_names
+            | difference(
+              _dual_switchback_targets
+              | selectattr('source', 'equalto', 'restart')
+              | map(attribute='restart_db_name')
+              | list
+            )
+            | join(',')
+          }}.
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - oracle_patch_dual_home_switchback_discovered_restart_names | length > 0
+        - >-
+          oracle_patch_dual_home_switchback_discovered_restart_names
+          | difference(
+            _dual_switchback_targets
+            | selectattr('source', 'equalto', 'restart')
+            | map(attribute='restart_db_name')
+            | list
+          )
+          | length > 0
+
+    - name: Fail when Restart-discovered listener names are not explicitly mapped
+      ansible.builtin.fail:
+        msg: >-
+          Restart-discovered DB {{ item.restart_db_name }} needs an explicit
+          listener resource name before destructive switchback execution. Set
+          oracle_patch_dual_home_switchback_listener_names with an entry for
+          {{ item.restart_db_name }}.
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - item.restart_db_name not in oracle_patch_dual_home_switchback_listener_names
+
+    - name: Fail when Restart-discovered SID names are not explicitly mapped
+      ansible.builtin.fail:
+        msg: >-
+          Restart-discovered DB {{ item.restart_db_name }} needs an explicit
+          local ORACLE_SID before destructive switchback execution. Set
+          oracle_patch_dual_home_switchback_sid_names with an entry for
+          {{ item.restart_db_name }}.
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - item.restart_db_name not in oracle_patch_dual_home_switchback_sid_names
+
     - name: Fail when target suffix is not declared on every DB instance
       ansible.builtin.fail:
         msg: >-
@@ -138,6 +333,32 @@
         - oracle_patch_dual_home_switchback_target_path not in _dual_switchback_inventory_home_paths
         - not (_dual_switchback_target_path_stat.stat.exists | default(false))
 
+    - name: Check existing Restart-discovered switchback target paths
+      ansible.builtin.stat:
+        path: "{{ item.target_home_path }}"
+      register: _dual_switchback_restart_target_path_stats
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }} -> {{ item.target_home_path }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Fail when Restart-discovered switchback target path does not exist
+      ansible.builtin.fail:
+        msg: >-
+          Restart-discovered DB {{ item.item.restart_db_name }} target home
+          {{ item.item.target_home_path }} does not exist. The switchback
+          rehearsal can install inventory-backed homes, but brownfield
+          Restart-discovered targets must already be installed or be modeled in
+          oracle_instances.
+      loop: "{{ _dual_switchback_restart_target_path_stats.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.restart_db_name }} -> {{ item.item.target_home_path }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - not item.stat.exists | default(false)
+
     - name: Read actual Restart homes before dual-home switchback
       ansible.builtin.shell: |
         set -o pipefail
@@ -166,6 +387,22 @@
           {{ out }}
       when: oracle_patch_dual_home_switchback_execute | bool
 
+    - name: Resolve Restart-discovered target homes for patching
+      ansible.builtin.set_fact:
+        _dual_switchback_restart_patch_targets: >-
+          {%- set out = [] -%}
+          {%- for target in _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list -%}
+            {%- set _ = out.append({
+              'name': target.sid_name,
+              'restart_db_name': target.restart_db_name,
+              'oracle_base': target.target_home_path.rsplit('/', 1)[0],
+              'home_suffix': target.target_suffix,
+              'home_path': target.target_home_path
+            }) -%}
+          {%- endfor -%}
+          {{ out }}
+      when: oracle_patch_dual_home_switchback_execute | bool
+
     - name: Install dual-home switchback target
       ansible.builtin.include_role:
         name: oracle_db_install
@@ -183,7 +420,9 @@
             if oracle_patch_dual_home_switchback_target_path | length > 0
             else []
           }}
-      when: oracle_patch_dual_home_switchback_execute | bool
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'inventory') | list | length > 0
 
     - name: Switch Restart to dual-home target
       ansible.builtin.include_role:
@@ -200,7 +439,127 @@
           }}
         oracle_patch_dual_home_path: "{{ oracle_patch_dual_home_switchback_target_path }}"
         oracle_patch_discover_oratab: false
-      when: oracle_patch_dual_home_switchback_execute | bool
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'inventory') | list | length > 0
+
+    - name: Patch Restart-discovered dual-home target homes
+      ansible.builtin.include_role:
+        name: oracle_patch
+      vars:
+        oracle_instances: []
+        oracle_patch_target: db
+        oracle_patch_mode: inplace
+        oracle_patch_apply_enabled: true
+        oracle_patch_run_datapatch: false
+        oracle_patch_discover_oratab: false
+        oracle_patch_extra_homes: "{{ _dual_switchback_restart_patch_targets | default([]) }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_restart_patch_targets | default([]) | length > 0
+
+    - name: Stop Restart-discovered DBs before dual-home target switch
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" stop database -db {{ item.restart_db_name | quote }} -stopoption IMMEDIATE
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_stop_discovered_target
+      changed_when: _dual_switchback_stop_discovered_target.rc == 0
+      failed_when: >-
+        _dual_switchback_stop_discovered_target.rc != 0 and
+        'PRCD-1120' not in (_dual_switchback_stop_discovered_target.stdout | default('')) and
+        'PRCR-1005' not in (_dual_switchback_stop_discovered_target.stdout | default('')) and
+        'not running' not in (_dual_switchback_stop_discovered_target.stdout | default('') | lower)
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }} -> {{ item.target_home_path }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Switch Restart-discovered database to dual-home target
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify database \
+          -db {{ item.restart_db_name | quote }} \
+          -oraclehome {{ item.target_home_path | quote }}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_modify_discovered_target_db
+      changed_when: _dual_switchback_modify_discovered_target_db.rc == 0
+      failed_when: _dual_switchback_modify_discovered_target_db.rc != 0
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }} -> {{ item.target_home_path }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Switch Restart-discovered listener to dual-home target
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify listener \
+          -listener {{ item.listener_name | quote }} \
+          -oraclehome {{ item.target_home_path | quote }}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_modify_discovered_target_listener
+      changed_when: _dual_switchback_modify_discovered_target_listener.rc == 0
+      failed_when: >-
+        _dual_switchback_modify_discovered_target_listener.rc != 0 and
+        'PRCN-2044' not in (_dual_switchback_modify_discovered_target_listener.stdout | default('')) and
+        'PRCR-1001' not in (_dual_switchback_modify_discovered_target_listener.stdout | default(''))
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.listener_name }} -> {{ item.target_home_path }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Start Restart-discovered DBs after dual-home target switch
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" start database -db {{ item.restart_db_name | quote }}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_start_discovered_target
+      changed_when: _dual_switchback_start_discovered_target.rc == 0
+      failed_when: >-
+        _dual_switchback_start_discovered_target.rc != 0 and
+        'already running' not in (_dual_switchback_start_discovered_target.stdout | default('') | lower) and
+        'PRCR-1079' not in (_dual_switchback_start_discovered_target.stdout | default(''))
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Run datapatch for Restart-discovered switched DBs
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ item.target_home_path | quote }}
+        export ORACLE_SID={{ item.sid_name | quote }}
+        {{ item.target_home_path }}/OPatch/datapatch -verbose
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_discovered_datapatch
+      changed_when: _dual_switchback_discovered_datapatch.rc == 0
+      failed_when: >-
+        _dual_switchback_discovered_datapatch.rc != 0 or
+        'Patch installation complete' not in (_dual_switchback_discovered_datapatch.stdout | default(''))
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}:{{ item.target_suffix }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
 
     - name: Validate Restart uses dual-home target
       ansible.builtin.shell: |
@@ -260,7 +619,7 @@
       ansible.builtin.shell: |
         set -o pipefail
         "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify listener \
-          -listener LISTENER_{{ item.name | upper }} \
+          -listener {{ item.listener_name | quote }} \
           -oraclehome {{ (item.actual_original_home_path | default(item.original_home_path)) | quote }}
       args: { executable: /bin/bash }
       become: true
@@ -273,7 +632,7 @@
         'PRCR-1001' not in (_dual_switchback_modify_original_listener.stdout | default(''))
       loop: "{{ _dual_switchback_targets }}"
       loop_control:
-        label: "LISTENER_{{ item.name | upper }} -> {{ item.actual_original_home_path | default(item.original_home_path) }}"
+        label: "{{ item.listener_name }} -> {{ item.actual_original_home_path | default(item.original_home_path) }}"
       when: oracle_patch_dual_home_switchback_execute | bool
 
     - name: Start DBs after dual-home switchback
