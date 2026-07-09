@@ -129,6 +129,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_dual_home_switchback_discovered_restart_names: []" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_listener_names: {}" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_sid_names: {}" in dual_switchback_playbook
+    assert "oracle_patch_dual_home_switchback_install_discovered_targets: true" in dual_switchback_playbook
     assert "SWITCH_DUAL_HOME_AND_BACK" in dual_switchback_playbook
     assert "Read Restart database names for switchback discovery" in dual_switchback_playbook
     assert "Read Restart database homes for switchback discovery" in dual_switchback_playbook
@@ -169,8 +170,16 @@ def test_patch_role_db_apply_contract():
         "Fail when Restart-discovered database is not standalone primary"
     ) < dual_switchback_playbook.index("Patch Restart-discovered dual-home target homes")
     assert "Resolve Restart-discovered target homes for patching" in dual_switchback_playbook
+    assert "Resolve Restart-discovered target homes for installation" in dual_switchback_playbook
     assert "Install dual-home switchback target" in dual_switchback_playbook
+    assert "Install Restart-discovered dual-home target homes" in dual_switchback_playbook
     assert "Switch Restart to dual-home target" in dual_switchback_playbook
+    assert dual_switchback_playbook.index(
+        "Install Restart-discovered dual-home target homes"
+    ) < dual_switchback_playbook.index("Switch Restart to dual-home target")
+    assert dual_switchback_playbook.index(
+        "Install Restart-discovered dual-home target homes"
+    ) < dual_switchback_playbook.index("Patch Restart-discovered dual-home target homes")
     assert "oracle_patch_discover_oratab: false" in dual_switchback_playbook
     assert "Patch Restart-discovered dual-home target homes" in dual_switchback_playbook
     assert "oracle_patch_extra_homes" in dual_switchback_playbook
@@ -178,12 +187,14 @@ def test_patch_role_db_apply_contract():
     assert "Stop Restart-discovered DBs before dual-home target switch" in dual_switchback_playbook
     assert "Switch Restart-discovered database to dual-home target" in dual_switchback_playbook
     assert "Switch Restart-discovered listener to dual-home target" in dual_switchback_playbook
+    assert "_dual_switchback_modify_discovered_target_listener.rc != 0" in dual_switchback_playbook
     assert "Start Restart-discovered DBs after dual-home target switch" in dual_switchback_playbook
     assert "Run datapatch for Restart-discovered switched DBs" in dual_switchback_playbook
     assert "Validate Restart uses dual-home target" in dual_switchback_playbook
     assert "Stop DBs before dual-home switchback" in dual_switchback_playbook
     assert "Switch Restart database back to actual original home" in dual_switchback_playbook
     assert "Switch Restart listener back to actual original home" in dual_switchback_playbook
+    assert "item.source == 'restart'" in dual_switchback_playbook
     assert "Start DBs after dual-home switchback" in dual_switchback_playbook
     assert "Validate Restart uses original home again" in dual_switchback_playbook
     assert "item.actual_original_home_path" in dual_switchback_playbook

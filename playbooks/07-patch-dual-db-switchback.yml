@@ -29,6 +29,7 @@
     oracle_patch_dual_home_switchback_listener_names: {}
     oracle_patch_dual_home_switchback_sid_names: {}
     oracle_patch_dual_home_switchback_discovered_listener_prefix: LISTENER_
+    oracle_patch_dual_home_switchback_install_discovered_targets: true
   tasks:
     - name: Resolve inventory DB home paths for switchback target
       ansible.builtin.set_fact:
@@ -331,6 +332,7 @@
         - oracle_patch_dual_home_switchback_execute | bool
         - oracle_patch_dual_home_switchback_target_path | length > 0
         - oracle_patch_dual_home_switchback_target_path not in _dual_switchback_inventory_home_paths
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'inventory') | list | length > 0
         - not (_dual_switchback_target_path_stat.stat.exists | default(false))
 
     - name: Check existing Restart-discovered switchback target paths
@@ -358,6 +360,7 @@
       when:
         - oracle_patch_dual_home_switchback_execute | bool
         - not item.stat.exists | default(false)
+        - not oracle_patch_dual_home_switchback_install_discovered_targets | bool
 
     - name: Read actual Restart homes before dual-home switchback
       ansible.builtin.shell: |
@@ -454,6 +457,25 @@
           {{ out }}
       when: oracle_patch_dual_home_switchback_execute | bool
 
+    - name: Resolve Restart-discovered target homes for installation
+      ansible.builtin.set_fact:
+        _dual_switchback_restart_install_instances: >-
+          {%- set out = [] -%}
+          {%- for target in _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list -%}
+            {%- set _ = out.append({
+              'name': target.sid_name,
+              'oracle_base': target.target_home_path.rsplit('/', 1)[0],
+              'db_homes': [
+                {
+                  'suffix': target.target_suffix,
+                  'current': false
+                }
+              ]
+            }) -%}
+          {%- endfor -%}
+          {{ out }}
+      when: oracle_patch_dual_home_switchback_execute | bool
+
     - name: Install dual-home switchback target
       ansible.builtin.include_role:
         name: oracle_db_install
@@ -474,6 +496,29 @@
       when:
         - oracle_patch_dual_home_switchback_execute | bool
         - _dual_switchback_targets | selectattr('source', 'equalto', 'inventory') | list | length > 0
+
+    - name: Install Restart-discovered dual-home target homes
+      ansible.builtin.include_role:
+        name: oracle_db_install
+      vars:
+        oracle_instances: "{{ _dual_switchback_restart_install_instances | default([]) }}"
+        oracle_db_install_home_selection: selected
+        oracle_db_install_home_suffixes: >-
+          {{
+            [oracle_patch_dual_home_switchback_target_suffix]
+            if oracle_patch_dual_home_switchback_target_path | length == 0
+            else []
+          }}
+        oracle_db_install_home_paths: >-
+          {{
+            [oracle_patch_dual_home_switchback_target_path]
+            if oracle_patch_dual_home_switchback_target_path | length > 0
+            else []
+          }}
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - oracle_patch_dual_home_switchback_install_discovered_targets | bool
+        - _dual_switchback_restart_install_instances | default([]) | length > 0
 
     - name: Switch Restart to dual-home target
       ansible.builtin.include_role:
@@ -560,10 +605,7 @@
       become_user: "{{ oracle_user }}"
       register: _dual_switchback_modify_discovered_target_listener
       changed_when: _dual_switchback_modify_discovered_target_listener.rc == 0
-      failed_when: >-
-        _dual_switchback_modify_discovered_target_listener.rc != 0 and
-        'PRCN-2044' not in (_dual_switchback_modify_discovered_target_listener.stdout | default('')) and
-        'PRCR-1001' not in (_dual_switchback_modify_discovered_target_listener.stdout | default(''))
+      failed_when: _dual_switchback_modify_discovered_target_listener.rc != 0
       loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
       loop_control:
         label: "{{ item.listener_name }} -> {{ item.target_home_path }}"
@@ -679,8 +721,13 @@
       changed_when: _dual_switchback_modify_original_listener.rc == 0
       failed_when: >-
         _dual_switchback_modify_original_listener.rc != 0 and
-        'PRCN-2044' not in (_dual_switchback_modify_original_listener.stdout | default('')) and
-        'PRCR-1001' not in (_dual_switchback_modify_original_listener.stdout | default(''))
+        (
+          item.source == 'restart' or
+          (
+            'PRCN-2044' not in (_dual_switchback_modify_original_listener.stdout | default('')) and
+            'PRCR-1001' not in (_dual_switchback_modify_original_listener.stdout | default(''))
+          )
+        )
       loop: "{{ _dual_switchback_targets }}"
       loop_control:
         label: "{{ item.listener_name }} -> {{ item.actual_original_home_path | default(item.original_home_path) }}"

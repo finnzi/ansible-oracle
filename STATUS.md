@@ -121,10 +121,14 @@ The supported lab path is now KVM/libvirt:
     Restart-registered databases and de-duplicate them against inventory.
     Destructive execution for discovered-only brownfield databases requires
     explicit Restart database names, explicit listener resource mappings,
-    explicit local SID mappings, and a pre-existing target home because the
-    installer role is inventory-backed. The discovered target home is patched
-    through `oracle_patch` extra-home handling before the direct Restart switch,
-    and `datapatch` runs after the switched DB starts with the mapped SID.
+    and explicit local SID mappings. By default, the playbook synthesizes a
+    minimal installer inventory for discovered targets so it can install the
+    target home before patching; operators can disable that and require the
+    target home to exist ahead of time. The discovered target home is patched
+    through `oracle_patch` extra-home handling before the direct Restart switch.
+    Explicit discovered listener mappings are enforced strictly in both switch
+    directions, and `datapatch` runs after the switched DB starts with the
+    mapped SID.
     Before patching or switching discovered-only targets, the playbook verifies
     the current database reports `PRIMARY|MAXIMUM PERFORMANCE|0|0`, where the
     zeroes are the counts of configured standby archive destinations and Data
