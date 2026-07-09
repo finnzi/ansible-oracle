@@ -42,6 +42,10 @@ Implemented:
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.
+- Filesystem-only database-file placement verified in the KVM lab: no database
+  file paths are ASM-backed, data/temp files live under `/super/d01`, archive
+  destination is `/super/a01`, FRA is `/super/f01`, and online redo members
+  live under `/super/r01`.
 - Data Guard and patching role interfaces.
 - Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
   listener services, and broker TNS aliases.
@@ -168,7 +172,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
-| No ASM for database files | database files use filesystem paths; Grid uses a small lab ASM disk for Oracle Restart metadata |
+| No ASM for database files | DBCA uses `storageType=FS`; `oracle_db_manage` reconciles data/archive/FRA/redo paths; live tests assert no database file path starts with `+` |
 | Python venv | `scripts/bootstrap-venv.sh` |
 
 ## License

@@ -220,3 +220,135 @@
     'ORA-' in (_forcelog.stdout | default('')) or
     'SP2-' in (_forcelog.stdout | default(''))
   when: _db_reachable | default(false)
+
+- name: Ensure online redo groups have members in the dedicated redo directory
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
+    DECLARE
+      v_member VARCHAR2(4000);
+      v_count NUMBER;
+    BEGIN
+      FOR grp IN (SELECT group# FROM v$log ORDER BY group#) LOOP
+        v_member := '{{ inst.dirs.redo }}/online_redo_g' || grp.group# || '.log';
+        SELECT COUNT(*)
+          INTO v_count
+          FROM v$logfile
+         WHERE group# = grp.group#
+           AND member = v_member;
+
+        IF v_count = 0 THEN
+          EXECUTE IMMEDIATE
+            'ALTER DATABASE ADD LOGFILE MEMBER ''' || v_member ||
+            ''' TO GROUP ' || grp.group#;
+          DBMS_OUTPUT.PUT_LINE('ADDED ' || v_member);
+        ELSE
+          DBMS_OUTPUT.PUT_LINE('EXISTS ' || v_member);
+        END IF;
+      END LOOP;
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _redo_members
+  changed_when: "'ADDED ' in (_redo_members.stdout | default(''))"
+  failed_when: >-
+    _redo_members.rc != 0 or
+    'ORA-' in (_redo_members.stdout | default('')) or
+    'SP2-' in (_redo_members.stdout | default('')) or
+    'PLS-' in (_redo_members.stdout | default(''))
+  when: _db_reachable | default(false)
+
+- name: Remove online redo members outside the dedicated redo directory
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
+    ALTER SYSTEM SWITCH LOGFILE;
+    ALTER SYSTEM CHECKPOINT;
+    ALTER SYSTEM SWITCH LOGFILE;
+    ALTER SYSTEM CHECKPOINT;
+    ALTER SYSTEM SWITCH LOGFILE;
+    ALTER SYSTEM CHECKPOINT;
+    DECLARE
+      v_dedicated_members NUMBER;
+      v_group_members NUMBER;
+      v_log_status VARCHAR2(16);
+    BEGIN
+      FOR redo_member IN (
+        SELECT group#, member
+          FROM v$logfile
+         WHERE type = 'ONLINE'
+           AND member NOT LIKE '{{ inst.dirs.redo }}/%'
+         ORDER BY group#, member
+      ) LOOP
+        SELECT COUNT(*)
+          INTO v_dedicated_members
+          FROM v$logfile
+         WHERE type = 'ONLINE'
+           AND group# = redo_member.group#
+           AND member LIKE '{{ inst.dirs.redo }}/%'
+           AND NVL(status, 'VALID') != 'INVALID';
+
+        SELECT COUNT(*)
+          INTO v_group_members
+          FROM v$logfile
+         WHERE type = 'ONLINE'
+           AND group# = redo_member.group#;
+
+        IF v_dedicated_members = 0 OR v_group_members <= 1 THEN
+          RAISE_APPLICATION_ERROR(
+            -20001,
+            'Refusing to remove non-dedicated redo member before group ' ||
+            redo_member.group# || ' has a dedicated replacement');
+        END IF;
+
+        FOR attempt IN 1..5 LOOP
+          SELECT status
+            INTO v_log_status
+            FROM v$log
+           WHERE group# = redo_member.group#;
+          EXIT WHEN v_log_status != 'CURRENT';
+          EXECUTE IMMEDIATE 'ALTER SYSTEM SWITCH LOGFILE';
+          EXECUTE IMMEDIATE 'ALTER SYSTEM CHECKPOINT';
+        END LOOP;
+
+        SELECT status
+          INTO v_log_status
+          FROM v$log
+         WHERE group# = redo_member.group#;
+        IF v_log_status = 'CURRENT' THEN
+          RAISE_APPLICATION_ERROR(
+            -20002,
+            'Refusing to remove current redo member from group ' ||
+            redo_member.group#);
+        END IF;
+
+        EXECUTE IMMEDIATE
+          'ALTER DATABASE DROP LOGFILE MEMBER ''' ||
+          REPLACE(redo_member.member, '''', '''''') || '''';
+        DBMS_OUTPUT.PUT_LINE('DROPPED ' || redo_member.member);
+      END LOOP;
+    END;
+    /
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _redo_member_cleanup
+  changed_when: "'DROPPED ' in (_redo_member_cleanup.stdout | default(''))"
+  failed_when: >-
+    _redo_member_cleanup.rc != 0 or
+    'ORA-' in (_redo_member_cleanup.stdout | default('')) or
+    'SP2-' in (_redo_member_cleanup.stdout | default('')) or
+    'PLS-' in (_redo_member_cleanup.stdout | default(''))
+  when: _db_reachable | default(false)

@@ -75,6 +75,10 @@ The supported lab path is now KVM/libvirt:
     `standby_file_management=AUTO`, FAL/DG config parameters set, broker-managed
     `SYNC AFFIRM` transport to `super_sby_dgb`, and standby redo logs created
     under `/super/r01`.
+  - Filesystem-only database-file placement verified in the KVM lab: no database
+    file paths are ASM-backed, data/temp files live under `/super/d01`, archive
+    destination is `/super/a01`, FRA is `/super/f01`, and online redo members
+    live under `/super/r01`.
   - Data Guard broker configuration `dg_super`, with protection mode and level
     at `MAXIMUM AVAILABILITY` and the standby open `READ ONLY WITH APPLY`.
   - Manual broker switchover and automatic standby target selection have been

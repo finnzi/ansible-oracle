@@ -16,6 +16,25 @@ pytestmark = pytest.mark.slice
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _run_super_sql(lab_exec, sql: str, timeout: int = 60):
+    probe = lab_exec(
+        "stat -c '%s' /super/app/oracle/db_home1/bin/sqlplus 2>/dev/null || echo 0"
+    )
+    size = int((probe.stdout or "0").strip().splitlines()[-1] or "0")
+    if size == 0:
+        pytest.skip("sqlplus not linked (OL8+ install gap); DB instance not created.")
+
+    cmd = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        f"{sql}\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    return lab_exec(f"su - oracle -c {shlex.quote(cmd)}", timeout=timeout)
+
+
 def test_db_manage_role_uses_writable_dbca_response_path():
     main_tasks = (
         REPO_ROOT / "roles/oracle_db_manage/tasks/main.yml"
@@ -100,6 +119,18 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "'ORA-' in (_svc_sql.stdout | default(''))" in service_tasks
     assert 'SYS_USER = _env("ORACLE_TEST_USER", "sys")' in test_conftest
     assert 'ORACLE_TEST_USER="${ORACLE_TEST_USER:-sys}"' in test_runner
+    assert (
+        "Ensure online redo groups have members in the dedicated redo directory"
+        in instance_tasks
+    )
+    assert "ALTER DATABASE ADD LOGFILE MEMBER" in instance_tasks
+    assert "{{ inst.dirs.redo }}/online_redo_g" in instance_tasks
+    assert (
+        "Remove online redo members outside the dedicated redo directory"
+        in instance_tasks
+    )
+    assert "ALTER DATABASE DROP LOGFILE MEMBER" in instance_tasks
+    assert "member NOT LIKE '{{ inst.dirs.redo }}/%'" in instance_tasks
 
 
 def test_instance_is_open_read_write(db_connection):
@@ -168,24 +199,66 @@ def test_db_unique_name(db_connection):
 
 def test_dedicated_data_path_used(lab_exec):
     """Data files must live under /super/d01 (the dedicated data dir)."""
-    # Skip cleanly if the oracle binary isn't linked (OL8+ install gap) so the
-    # suite reports the gap honestly instead of erroring on sqlplus.
-    probe = lab_exec("stat -c '%s' /super/app/oracle/db_home1/bin/sqlplus 2>/dev/null || echo 0")
-    size = int((probe.stdout or "0").strip().splitlines()[-1] or "0")
-    if size == 0:
-        pytest.skip("sqlplus not linked (OL8+ install gap); DB instance not created.")
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
-        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
-        "SET PAGES 0 FEEDBACK OFF\n"
         "SELECT count(*) FROM v$datafile WHERE name LIKE '/super/d01%';\n"
-        "EXIT;\n"
-        "SQL"
     )
-    r = lab_exec(f"su - oracle -c {shlex.quote(sql)}")
+    r = _run_super_sql(lab_exec, sql)
     assert r.returncode == 0, r.stderr
     count = int((r.stdout or "0").strip() or "0")
     assert count > 0, f"no datafiles under /super/d01; output: {r.stdout}"
+
+
+def test_database_files_are_filesystem_backed_and_use_dedicated_paths(lab_exec):
+    sql = """
+SELECT 'DATAFILES_IN_D01|' || COUNT(*) FROM v$datafile WHERE name LIKE '/super/d01/%';
+SELECT 'TEMPFILES_IN_D01|' || COUNT(*) FROM v$tempfile WHERE name LIKE '/super/d01/%';
+SELECT 'CONTROLFILES_IN_FS|' || COUNT(*)
+  FROM v$controlfile
+ WHERE name LIKE '/super/d01/%' OR name LIKE '/super/f01/%';
+SELECT 'ONLINE_REDO_GROUPS|' || COUNT(DISTINCT group#) FROM v$log;
+SELECT 'ONLINE_REDO_GROUPS_WITH_R01|' || COUNT(DISTINCT group#)
+  FROM v$logfile
+ WHERE type = 'ONLINE' AND member LIKE '/super/r01/%';
+SELECT 'ONLINE_REDO_MEMBERS|' || COUNT(*)
+  FROM v$logfile
+ WHERE type = 'ONLINE';
+SELECT 'ONLINE_REDO_MEMBERS_IN_R01|' || COUNT(*)
+  FROM v$logfile
+ WHERE type = 'ONLINE' AND member LIKE '/super/r01/%';
+SELECT 'ASM_FILE_COUNT|' || COUNT(*) FROM (
+  SELECT name path FROM v$datafile
+  UNION ALL SELECT name FROM v$tempfile
+  UNION ALL SELECT member FROM v$logfile
+  UNION ALL SELECT name FROM v$controlfile
+) WHERE path LIKE '+%';
+SELECT 'DB_CREATE_FILE_DEST|' || value
+  FROM v$parameter
+ WHERE name = 'db_create_file_dest';
+SELECT 'DB_RECOVERY_FILE_DEST|' || value
+  FROM v$parameter
+ WHERE name = 'db_recovery_file_dest';
+SELECT 'LOG_ARCHIVE_DEST_1|' || value
+  FROM v$parameter
+ WHERE name = 'log_archive_dest_1';
+"""
+    r = _run_super_sql(lab_exec, sql)
+
+    assert r.returncode == 0, r.stdout + r.stderr
+    facts = dict(
+        line.strip().split("|", 1)
+        for line in r.stdout.splitlines()
+        if "|" in line
+    )
+    assert int(facts["DATAFILES_IN_D01"]) > 0
+    assert int(facts["TEMPFILES_IN_D01"]) > 0
+    assert int(facts["CONTROLFILES_IN_FS"]) > 0
+    assert facts["ASM_FILE_COUNT"] == "0"
+    assert facts["DB_CREATE_FILE_DEST"] == "/super/d01"
+    assert facts["DB_RECOVERY_FILE_DEST"] == "/super/f01"
+    assert facts["LOG_ARCHIVE_DEST_1"] == "LOCATION=/super/a01"
+    assert int(facts["ONLINE_REDO_GROUPS"]) > 0
+    assert facts["ONLINE_REDO_GROUPS_WITH_R01"] == facts["ONLINE_REDO_GROUPS"]
+    assert facts["ONLINE_REDO_MEMBERS_IN_R01"] == facts["ONLINE_REDO_MEMBERS"]
 
 
 def test_archivelog_mode_matches_desired(db_connection):
