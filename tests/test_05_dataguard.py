@@ -1,4 +1,4 @@
-"""Data Guard live assertions for standby, broker, and manual switchover."""
+"""Data Guard live assertions for standby, broker, and switchovers."""
 from __future__ import annotations
 
 import os
@@ -25,6 +25,8 @@ def test_dataguard_defaults_use_maximum_availability():
     assert "oracle_dataguard_prepare_primary: false" in defaults_text
     assert "oracle_dataguard_duplicate_standby: false" in defaults_text
     assert "oracle_dataguard_configure_broker: false" in defaults_text
+    assert "oracle_dataguard_auto_switchover_target: auto" in defaults_text
+    assert "oracle_dataguard_switchover_instance: \"\"" in defaults_text
 
 
 def test_dataguard_inventory_and_network_prerequisites_are_wired():
@@ -124,10 +126,13 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_duplicate_standby | bool" in dataguard_tasks
     assert "Configure Data Guard broker" in dataguard_tasks
     assert "oracle_dataguard_configure_broker | bool" in dataguard_tasks
-    assert "Manually switchover Data Guard broker primary" in dataguard_tasks
+    assert "Switchover Data Guard broker primary" in dataguard_tasks
     assert "Fail when switchover is requested without a target" in dataguard_tasks
     assert "Fail when switchover target does not match a Data Guard instance" in dataguard_tasks
+    assert "Fail when automatic switchover is ambiguous across instances" in dataguard_tasks
     assert "oracle_dataguard_run_switchover | bool" in dataguard_tasks
+    assert "oracle_dataguard_auto_switchover_target" in dataguard_tasks
+    assert "oracle_dataguard_switchover_instance" in dataguard_tasks
     assert "'primary' in group_names" in dataguard_tasks
     assert "oracle_dataguard_switchover_target in [" in dataguard_tasks
     assert "hosts: oracle_db_hosts" in dataguard_playbook
@@ -181,6 +186,8 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "LogXptMode='SYNC'" in dataguard_configure_broker
     assert "export ORACLE_SID={{ inst.name }}" in dataguard_configure_broker
     assert "SWITCHOVER TO '{{ _dg_switchover_target }}'" in dataguard_switchover
+    assert "_dg_switchover_requested_target" in dataguard_switchover
+    assert "_dg_standby_unique_name if _dg_switchover_requested_target == oracle_dataguard_auto_switchover_target" in dataguard_switchover
     assert "ALREADY_PRIMARY" in dataguard_switchover
     assert "_dg_switchover_target_is_physical_standby" in dataguard_switchover
     assert "READ ONLY WITH APPLY" in dataguard_switchover
@@ -477,6 +484,39 @@ def test_manual_switchover(lab_exec, standby_exec):
         restored = _run_dataguard_switchover("super")
         assert restored.returncode == 0, restored.stdout + restored.stderr
         assert "failed=0" in restored.stdout
+
+    primary_state = _database_state(lab_exec)
+    standby_state = _database_state(standby_exec)
+    assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in primary_state
+    assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in standby_state
+
+
+@pytest.mark.slow
+def test_automatic_switchover(lab_exec, standby_exec):
+    try:
+        if "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" not in _database_state(lab_exec):
+            restored = _run_dataguard_switchover("super")
+            assert restored.returncode == 0, restored.stdout + restored.stderr
+            assert "failed=0" in restored.stdout
+
+        switched = _run_dataguard_switchover("auto")
+        assert switched.returncode == 0, switched.stdout + switched.stderr
+        assert "failed=0" in switched.stdout
+
+        standby_state = _database_state(standby_exec)
+        old_primary_state = _database_state(lab_exec)
+        assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in standby_state
+        assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in old_primary_state
+
+        repeated = _run_dataguard_switchover("auto")
+        assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+        assert "failed=0" in repeated.stdout
+        assert "changed=0" in repeated.stdout
+    finally:
+        if "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" not in _database_state(lab_exec):
+            restored = _run_dataguard_switchover("super")
+            assert restored.returncode == 0, restored.stdout + restored.stderr
+            assert "failed=0" in restored.stdout
 
     primary_state = _database_state(lab_exec)
     standby_state = _database_state(standby_exec)

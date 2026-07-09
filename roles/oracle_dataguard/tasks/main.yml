@@ -2,11 +2,25 @@
 # tasks/main.yml for oracle_dataguard
 #
 # Data Guard orchestration for primary prep, physical standby duplicate,
-# broker configuration, and opt-in manual switchover.
+# broker configuration, and opt-in manual/automatic switchover.
 
 - name: Resolve Data Guard instances
   ansible.builtin.set_fact:
     _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) }}"
+
+- name: Fail when automatic switchover is ambiguous across instances
+  ansible.builtin.fail:
+    msg: >-
+      oracle_dataguard_switchover_instance is required when
+      oracle_dataguard_switchover_target={{ oracle_dataguard_auto_switchover_target }}
+      and more than one Data Guard instance is configured.
+  run_once: true
+  when:
+    - oracle_dataguard_run_switchover | bool
+    - oracle_dataguard_switchover_target == oracle_dataguard_auto_switchover_target
+    - oracle_dataguard_switchover_instance | length == 0
+    - (_dg_instances | selectattr('dataguard', 'defined') | selectattr('dataguard', 'equalto', true) | list | length) > 1
+    - "'primary' in group_names"
 
 - name: Mark Data Guard switchover target as matched
   ansible.builtin.set_fact:
@@ -20,7 +34,19 @@
     - oracle_dataguard_run_switchover | bool
     - oracle_dataguard_switchover_target | length > 0
     - "'primary' in group_names"
-    - oracle_dataguard_switchover_target in [
+    - (
+        oracle_dataguard_switchover_target == oracle_dataguard_auto_switchover_target and
+        inst.dataguard | default(false) | bool and
+        (
+          oracle_dataguard_switchover_instance | length == 0 or
+          oracle_dataguard_switchover_instance in [
+            inst.name,
+            inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)),
+            inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby'))
+          ]
+        )
+      ) or
+      oracle_dataguard_switchover_target in [
         inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)),
         inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby'))
       ]
@@ -38,7 +64,8 @@
   ansible.builtin.fail:
     msg: >-
       oracle_dataguard_switchover_target={{ oracle_dataguard_switchover_target }}
-      does not match any configured Data Guard primary or standby unique name.
+      does not match {{ oracle_dataguard_auto_switchover_target }} or any
+      configured Data Guard instance/primary/standby unique name.
   run_once: true
   when:
     - oracle_dataguard_run_switchover | bool
@@ -98,7 +125,7 @@
     - oracle_dataguard_configure_broker | bool
     - "'primary' in group_names"
 
-- name: Manually switchover Data Guard broker primary
+- name: Switchover Data Guard broker primary
   ansible.builtin.include_tasks: switchover.yml
   loop: "{{ _dg_instances }}"
   loop_control:
@@ -109,7 +136,19 @@
     - oracle_dataguard_run_switchover | bool
     - oracle_dataguard_switchover_target | length > 0
     - "'primary' in group_names"
-    - oracle_dataguard_switchover_target in [
+    - (
+        oracle_dataguard_switchover_target == oracle_dataguard_auto_switchover_target and
+        inst.dataguard | default(false) | bool and
+        (
+          oracle_dataguard_switchover_instance | length == 0 or
+          oracle_dataguard_switchover_instance in [
+            inst.name,
+            inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)),
+            inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby'))
+          ]
+        )
+      ) or
+      oracle_dataguard_switchover_target in [
         inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)),
         inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby'))
       ]
@@ -145,8 +184,8 @@
     msg: >-
       oracle_dataguard_enabled=true is reserved for the full Data Guard
       lifecycle. Primary prep, physical standby duplicate, broker
-      configuration, Maximum Availability, READ ONLY WITH APPLY, and manual
-      switchover are implemented through their explicit gates. Keep
+      configuration, Maximum Availability, READ ONLY WITH APPLY, and manual or
+      automatic switchover are implemented through their explicit gates. Keep
       oracle_dataguard_enabled=false until FSFO/automatic failover and observer
       lifecycle are implemented.
   when:

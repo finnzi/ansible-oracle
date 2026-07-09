@@ -68,7 +68,13 @@ oracle_dataguard_configure_broker: false
 oracle_dataguard_observer_user: "{{ observer_sysdg_user | default('dgmonitor') }}"
 oracle_dataguard_observer_password: "{{ oracle_lab_dg_password | default('DgPassword1_') }}"
 
-# Run a manual broker switchover to oracle_dataguard_switchover_target. This is
-# deliberately opt-in so ordinary convergence does not change roles.
+# Run a broker switchover to oracle_dataguard_switchover_target. Set the target
+# to oracle_dataguard_auto_switchover_target to choose the selected instance's
+# configured standby unique name automatically. Set
+# oracle_dataguard_switchover_instance when using auto in multi-instance
+# inventories. This is deliberately opt-in so ordinary convergence does not
+# change roles.
 oracle_dataguard_run_switchover: false
 oracle_dataguard_switchover_target: ""
+oracle_dataguard_auto_switchover_target: auto
+oracle_dataguard_switchover_instance: ""

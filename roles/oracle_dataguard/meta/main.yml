@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   author: ansible-oracle
-  description: Data Guard physical standby, broker config, and manual switchover
+  description: Data Guard physical standby, broker config, and switchover
   license: MIT
   min_ansible_version: "2.16"
   platforms:

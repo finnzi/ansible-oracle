@@ -1,5 +1,5 @@
 ---
-# tasks/switchover.yml - manual Data Guard broker switchover.
+# tasks/switchover.yml - Data Guard broker switchover.
 # `inst` is one element of oracle_instances, after host overrides.
 
 - name: Resolve current ORACLE_HOME for Data Guard switchover
@@ -8,27 +8,27 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dg_primary_unique_name: "{{ inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
     _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
-    _dg_switchover_target: "{{ oracle_dataguard_switchover_target }}"
+    _dg_switchover_requested_target: "{{ oracle_dataguard_switchover_target }}"
 
-- name: Resolve Data Guard switchover endpoints
+- name: Resolve Data Guard switchover probe endpoint
   ansible.builtin.set_fact:
-    _dg_switchover_new_standby: >-
-      {{ _dg_standby_unique_name if _dg_switchover_target == _dg_primary_unique_name else _dg_primary_unique_name }}
-    _dg_switchover_connect_identifier: >-
-      {{ _dg_standby_unique_name if _dg_switchover_target == _dg_primary_unique_name else _dg_primary_unique_name }}_dgb
+    _dg_switchover_probe_identifier: "{{ _dg_primary_unique_name }}_dgb"
 
 - name: Fail when switchover target is not a configured member
   ansible.builtin.fail:
     msg: >-
-      oracle_dataguard_switchover_target must be {{ _dg_primary_unique_name }}
-      or {{ _dg_standby_unique_name }}, got {{ _dg_switchover_target }}.
-  when: _dg_switchover_target not in [_dg_primary_unique_name, _dg_standby_unique_name]
+      oracle_dataguard_switchover_target must be
+      {{ oracle_dataguard_auto_switchover_target }}, {{ _dg_primary_unique_name }},
+      or {{ _dg_standby_unique_name }}, got {{ _dg_switchover_requested_target }}.
+  when:
+    - _dg_switchover_requested_target != oracle_dataguard_auto_switchover_target
+    - _dg_switchover_requested_target not in [_dg_primary_unique_name, _dg_standby_unique_name]
 
 - name: Read Data Guard broker roles before switchover
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_connect_identifier }}" <<'DGMGRL'
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_probe_identifier }}" <<'DGMGRL'
     SHOW CONFIGURATION;
     EXIT;
     DGMGRL
@@ -42,12 +42,41 @@
     'Configuration -' not in (_dg_switchover_before.stdout | default(''))
   no_log: true
 
+- name: Record Data Guard switchover member roles
+  ansible.builtin.set_fact:
+    _dg_primary_unique_is_primary: >-
+      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_primary_unique_name ~ '\s+- (\(\*\) )?Primary database')) is not none }}
+    _dg_standby_unique_is_primary: >-
+      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_standby_unique_name ~ '\s+- (\(\*\) )?Primary database')) is not none }}
+    _dg_primary_unique_is_physical_standby: >-
+      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_primary_unique_name ~ '\s+- (\(\*\) )?Physical standby database')) is not none }}
+    _dg_standby_unique_is_physical_standby: >-
+      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_standby_unique_name ~ '\s+- (\(\*\) )?Physical standby database')) is not none }}
+
+- name: Resolve requested switchover target
+  ansible.builtin.set_fact:
+    _dg_switchover_current_primary: >-
+      {{ _dg_primary_unique_name if (_dg_primary_unique_is_primary | bool) else _dg_standby_unique_name if (_dg_standby_unique_is_primary | bool) else '' }}
+    _dg_switchover_target: >-
+      {{ _dg_standby_unique_name if _dg_switchover_requested_target == oracle_dataguard_auto_switchover_target else _dg_switchover_requested_target }}
+
 - name: Record Data Guard switchover target role
   ansible.builtin.set_fact:
     _dg_switchover_target_is_primary: >-
-      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_switchover_target ~ '\s+- (\(\*\) )?Primary database')) is not none }}
+      {{ (_dg_switchover_target == _dg_primary_unique_name and (_dg_primary_unique_is_primary | bool)) or (_dg_switchover_target == _dg_standby_unique_name and (_dg_standby_unique_is_primary | bool)) }}
     _dg_switchover_target_is_physical_standby: >-
-      {{ (_dg_switchover_before.stdout | default('') | regex_search('(?m)^\s*' ~ _dg_switchover_target ~ '\s+- (\(\*\) )?Physical standby database')) is not none }}
+      {{ (_dg_switchover_target == _dg_primary_unique_name and (_dg_primary_unique_is_physical_standby | bool)) or (_dg_switchover_target == _dg_standby_unique_name and (_dg_standby_unique_is_physical_standby | bool)) }}
+
+- name: Fail when broker output does not show a current primary
+  ansible.builtin.fail:
+    msg: Broker output did not show a current primary for switchover.
+  when: _dg_switchover_current_primary | length == 0
+
+- name: Resolve Data Guard switchover endpoints
+  ansible.builtin.set_fact:
+    _dg_switchover_new_standby: >-
+      {{ (_dg_standby_unique_name if _dg_switchover_target == _dg_primary_unique_name else _dg_primary_unique_name) if (_dg_switchover_target_is_primary | bool) else _dg_switchover_current_primary }}
+    _dg_switchover_connect_identifier: "{{ _dg_switchover_current_primary }}_dgb"
 
 - name: Report Data Guard switchover target already primary
   ansible.builtin.debug:

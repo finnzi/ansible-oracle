@@ -1,8 +1,8 @@
 ---
 # playbooks/05-dataguard.yml — Data Guard broker config + switchover.
 # Primary and standby auxiliary preparation run by default. Full standby
-# duplicate and broker configuration now run in the lab; manual switchover is
-# opt-in via oracle_dataguard_run_switchover.
+# duplicate and broker configuration now run in the lab; manual or automatic
+# switchover is opt-in via oracle_dataguard_run_switchover.
 
 - name: Configure Data Guard
   hosts: oracle_db_hosts

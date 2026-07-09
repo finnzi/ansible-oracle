@@ -31,8 +31,9 @@ Implemented:
 - Data Guard broker configuration `dg_super`, with SYNC transport,
   `MAXIMUM AVAILABILITY` protection mode/protection level, and the standby open
   `READ ONLY WITH APPLY`.
-- Manual broker switchover, verified by switching from `super` to `super_sby`
-  and back while preserving `READ ONLY WITH APPLY`.
+- Manual broker switchover and automatic standby target selection, verified by
+  switching from `super` to `super_sby` and back while preserving
+  `READ ONLY WITH APPLY`.
 - Observer-node Oracle Client installation, broker TNS aliases, FSFO enablement,
   and foreground systemd observer ownership verified from the third KVM VM.
 - Primary-side Data Guard preparation: broker start enabled, standby file
