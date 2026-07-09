@@ -387,6 +387,57 @@
           {{ out }}
       when: oracle_patch_dual_home_switchback_execute | bool
 
+    - name: Read Restart-discovered database role before standalone switch
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ (item.actual_original_home_path | default(item.original_home_path)) | quote }}
+        export ORACLE_SID={{ item.sid_name | quote }}
+        "$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF ECHO OFF TRIMSPOOL ON
+        SELECT d.database_role || '|' || d.protection_mode || '|' ||
+               (SELECT COUNT(*)
+                FROM v$archive_dest ad
+                WHERE ad.target = 'STANDBY'
+                  AND ad.destination IS NOT NULL) || '|' ||
+               (SELECT COUNT(*)
+                FROM v$dataguard_config dgc
+                WHERE dgc.db_unique_name != d.db_unique_name)
+        FROM v$database d;
+        EXIT;
+        SQL
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _dual_switchback_discovered_database_roles
+      changed_when: false
+      failed_when: >-
+        _dual_switchback_discovered_database_roles.rc != 0 or
+        'ORA-' in (_dual_switchback_discovered_database_roles.stdout | default('')) or
+        'SP2-' in (_dual_switchback_discovered_database_roles.stdout | default('')) or
+        (_dual_switchback_discovered_database_roles.stdout | trim | length) == 0
+      loop: "{{ _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}:{{ item.sid_name }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - _dual_switchback_targets | selectattr('source', 'equalto', 'restart') | list | length > 0
+
+    - name: Fail when Restart-discovered database is not standalone primary
+      ansible.builtin.fail:
+        msg: >-
+          Restart-discovered DB {{ item.item.restart_db_name }} reports
+          {{ item.stdout_lines | map('trim') | reject('equalto', '') | list | last }}.
+          This switchback rehearsal is standalone-only. Model Data Guard
+          databases in oracle_instances and use playbooks/07-patch-standbyfirst.yml.
+      loop: "{{ _dual_switchback_discovered_database_roles.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.restart_db_name }}"
+      when:
+        - oracle_patch_dual_home_switchback_execute | bool
+        - >-
+          (item.stdout_lines | map('trim') | reject('equalto', '') | list | last)
+          != 'PRIMARY|MAXIMUM PERFORMANCE|0|0'
+
     - name: Resolve Restart-discovered target homes for patching
       ansible.builtin.set_fact:
         _dual_switchback_restart_patch_targets: >-

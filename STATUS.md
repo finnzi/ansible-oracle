@@ -124,9 +124,14 @@ The supported lab path is now KVM/libvirt:
     explicit local SID mappings, and a pre-existing target home because the
     installer role is inventory-backed. The discovered target home is patched
     through `oracle_patch` extra-home handling before the direct Restart switch,
-    and `datapatch` runs after the switched DB starts with the mapped SID. The
-    safe readiness path, including opt-in Restart discovery, has been run live
-    in the current Data Guard lab with `changed=0`.
+    and `datapatch` runs after the switched DB starts with the mapped SID.
+    Before patching or switching discovered-only targets, the playbook verifies
+    the current database reports `PRIMARY|MAXIMUM PERFORMANCE|0|0`, where the
+    zeroes are the counts of configured standby archive destinations and Data
+    Guard config peers; Data Guard databases must be modeled in inventory and
+    patched through standby-first orchestration.
+    The safe readiness path, including opt-in Restart discovery, has been run
+    live in the current Data Guard lab with `changed=0`.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration mechanics for eligible DB patch bundles: precheck
     README eligibility, optional target-home staging on the current standby,

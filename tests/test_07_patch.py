@@ -160,6 +160,14 @@ def test_patch_role_db_apply_contract():
     )
     assert "Read actual Restart homes before dual-home switchback" in dual_switchback_playbook
     assert "Record actual original Restart homes for switchback" in dual_switchback_playbook
+    assert "Read Restart-discovered database role before standalone switch" in dual_switchback_playbook
+    assert "Fail when Restart-discovered database is not standalone primary" in dual_switchback_playbook
+    assert "PRIMARY|MAXIMUM PERFORMANCE|0|0" in dual_switchback_playbook
+    assert "v$archive_dest" in dual_switchback_playbook
+    assert "v$dataguard_config" in dual_switchback_playbook
+    assert dual_switchback_playbook.index(
+        "Fail when Restart-discovered database is not standalone primary"
+    ) < dual_switchback_playbook.index("Patch Restart-discovered dual-home target homes")
     assert "Resolve Restart-discovered target homes for patching" in dual_switchback_playbook
     assert "Install dual-home switchback target" in dual_switchback_playbook
     assert "Switch Restart to dual-home target" in dual_switchback_playbook
