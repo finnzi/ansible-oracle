@@ -403,7 +403,7 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     )
     assert len(readiness_reports) == expected_db_hosts
     assert {int(dataguard_count) for _, dataguard_count in readiness_reports} == {1}
-    assert sum(int(standalone_count) for standalone_count, _ in readiness_reports) <= 1
+    assert sum(int(standalone_count) for standalone_count, _ in readiness_reports) <= 2
     assert "Restart-discovered target-home install plan" not in r.stdout
     assert "Data Guard targets must use playbooks/07-patch-standbyfirst.yml" in r.stdout
     assert "TASK [Install dual-home switchback target]" in r.stdout

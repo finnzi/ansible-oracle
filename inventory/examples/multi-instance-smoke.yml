@@ -1,7 +1,8 @@
 ---
-# Focused live-smoke vars for proving multiple instances on the primary host.
+# Focused live-smoke vars for proving the full multi-instance primary host.
 # Use with --limit superdb1. It keeps the existing Data Guard `super` primary
-# and adds one standalone `duper` database on the same VM.
+# in Maximum Availability and adds standalone `duper` and `fluff` databases on
+# the same VM.
 
 oracle_network_dataguard_enabled: true
 oracle_lab_host_map_mode: dataguard
@@ -68,6 +69,35 @@ oracle_instances:
     listener_port: 1522
     service_name: duper_svc
 
+  - name: fluff
+    oracle_base: /fluff/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /fluff/d01
+      archive: /fluff/a01
+      flashback: /fluff/f01
+      redo: /fluff/r01
+    dataguard: false
+    archivelog: false
+    flashback: false
+    force_logging: false
+    memory:
+      sga_target: 1G
+      pga_aggregate_target: 512M
+    listener_vip: fluffdb.domain.is
+    listener_port: 1523
+    service_name: fluff_svc
+
 oracle_instance_overrides:
   super:
     dataguard: true
@@ -92,6 +122,9 @@ oracle_lab_guest_hosts:
   - ip: 192.168.87.22
     names: duperdb.domain.is duperdb
     modes: [standalone, dataguard]
+  - ip: 192.168.87.23
+    names: fluffdb.domain.is fluffdb
+    modes: [standalone, dataguard]
   - ip: 192.168.87.31
     names: superdc1.domain.is superdc1
     modes: [dataguard]
@@ -104,6 +137,8 @@ oracle_lab_listener_vips:
     names: superdb.domain.is superdb
   - ip: 192.168.87.22
     names: duperdb.domain.is duperdb
+  - ip: 192.168.87.23
+    names: fluffdb.domain.is fluffdb
   - ip: 192.168.87.31
     names: superdc1.domain.is superdc1
   - ip: 192.168.87.32

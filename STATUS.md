@@ -9,7 +9,9 @@ Oracle Restart, Data Guard, Fast-Start Failover observer nodes, and patching.
 The test environment is now being moved from Docker containers to KVM VMs after
 the container lab proved unsafe and unreliable on the host.
 Goal requirement: Data Guard availability mode is Maximum Availability
-(`MAXIMUM AVAILABILITY` protection mode).
+(`MAXIMUM AVAILABILITY` protection mode). Any Data Guard proof or patching
+flow must preserve Maximum Availability unless a future task explicitly changes
+that requirement.
 
 ## Current Lab Direction
 
@@ -57,8 +59,9 @@ The supported lab path is now KVM/libvirt:
   distinct filesystem trees, listener names/ports, services, and host-specific
   Data Guard overrides covered by unit tests.
 - Focused multi-instance smoke vars for a primary host running Data Guard
-  `super` plus standalone `duper`, with Data Guard network mode and per-role
-  override flags bundled so direct playbook runs do not regress host mappings.
+  `super` plus standalone databases, with Data Guard network mode and per-role
+  override flags bundled so direct playbook runs do not regress host mappings or
+  the Maximum Availability requirement.
 - Existing Ansible role scaffolding for OS prep, storage, DB home install,
   network/listener, DB create/manage, Restart, Data Guard, observer, service,
   and patching.
@@ -123,14 +126,19 @@ The supported lab path is now KVM/libvirt:
     `MAXIMUM AVAILABILITY` protection mode and level.
   - Standalone `duper` was installed under `/duper/app/oracle/db_home1`, created
     by DBCA under `/duper`, and registered in `/etc/oratab`.
+  - Standalone `fluff` was installed under `/fluff/app/oracle/db_home1`, created
+    by DBCA under `/fluff`, and registered in `/etc/oratab`.
   - `duperdb.domain.is` maps to `192.168.87.22` inside the guest, the VIP is
-    assigned alongside `superdc1.domain.is` / `192.168.87.31`, and stale
+    assigned alongside `superdc1.domain.is` / `192.168.87.31`.
+  - `fluffdb.domain.is` maps to `192.168.87.23` inside the guest, and stale
     unmanaged lab listener VIPs are removed by `oracle_network`.
   - `duper` reports `PRIMARY|READ WRITE|ARCHIVELOG|NO|YES`, meaning
     ARCHIVELOG enabled, flashback off, and force logging on.
-  - Online redo members live under `/duper/r01`.
-  - `LISTENER_DUPER`, database `duper`, and service `duper_svc` are managed by
-    Oracle Restart; `duper_svc` is active.
+  - `fluff` reports `PRIMARY|READ WRITE|NOARCHIVELOG|NO|NO`, meaning
+    ARCHIVELOG disabled, flashback off, and force logging off.
+  - Online redo members live under `/duper/r01` and `/fluff/r01`.
+  - `LISTENER_DUPER`, `LISTENER_FLUFF`, databases `duper`/`fluff`, and services
+    `duper_svc`/`fluff_svc` are managed by Oracle Restart and active.
   - The smoke create and Restart/service playbooks both reconverged with
     `changed=0`.
 - Data Guard preparation:
@@ -215,7 +223,7 @@ The supported lab path is now KVM/libvirt:
   (`118 passed, 7 skipped`; the seventh skip is the separately verified,
   opt-in standby OHASD restart test).
 - Full pytest verification after the live multi-instance smoke proof on
-  2026-07-10: `122 passed, 8 skipped`.
+  2026-07-10: `128 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -223,8 +231,6 @@ The supported lab path is now KVM/libvirt:
   `playbooks/08-failover-reinstate.yml`; its underlying FSFO promotion,
   auto-reinstate, and switchback behavior is now proven live through an OHASD
   interruption.
-- Live creation of the full three-instance `super`/`duper`/`fluff` example on
-  the same DB host; the live proof currently covers `super` plus `duper`.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU.
 

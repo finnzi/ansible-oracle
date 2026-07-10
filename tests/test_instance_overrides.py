@@ -182,7 +182,7 @@ def test_multi_instance_example_maps_every_listener_hostname_to_a_lab_vip():
     assert listener_hosts <= vip_aliases
 
 
-def test_multi_instance_smoke_is_primary_host_super_plus_duper():
+def test_multi_instance_smoke_is_primary_host_super_duper_fluff():
     smoke = yaml.safe_load(MULTI_INSTANCE_SMOKE.read_text(encoding="utf-8"))
     instances = smoke["oracle_instances"]
     resolved = oracle_instances_filter.oracle_apply_instance_overrides(
@@ -192,7 +192,7 @@ def test_multi_instance_smoke_is_primary_host_super_plus_duper():
     )
     by_name = {inst["name"]: inst for inst in resolved}
 
-    assert [inst["name"] for inst in instances] == ["super", "duper"]
+    assert [inst["name"] for inst in instances] == ["super", "duper", "fluff"]
     assert smoke["oracle_network_dataguard_enabled"] is True
     assert smoke["oracle_lab_host_map_mode"] == "dataguard"
     assert smoke["oracle_db_manage_apply_instance_overrides_require_dataguard"] is False
@@ -204,6 +204,12 @@ def test_multi_instance_smoke_is_primary_host_super_plus_duper():
     assert by_name["duper"]["listener_vip"] == "duperdb.domain.is"
     assert by_name["duper"]["listener_port"] == 1522
     assert by_name["duper"]["service_name"] == "duper_svc"
+    assert by_name["fluff"]["dataguard"] is False
+    assert by_name["fluff"]["archivelog"] is False
+    assert by_name["fluff"]["force_logging"] is False
+    assert by_name["fluff"]["listener_vip"] == "fluffdb.domain.is"
+    assert by_name["fluff"]["listener_port"] == 1523
+    assert by_name["fluff"]["service_name"] == "fluff_svc"
 
     vip_aliases = {
         alias

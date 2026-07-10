@@ -32,7 +32,9 @@ Implemented:
 - Data Guard broker configuration `dg_super`, with SYNC transport,
   `MAXIMUM AVAILABILITY` protection mode/protection level, and the standby open
   `READ ONLY WITH APPLY`.
-- Goal requirement: Data Guard availability mode is Maximum Availability.
+- Goal requirement: Data Guard availability mode is Maximum Availability. All
+  Data Guard proof and patching flows should preserve that unless deliberately
+  changed by a future task.
 - Manual broker switchover and automatic standby target selection, verified by
   switching from `super` to `super_sby` and back while preserving
   `READ ONLY WITH APPLY`.
@@ -50,10 +52,13 @@ Implemented:
   file paths are ASM-backed, data/temp files live under `/super/d01`, archive
   destination is `/super/a01`, FRA is `/super/f01`, and online redo members
   live under `/super/r01`.
-- Live multi-instance primary host proof: `superdb1` now runs the Data Guard
-  primary `super` and a standalone `duper` database under `/duper`, with
-  `LISTENER_DUPER`, `duper_svc`, `duperdb.domain.is` / `192.168.87.22`,
-  dedicated redo under `/duper/r01`, and idempotent create/Register reruns.
+- Live multi-instance primary host proof: `superdb1` now runs Maximum
+  Availability Data Guard primary `super`, standalone `duper` under `/duper`,
+  and standalone `fluff` under `/fluff`. `duper` uses `LISTENER_DUPER`,
+  `duper_svc`, `duperdb.domain.is` / `192.168.87.22`, and redo under
+  `/duper/r01`; `fluff` uses `LISTENER_FLUFF`, `fluff_svc`,
+  `fluffdb.domain.is` / `192.168.87.23`, and redo under `/fluff/r01`.
+  The smoke create/Register reruns are idempotent.
 - Data Guard and patching role interfaces.
 - Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
   listener services, and broker TNS aliases.
@@ -62,8 +67,8 @@ Implemented:
 - Multi-instance inventory example for `super`, `duper`, and `fluff`, with
   distinct filesystem trees, listener names/ports, services, and host-specific
   Data Guard overrides covered by unit tests.
-- Focused multi-instance smoke vars for proving Data Guard `super` plus
-  standalone `duper` on the same primary host.
+- Focused multi-instance smoke vars for proving Maximum Availability Data Guard
+  `super` plus standalone databases on the same primary host.
 - Standby-first patch eligibility parser and dedicated Data Guard standby-first
   orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
@@ -87,8 +92,6 @@ Still scaffolded or not yet proven end to end:
 - The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
   the underlying FSFO promotion, auto-reinstate, and switchback behavior has
   been exercised live through an OHASD interruption.
-- Live creation of the full three-instance `super`/`duper`/`fluff` example on
-  the same DB host; the live proof currently covers `super` plus `duper`.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
