@@ -5,6 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,6 +38,7 @@ def test_failover_reinstate_playbook_contract():
     assert "and an observer is present" in playbook
     assert "Report readiness-only mode" in playbook
     assert "Fail when destructive rehearsal confirmation is missing" in playbook
+    assert "Refusing destructive FSFO rehearsal before destroying" in playbook
     assert "Destroy current primary VM to trigger FSFO" in playbook
     assert "virsh" in playbook
     assert "destroy" in playbook
@@ -102,3 +105,36 @@ def test_failover_reinstate_readiness_playbook_converges_without_destructive_cha
     assert "and an observer is present" in r.stdout
     assert "TASK [Destroy current primary VM to trigger FSFO]" in r.stdout
     assert "skipping: [observer1]" in r.stdout
+
+
+def test_failover_reinstate_execute_without_confirmation_refuses_before_destroy():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/08-failover-reinstate.yml",
+        "-e",
+        "oracle_failover_reinstate_execute=true",
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    output = r.stdout + r.stderr
+    if (
+        r.returncode != 0
+        and "Refusing destructive FSFO rehearsal before destroying" not in output
+        and ("unreachable=1" in output or "UNREACHABLE!" in output)
+    ):
+        pytest.skip("KVM lab host unreachable; FSFO confirmation gate not run")
+
+    assert r.returncode != 0, output
+    assert "Refusing destructive FSFO rehearsal before destroying" in output
+    assert "ansible-oracle-lab-superdb1" in output
+    assert "DESTROY_PRIMARY_AND_REINSTATE" in output
+    assert "TASK [Destroy current primary VM to trigger FSFO]" not in output

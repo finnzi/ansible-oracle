@@ -70,8 +70,10 @@
     - name: Fail when destructive rehearsal confirmation is missing
       ansible.builtin.fail:
         msg: >-
-          Refusing destructive FSFO rehearsal. Set
-          oracle_failover_reinstate_confirm={{ oracle_failover_reinstate_confirm_required }}.
+          Refusing destructive FSFO rehearsal before destroying
+          {{ oracle_failover_primary_vm }}. Set
+          oracle_failover_reinstate_confirm={{ oracle_failover_reinstate_confirm_required }}
+          to continue.
       when:
         - oracle_failover_reinstate_execute | bool
         - oracle_failover_reinstate_confirm != oracle_failover_reinstate_confirm_required

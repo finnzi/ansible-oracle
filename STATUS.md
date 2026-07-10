@@ -116,6 +116,9 @@ The supported lab path is now KVM/libvirt:
     `changed=0`, and the live readiness test asserts FSFO is enabled,
     protection mode is `MaxAvailability`, the current primary is `super`, the
     active failover target is `super_sby`, and an observer is present.
+    The execute-without-confirmation path has also been run live and refuses
+    before `virsh destroy`, naming the protected primary VM and required
+    confirmation value.
   - A live OHASD interruption triggered FSFO promotion of `super_sby`.
     `super` returned automatically as a synchronized physical standby, and a
     broker switchover restored `super` as primary while retaining Maximum
@@ -246,13 +249,18 @@ The supported lab path is now KVM/libvirt:
   guard on 2026-07-10: `129 passed, 8 skipped`.
 - Full pytest verification after the live standby-first readiness-only proof
   on 2026-07-10: `130 passed, 8 skipped`.
+- Focused FSFO failover/reinstate verification after proving the destructive
+  confirmation gate on 2026-07-10: `4 passed`.
+- Full pytest verification after the FSFO destructive confirmation-gate proof
+  on 2026-07-10: `131 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
 - The explicit destructive execution branch of
   `playbooks/08-failover-reinstate.yml`; its underlying FSFO promotion,
   auto-reinstate, and switchback behavior is now proven live through an OHASD
-  interruption.
+  interruption, and the confirmation gate is proven to refuse before destroying
+  the primary VM when execution is requested without the confirm value.
 - Live standby-first patch apply with an actually eligible DB RU.
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
   readiness path is proven, but the eligible-RU apply still requires suitable

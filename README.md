@@ -41,7 +41,8 @@ Implemented:
 - Observer-node Oracle Client installation, broker TNS aliases, FSFO enablement,
   and foreground systemd observer ownership verified from the third KVM VM.
 - Opt-in FSFO failover/reinstate rehearsal playbook with a safe readiness-only
-  default and explicit destructive confirmation gate.
+  default and explicit destructive confirmation gate; the execute-without-
+  confirmation path is verified to refuse before `virsh destroy`.
 - Live FSFO promotion and auto-reinstate verified during an OHASD recovery
   test: `super_sby` was promoted, `super` rejoined as a synchronized physical
   standby, and broker switchover restored `super` as primary.
@@ -94,7 +95,9 @@ Still scaffolded or not yet proven end to end:
 
 - The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
   the underlying FSFO promotion, auto-reinstate, and switchback behavior has
-  been exercised live through an OHASD interruption.
+  been exercised live through an OHASD interruption, and the confirmation gate
+  has been proven to stop before destroying the primary VM when the confirm
+  value is absent.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
   broker discovery, home installation, patching, switchover, or datapatch. For
