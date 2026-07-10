@@ -142,6 +142,10 @@ The supported lab path is now KVM/libvirt:
   - `fluff` reports `PRIMARY|READ WRITE|NOARCHIVELOG|NO|NO`, meaning
     ARCHIVELOG disabled, flashback off, and force logging off.
   - Online redo members live under `/duper/r01` and `/fluff/r01`.
+  - Inventory-driven memory and custom database parameters are live-verified:
+    `super`, `duper`, and `fluff` expose the configured `sga_target` /
+    `pga_aggregate_target`, and `duper` / `fluff` expose distinct
+    `open_cursors` values from `oracle_instances[*].parameters`.
   - `LISTENER_DUPER`, `LISTENER_FLUFF`, databases `duper`/`fluff`, and services
     `duper_svc`/`fluff_svc` are managed by Oracle Restart and active.
   - The smoke create and Restart/service playbooks both reconverged with

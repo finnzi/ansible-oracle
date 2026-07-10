@@ -103,3 +103,15 @@ def test_project_goal_pins_dataguard_maximum_availability():
         "EDIT CONFIGURATION SET PROTECTION MODE AS MAXAVAILABILITY"
         in set_mode_tasks[0]["ansible.builtin.shell"]
     )
+
+
+def test_readme_documents_custom_instance_parameters():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    status = (REPO_ROOT / "STATUS.md").read_text(encoding="utf-8")
+
+    assert "## Instance Settings" in readme
+    assert "oracle_instances[*].parameters" in readme
+    assert "open_cursors" in readme
+    assert "quote: true" in readme
+    assert "oracle_instances[*].parameters" in status
+    assert "open_cursors" in status

@@ -109,3 +109,5 @@ future task explicitly changes the desired protection mode.
   `156 passed, 8 skipped`.
 - Full KVM-backed pytest after adding explicit automatic switchover audit row:
   `155 passed, 9 skipped`.
+- Full KVM-backed pytest after documenting custom DB parameters:
+  `156 passed, 9 skipped`.

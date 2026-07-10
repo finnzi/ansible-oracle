@@ -70,6 +70,10 @@ Implemented:
   Data Guard overrides covered by unit tests.
 - Focused multi-instance smoke vars for proving Maximum Availability Data Guard
   `super` plus standalone databases on the same primary host.
+- Per-instance database settings: `oracle_instances[*].memory` controls
+  `sga_target` / `pga_aggregate_target`, and `oracle_instances[*].parameters`
+  applies validated custom `ALTER SYSTEM` settings. The live smoke proof
+  verifies distinct `open_cursors` values on `duper` and `fluff`.
 - Standby-first patch eligibility parser and dedicated Data Guard standby-first
   orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
@@ -175,6 +179,25 @@ and are mounted read-only into the VMs at `/u01/stage`. Override with
 `SOURCES_DIR=/path/to/oracle/sources`. For OS-only lab work without Oracle
 media, set `LAB_ALLOW_MISSING_MEDIA=1`.
 
+## Instance Settings
+
+Each entry in `oracle_instances` can tune memory and additional database
+parameters. Numeric and boolean custom values are rendered unquoted; set
+`quote: true` only for trusted string values that need an Oracle string literal.
+
+```yaml
+oracle_instances:
+  - name: duper
+    memory:
+      sga_target: 1G
+      pga_aggregate_target: 512M
+    parameters:
+      - name: open_cursors
+        value: 450
+        scope: BOTH
+        sid: "*"
+```
+
 ## Repository Layout
 
 ```text
@@ -207,7 +230,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | FSFO failover/reinstate rehearsal | `playbooks/08-failover-reinstate.yml` validates readiness by default; destructive VM crash/reinstate requires explicit confirmation |
 | Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
 | Multiple instances per host | `oracle_instances` list; `inventory/examples/multi-instance.yml`; `inventory/examples/multi-instance-smoke.yml`; `tests/test_instance_overrides.py`; `tests/test_09_multi_instance.py` |
-| Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
+| Tunable memory/settings | `oracle_instances[*].memory`; `oracle_instances[*].parameters`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
 | Standby-first patching | Detection and staged-media scan in `library/patch_standbyfirst_info.py`; readiness-first target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml` with explicit execution confirmation; live eligible-RU apply still pending |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
