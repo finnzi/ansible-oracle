@@ -190,13 +190,21 @@ The supported lab path is now KVM/libvirt:
     patched through standby-first orchestration.
     The safe readiness path, including opt-in Restart discovery, has been run
     live in the current Data Guard lab with `changed=0`, and the live test now
-    asserts the current lab reports `0` standalone candidates and `1` Data
-    Guard target per DB host. Readiness reporting separates standalone
+    asserts the current lab reports up to `2` standalone candidates and `1`
+    Data Guard target per DB host. Readiness reporting separates standalone
     candidates from Data Guard targets. Fixture-backed readiness tests also
     verify that explicitly discovered brownfield targets synthesize the
     expected installer inventory without calling `srvctl`, and that fixture
     data is rejected for destructive execution. Fixture entries marked as Data
     Guard are not reported as standalone install candidates.
+    A confirmed live switchback rehearsal has also been run for Restart-
+    discovered standalone `fluff`: the playbook installed and patched
+    `/fluff/app/oracle/db_home2`, switched the database and `LISTENER_FLUFF`
+    to that target home, accepted idempotent no-op datapatch output, validated
+    Restart on the target, switched both resources back to
+    `/fluff/app/oracle/db_home1`, restarted `fluff`, and validated the original
+    home again while `super` remained `PRIMARY|READ WRITE` in
+    `MAXIMUM AVAILABILITY`.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration mechanics for eligible DB patch bundles: precheck
     README eligibility, optional target-home staging on the current standby,
@@ -222,8 +230,8 @@ The supported lab path is now KVM/libvirt:
   inventory, current-home dual-home validation, and embedded pytest
   (`118 passed, 7 skipped`; the seventh skip is the separately verified,
   opt-in standby OHASD restart test).
-- Full pytest verification after the live multi-instance smoke proof on
-  2026-07-10: `128 passed, 8 skipped`.
+- Full pytest verification after the live standalone dual-home switchback proof
+  on 2026-07-10: `130 passed, 7 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -231,7 +239,6 @@ The supported lab path is now KVM/libvirt:
   `playbooks/08-failover-reinstate.yml`; its underlying FSFO promotion,
   auto-reinstate, and switchback behavior is now proven live through an OHASD
   interruption.
-- Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU.
 
 ## Host Findings From This Run

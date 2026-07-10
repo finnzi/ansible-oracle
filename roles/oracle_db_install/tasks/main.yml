@@ -23,7 +23,7 @@
       {%- set out=[] -%}
       {%- set selected_suffixes = oracle_db_install_home_suffixes | default([]) -%}
       {%- set selected_paths = oracle_db_install_home_paths | default([]) -%}
-      {%- for inst in (oracle_instances | default([])) -%}
+      {%- for inst in (oracle_db_install_instances | default(oracle_instances | default([]))) -%}
         {%- for home in inst.db_homes -%}
           {%- set home_path = inst.oracle_base ~ '/' ~ home.suffix -%}
           {%- set selected = (

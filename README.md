@@ -92,7 +92,6 @@ Still scaffolded or not yet proven end to end:
 - The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
   the underlying FSFO promotion, auto-reinstate, and switchback behavior has
   been exercised live through an OHASD interruption.
-- Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
   broker discovery, home installation, patching, switchover, or datapatch.
@@ -182,7 +181,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
 | Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; DB dual-home target install and Restart switch |
-| Reversible standalone DB dual-home switch | `playbooks/07-patch-dual-db-switchback.yml` resolves readiness by default; actual switch/switchback to a suffix or explicit path requires confirmation |
+| Reversible standalone DB dual-home switch | `playbooks/07-patch-dual-db-switchback.yml` resolves readiness by default; confirmed execution requires explicit switchback confirmation |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |
 | Multi-machine Data Guard plus observer | `inventory/hosts.example.yml`; DG prep in `oracle_network`; DG/observer roles |

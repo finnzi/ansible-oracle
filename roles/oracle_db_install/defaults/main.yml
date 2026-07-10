@@ -8,6 +8,10 @@
 oracle_user: oracle
 oracle_group: oinstall
 oracle_instances: []
+# Optional install-only instance list. Defaults to oracle_instances, but lets
+# patch/switchback playbooks install generated target homes while leaving the
+# runtime database inventory empty or filtered.
+oracle_db_install_instances: "{{ oracle_instances }}"
 
 oracle_stage_dir: /u01/stage
 oracle_install_files:

@@ -695,7 +695,10 @@
   changed_when: _patch_datapatch.rc == 0
   failed_when: >-
     _patch_datapatch.rc != 0 or
-    'Patch installation complete' not in (_patch_datapatch.stdout | default(''))
+    (
+      'Patch installation complete' not in (_patch_datapatch.stdout | default('')) and
+      'SQL Patching tool complete' not in (_patch_datapatch.stdout | default(''))
+    )
   loop: >-
     {{
       ((_patch_missing_targets + (_patch_dual_switch_targets | default([]))) | unique(attribute='home_path'))

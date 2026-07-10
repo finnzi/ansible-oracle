@@ -38,8 +38,10 @@ def test_install_role_applies_extracted_database_ru_directory():
     assert "oracle_db_install_home_selection: current" in defaults
     assert "oracle_db_install_home_suffixes: []" in defaults
     assert "oracle_db_install_home_paths: []" in defaults
+    assert 'oracle_db_install_instances: "{{ oracle_instances }}"' in defaults
     assert "Fail when DB home install selection is invalid" in main_tasks
     assert "Supported values are current and selected" in main_tasks
+    assert "oracle_db_install_instances | default(oracle_instances | default([]))" in main_tasks
     assert "oracle_db_install_home_selection == 'all'" not in main_tasks
     assert "oracle_db_install_home_selection == 'current'" in main_tasks
     assert "oracle_db_install_home_selection == 'selected'" in main_tasks

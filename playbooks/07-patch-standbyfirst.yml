@@ -239,7 +239,10 @@
       changed_when: _patch_sf_promoted_datapatch.rc == 0
       failed_when: >-
         _patch_sf_promoted_datapatch.rc != 0 or
-        'Patch installation complete' not in (_patch_sf_promoted_datapatch.stdout | default(''))
+        (
+          'Patch installation complete' not in (_patch_sf_promoted_datapatch.stdout | default('')) and
+          'SQL Patching tool complete' not in (_patch_sf_promoted_datapatch.stdout | default(''))
+        )
 
 - name: Install new Data Guard standby DB target homes
   hosts: patch_current_primary

@@ -14,6 +14,25 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/db_home1")
 GRID_HOME = os.environ.get("ORACLE_TEST_GRID_HOME", "/grid/19c/gi_home1")
+DATAGUARD_SID = os.environ.get("ORACLE_TEST_DATAGUARD_SID", "super")
+SWITCHBACK_DB = os.environ.get("ORACLE_TEST_SWITCHBACK_DB", "fluff")
+SWITCHBACK_SID = os.environ.get("ORACLE_TEST_SWITCHBACK_SID", SWITCHBACK_DB)
+SWITCHBACK_ORIGINAL_HOME = os.environ.get(
+    "ORACLE_TEST_SWITCHBACK_ORIGINAL_HOME",
+    f"/{SWITCHBACK_DB}/app/oracle/db_home1",
+)
+SWITCHBACK_TARGET_HOME = os.environ.get(
+    "ORACLE_TEST_SWITCHBACK_TARGET_HOME",
+    f"/{SWITCHBACK_DB}/app/oracle/db_home2",
+)
+SWITCHBACK_LISTENER = os.environ.get(
+    "ORACLE_TEST_SWITCHBACK_LISTENER",
+    f"LISTENER_{SWITCHBACK_DB.upper()}",
+)
+SWITCHBACK_SERVICE = os.environ.get(
+    "ORACLE_TEST_SWITCHBACK_SERVICE",
+    f"{SWITCHBACK_DB}_svc",
+)
 EXPECTED_DB_RU = os.environ.get("ORACLE_TEST_DB_RU_PATCH_ID", "39034528")
 EXPECTED_GI_PATCH_IDS = [
     p
@@ -107,6 +126,7 @@ def test_patch_role_db_apply_contract():
     ) < tasks.index("Run datapatch for patched DB homes")
     assert "Run datapatch for patched DB homes" in tasks
     assert "oracle_patch_run_datapatch | bool" in tasks
+    assert "SQL Patching tool complete" in tasks
     assert "Converge Oracle DB home patch inventory" in playbook
     assert "Converge Oracle Grid home patch inventory" in grid_playbook
     assert "oracle_patch_target: grid" in grid_playbook
@@ -141,6 +161,8 @@ def test_patch_role_db_apply_contract():
     assert "Resolve fixture Restart database homes for switchback discovery" in dual_switchback_playbook
     assert "Resolve Restart-discovered switchback targets" in dual_switchback_playbook
     assert "Merge inventory and Restart-discovered switchback targets" in dual_switchback_playbook
+    assert "Resolve standalone switchback execution targets" in dual_switchback_playbook
+    assert "_dual_switchback_standalone_targets" in dual_switchback_playbook
     assert "'dataguard': item.dataguard | default(false) | bool" in dual_switchback_playbook
     assert "'dataguard': result.dataguard | default(false) | bool" in dual_switchback_playbook
     assert "Report Restart-discovered install plan" in dual_switchback_playbook
@@ -149,7 +171,7 @@ def test_patch_role_db_apply_contract():
     assert "Report readiness-only mode" in dual_switchback_playbook
     assert "standalone DB candidate(s)" in dual_switchback_playbook
     assert "Data Guard target(s)" in dual_switchback_playbook
-    assert "Fail when switchback is requested for Data Guard hosts" in dual_switchback_playbook
+    assert "Fail when switchback is requested for Data Guard hosts" not in dual_switchback_playbook
     assert (
         "Fail when Restart-discovered switchback targets are not explicitly named"
         in dual_switchback_playbook
@@ -184,8 +206,14 @@ def test_patch_role_db_apply_contract():
     ) < dual_switchback_playbook.index("Patch Restart-discovered dual-home target homes")
     assert "Resolve Restart-discovered target homes for patching" in dual_switchback_playbook
     assert "Resolve Restart-discovered target homes for installation" in dual_switchback_playbook
+    assert "Gather facts required for target-home installation" in dual_switchback_playbook
+    assert "gather_subset:" in dual_switchback_playbook
     assert "Install dual-home switchback target" in dual_switchback_playbook
     assert "Install Restart-discovered dual-home target homes" in dual_switchback_playbook
+    assert (
+        'oracle_db_install_instances: "{{ _dual_switchback_restart_install_instances | default([]) }}"'
+        in dual_switchback_playbook
+    )
     assert "Switch Restart to dual-home target" in dual_switchback_playbook
     assert dual_switchback_playbook.index(
         "Install Restart-discovered dual-home target homes"
@@ -203,7 +231,9 @@ def test_patch_role_db_apply_contract():
     assert "_dual_switchback_modify_discovered_target_listener.rc != 0" in dual_switchback_playbook
     assert "Start Restart-discovered DBs after dual-home target switch" in dual_switchback_playbook
     assert "Run datapatch for Restart-discovered switched DBs" in dual_switchback_playbook
+    assert "SQL Patching tool complete" in dual_switchback_playbook
     assert "Validate Restart uses dual-home target" in dual_switchback_playbook
+    assert "loop: \"{{ _dual_switchback_standalone_targets }}\"" in dual_switchback_playbook
     assert "Stop DBs before dual-home switchback" in dual_switchback_playbook
     assert "Switch Restart database back to actual original home" in dual_switchback_playbook
     assert "Switch Restart listener back to actual original home" in dual_switchback_playbook
@@ -246,6 +276,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_run_datapatch: false" in standbyfirst_playbook
     assert "Run datapatch on promoted Data Guard primary" in standbyfirst_playbook
     assert "Run datapatch after standby-first switchover" in standbyfirst_playbook
+    assert "SQL Patching tool complete" in standbyfirst_playbook
     assert standbyfirst_playbook.index(
         "Switchover Data Guard primary for standby-first patch"
     ) < standbyfirst_playbook.index("Run datapatch on promoted Data Guard primary")
@@ -293,6 +324,82 @@ def test_patch_applied_to_grid_home(lab_exec):
     for patch_id in EXPECTED_GI_PATCH_IDS:
         assert f"{patch_id};" in r.stdout
     assert "OPatch succeeded" in r.stdout
+
+
+def test_dual_home_switchback_target_installed_and_original_restored(lab_exec):
+    marker = lab_exec(f"test -f {SWITCHBACK_TARGET_HOME}/.install_complete")
+    assert marker.returncode == 0, (
+        f"{SWITCHBACK_TARGET_HOME} is not installed; run confirmed switchback proof"
+    )
+
+    target_patch = (
+        f"export ORACLE_HOME={SWITCHBACK_TARGET_HOME} && "
+        f"{SWITCHBACK_TARGET_HOME}/OPatch/opatch lspatches"
+    )
+    patch_result = lab_exec(f"su - oracle -c {shlex.quote(target_patch)}", timeout=180)
+    assert patch_result.returncode == 0, patch_result.stdout + patch_result.stderr
+    assert EXPECTED_DB_RU in patch_result.stdout
+    assert "OPatch succeeded" in patch_result.stdout
+
+    db_home = lab_exec(
+        "su - oracle -c "
+        + shlex.quote(
+            f"/grid/19c/gi_home1/bin/srvctl config database -db {SWITCHBACK_DB} | "
+            "sed -n 's/^Oracle home: //p'"
+        )
+    )
+    assert db_home.returncode == 0, db_home.stdout + db_home.stderr
+    assert db_home.stdout.strip() == SWITCHBACK_ORIGINAL_HOME
+
+    listener_home = lab_exec(
+        "su - oracle -c "
+        + shlex.quote(
+            "/grid/19c/gi_home1/bin/srvctl config listener "
+            f"-listener {SWITCHBACK_LISTENER} -a | sed -n 's/^Home: //p'"
+        )
+    )
+    assert listener_home.returncode == 0, listener_home.stdout + listener_home.stderr
+    assert listener_home.stdout.strip() == SWITCHBACK_ORIGINAL_HOME
+
+    database_status = lab_exec(
+        f"su - oracle -c '/grid/19c/gi_home1/bin/srvctl status database -d {SWITCHBACK_DB}'"
+    )
+    assert database_status.returncode == 0, database_status.stdout + database_status.stderr
+    assert "Database is running." in database_status.stdout
+
+    service_status = lab_exec(
+        f"su - oracle -c '/grid/19c/gi_home1/bin/srvctl status service -d {SWITCHBACK_DB}'"
+    )
+    assert service_status.returncode == 0, service_status.stdout + service_status.stderr
+    assert f"Service {SWITCHBACK_SERVICE} is running" in service_status.stdout
+
+    switched_sql = (
+        f"export ORACLE_HOME={SWITCHBACK_ORIGINAL_HOME} ORACLE_SID={SWITCHBACK_SID} && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT name || '|' || open_mode FROM v$database;\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    switched_state = lab_exec(f"su - oracle -c {shlex.quote(switched_sql)}")
+    assert switched_state.returncode == 0, switched_state.stdout + switched_state.stderr
+    assert f"{SWITCHBACK_DB.upper()}|READ WRITE" in switched_state.stdout
+
+    dataguard_sql = (
+        f"export ORACLE_HOME={ORACLE_HOME} ORACLE_SID={DATAGUARD_SID} && "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
+        "SELECT name || '|' || database_role || '|' || open_mode || '|' || "
+        "protection_mode || '|' || protection_level FROM v$database;\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    dataguard_state = lab_exec(f"su - oracle -c {shlex.quote(dataguard_sql)}")
+    assert dataguard_state.returncode == 0, dataguard_state.stdout + dataguard_state.stderr
+    assert (
+        "SUPER|PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY"
+        in dataguard_state.stdout
+    )
 
 
 def test_patch_playbook_converges_when_ru_already_present():
