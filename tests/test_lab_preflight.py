@@ -202,6 +202,8 @@ def test_preflight_libvirt_groups_warns_without_active_libvirt_group():
     assert result.returncode == 0, result.stderr
     assert "current shell is not in the active libvirt group" in result.stderr
     assert "sudo usermod -aG libvirt,kvm $USER" in result.stderr
+    assert "newgrp libvirt" in result.stderr
+    assert "id -nG" in result.stderr
     assert "Group membership is advisory" in result.stderr
 
 
@@ -271,6 +273,17 @@ exit 2
     assert "libvirt domain driver reachable" in result.stderr
     assert "cannot access libvirt network driver" in result.stderr
     assert "sudo systemctl enable --now virtnetworkd.socket" in result.stderr
+
+
+def test_lab_docs_include_libvirt_group_refresh_and_verification_commands():
+    lab_readme = (REPO_ROOT / "lab/README.md").read_text(encoding="utf-8")
+    quickstart = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+
+    for text in (lab_readme, quickstart):
+        assert 'sudo usermod -aG libvirt,kvm "$USER"' in text
+        assert "newgrp libvirt" in text
+        assert "id -nG" in text
+        assert "virsh -c qemu:///system list --all" in text
 
 
 def test_prepare_host_fedora_help_is_safe():

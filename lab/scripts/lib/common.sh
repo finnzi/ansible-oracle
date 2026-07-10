@@ -395,6 +395,8 @@ lab_preflight_libvirt_groups() {
     warn "current shell is not in the active libvirt group."
     warn "Run: sudo usermod -aG libvirt,kvm \$USER"
     warn "Then log out and back in before running lab-up.sh."
+    warn "For a temporary current-shell refresh, run: newgrp libvirt"
+    warn "Verify active groups with: id -nG"
     rc=1
   fi
 
@@ -403,6 +405,7 @@ lab_preflight_libvirt_groups() {
   else
     warn "current shell is not in the active kvm group."
     warn "Add it with libvirt if direct KVM access is needed: sudo usermod -aG libvirt,kvm \$USER"
+    warn "Verify active groups with: id -nG"
     rc=1
   fi
 
@@ -423,7 +426,8 @@ lab_preflight_libvirt() {
     warn "  sudo dnf install -y libvirt-daemon-driver-qemu qemu-kvm genisoimage"
     warn "  sudo systemctl enable --now virtlogd.socket virtqemud.socket virtnetworkd.socket virtstoraged.socket"
     warn "  sudo usermod -aG libvirt,kvm \$USER"
-    warn "Then log out and back in so group membership applies."
+    warn "Then log out and back in so group membership applies, or run: newgrp libvirt"
+    warn "Verify with: id -nG && virsh -c qemu:///system list --all"
     rc=1
   fi
 

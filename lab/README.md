@@ -53,8 +53,15 @@ sudo usermod -aG libvirt,kvm "$USER"
 ```
 
 If the script changes your group membership, log out and back in before running
-`lab-up.sh`. `id` must show `libvirt` in the current shell before
-`qemu:///system` is likely to work without sudo on the default Fedora setup.
+`lab-up.sh`. For a temporary current-shell refresh, run `newgrp libvirt`.
+`id -nG` must show `libvirt` in the current shell before `qemu:///system` is
+likely to work without sudo on the default Fedora setup. Verify system libvirt
+access with:
+
+```bash
+id -nG
+virsh -c qemu:///system list --all
+```
 
 `qemu:///session` is not the default because session libvirt cannot create the
 bridged/NAT lab network on this host without elevated privileges. The lab needs

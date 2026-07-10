@@ -111,3 +111,5 @@ future task explicitly changes the desired protection mode.
   `155 passed, 9 skipped`.
 - Full KVM-backed pytest after documenting custom DB parameters:
   `156 passed, 9 skipped`.
+- Full KVM-backed pytest after tightening libvirt group/session guidance:
+  `157 passed, 9 skipped`.

@@ -147,7 +147,9 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 # sudo dnf install -y python3 python3-pip
 # sudo dnf install -y python3.12 python3.12-pip   # if python3 is older than 3.12
 # sudo usermod -aG libvirt,kvm "$USER"
-# Then log out and back in before continuing.
+# Then log out and back in before continuing, or run: newgrp libvirt
+# Verify with: id -nG
+# Verify libvirt access with: virsh -c qemu:///system list --all
 
 # Python 3.12+ venv for Ansible and pytest.
 ./scripts/bootstrap-venv.sh
