@@ -275,6 +275,81 @@ exit 2
     assert "sudo systemctl enable --now virtnetworkd.socket" in result.stderr
 
 
+def test_preflight_resources_reports_requested_guest_memory():
+    result = run_common(
+        "lab_requested_memory_mib",
+        {
+            "LAB_DB_MEMORY_MIB": "12288",
+            "LAB_OBSERVER_MEMORY_MIB": "4096",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "28672"
+
+
+def test_preflight_resources_passes_when_host_memory_is_sufficient():
+    result = run_common(
+        "lab_preflight_resources",
+        {
+            "LAB_HOST_MEMORY_MIB": "32768",
+            "LAB_HOST_NPROC": "12",
+            "LAB_DB_MEMORY_MIB": "12288",
+            "LAB_OBSERVER_MEMORY_MIB": "4096",
+            "LAB_DB_VCPUS": "4",
+            "LAB_OBSERVER_VCPUS": "2",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "guest memory request fits host memory" in result.stderr
+    assert "guest vCPU request" in result.stderr
+
+
+def test_preflight_resources_fails_when_guest_memory_exceeds_host():
+    result = run_common(
+        "lab_preflight_resources",
+        {
+            "LAB_HOST_MEMORY_MIB": "8192",
+            "LAB_DB_MEMORY_MIB": "12288",
+            "LAB_OBSERVER_MEMORY_MIB": "4096",
+        },
+    )
+
+    assert result.returncode == 1
+    assert "configured guest memory exceeds host memory" in result.stderr
+    assert "LAB_DB_MEMORY_MIB" in result.stderr
+    assert "LAB_SKIP_RESOURCE_CHECK=1" in result.stderr
+
+
+def test_preflight_resources_rejects_non_numeric_memory_setting():
+    result = run_common(
+        "lab_preflight_resources",
+        {
+            "LAB_HOST_MEMORY_MIB": "32768",
+            "LAB_DB_MEMORY_MIB": "12g",
+        },
+    )
+
+    assert result.returncode == 1
+    assert "LAB_DB_MEMORY_MIB must be a positive integer" in result.stderr
+
+
+def test_preflight_resources_can_be_skipped_for_manual_overcommit():
+    result = run_common(
+        "lab_preflight_resources",
+        {
+            "LAB_HOST_MEMORY_MIB": "8192",
+            "LAB_DB_MEMORY_MIB": "12288",
+            "LAB_OBSERVER_MEMORY_MIB": "4096",
+            "LAB_SKIP_RESOURCE_CHECK": "1",
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "LAB_SKIP_RESOURCE_CHECK=1" in result.stderr
+
+
 def test_lab_docs_include_libvirt_group_refresh_and_verification_commands():
     lab_readme = (REPO_ROOT / "lab/README.md").read_text(encoding="utf-8")
     quickstart = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -284,6 +359,15 @@ def test_lab_docs_include_libvirt_group_refresh_and_verification_commands():
         assert "newgrp libvirt" in text
         assert "id -nG" in text
         assert "virsh -c qemu:///system list --all" in text
+
+
+def test_lab_docs_include_resource_preflight_controls():
+    lab_readme = (REPO_ROOT / "lab/README.md").read_text(encoding="utf-8")
+
+    assert "Preflight refuses to start the lab" in lab_readme
+    assert "LAB_DB_MEMORY_MIB" in lab_readme
+    assert "LAB_OBSERVER_MEMORY_MIB" in lab_readme
+    assert "LAB_SKIP_RESOURCE_CHECK=1" in lab_readme
 
 
 def test_prepare_host_fedora_help_is_safe():

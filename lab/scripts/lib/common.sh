@@ -368,6 +368,39 @@ lab_required_media_files() {
     p39062956_190000_Linux-x86-64.zip
 }
 
+lab_requested_memory_mib() {
+  printf '%s\n' "$(( (LAB_DB_MEMORY_MIB * 2) + LAB_OBSERVER_MEMORY_MIB ))"
+}
+
+lab_requested_vcpus() {
+  printf '%s\n' "$(( (LAB_DB_VCPUS * 2) + LAB_OBSERVER_VCPUS ))"
+}
+
+lab_is_positive_integer() {
+  case "$1" in
+    ''|*[!0-9]*)
+      return 1
+      ;;
+  esac
+  [ "$1" -gt 0 ]
+}
+
+lab_host_memory_mib() {
+  if [ -n "${LAB_HOST_MEMORY_MIB:-}" ]; then
+    printf '%s\n' "${LAB_HOST_MEMORY_MIB}"
+    return 0
+  fi
+  awk '/^MemTotal:/ { printf "%d\n", $2 / 1024 }' /proc/meminfo
+}
+
+lab_host_nproc() {
+  if [ -n "${LAB_HOST_NPROC:-}" ]; then
+    printf '%s\n' "${LAB_HOST_NPROC}"
+    return 0
+  fi
+  nproc
+}
+
 lab_preflight_commands() {
   local missing=0 cmd
   while read -r cmd; do
@@ -379,6 +412,51 @@ lab_preflight_commands() {
     fi
   done < <(lab_required_commands)
   return "${missing}"
+}
+
+lab_preflight_resources() {
+  local requested_memory host_memory requested_vcpus host_vcpus value_name
+
+  if [ "${LAB_SKIP_RESOURCE_CHECK:-0}" = "1" ]; then
+    warn "LAB_SKIP_RESOURCE_CHECK=1 is set; skipping KVM lab host resource checks."
+    return 0
+  fi
+
+  for value_name in \
+    LAB_DB_MEMORY_MIB \
+    LAB_OBSERVER_MEMORY_MIB \
+    LAB_DB_VCPUS \
+    LAB_OBSERVER_VCPUS; do
+    if ! lab_is_positive_integer "${!value_name}"; then
+      warn "${value_name} must be a positive integer, got '${!value_name}'."
+      return 1
+    fi
+  done
+
+  requested_memory="$(lab_requested_memory_mib)"
+  host_memory="$(lab_host_memory_mib)"
+  requested_vcpus="$(lab_requested_vcpus)"
+  host_vcpus="$(lab_host_nproc)"
+
+  if ! lab_is_positive_integer "${host_memory}"; then
+    warn "could not determine host memory from /proc/meminfo"
+    return 1
+  fi
+
+  if [ "${requested_memory}" -gt "${host_memory}" ]; then
+    warn "configured guest memory exceeds host memory: requested ${requested_memory} MiB, host has ${host_memory} MiB."
+    warn "Lower LAB_DB_MEMORY_MIB or LAB_OBSERVER_MEMORY_MIB before running lab-up.sh."
+    warn "Set LAB_SKIP_RESOURCE_CHECK=1 only if you intentionally allow host memory overcommit."
+    return 1
+  fi
+
+  log "guest memory request fits host memory: ${requested_memory} MiB requested, ${host_memory} MiB host."
+  if lab_is_positive_integer "${host_vcpus}"; then
+    log "guest vCPU request: ${requested_vcpus} vCPU(s) configured, ${host_vcpus} host CPU(s) visible."
+    if [ "${requested_vcpus}" -gt "${host_vcpus}" ]; then
+      warn "guest vCPU request exceeds visible host CPUs; KVM can overcommit CPU, but the lab may be slow."
+    fi
+  fi
 }
 
 lab_preflight_libvirt_groups() {
@@ -552,6 +630,7 @@ lab_preflight_all() {
   lab_preflight_commands || rc=1
   lab_preflight_session_network_note
   lab_os_support_note
+  lab_preflight_resources || rc=1
   lab_preflight_libvirt_groups
   lab_preflight_libvirt || rc=1
   lab_preflight_state_dir || rc=1

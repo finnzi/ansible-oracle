@@ -183,3 +183,7 @@ when preparing a host or debugging permissions.
   `LAB_DB_MEMORY_MIB` and `LAB_DB_VCPUS`.
 - The observer defaults to `4096` MiB and 2 vCPUs. Override with
   `LAB_OBSERVER_MEMORY_MIB` and `LAB_OBSERVER_VCPUS`.
+- Preflight refuses to start the lab when configured guest memory exceeds
+  visible host memory. Lower `LAB_DB_MEMORY_MIB` / `LAB_OBSERVER_MEMORY_MIB`,
+  or set `LAB_SKIP_RESOURCE_CHECK=1` only when you intentionally allow host
+  memory overcommit.
