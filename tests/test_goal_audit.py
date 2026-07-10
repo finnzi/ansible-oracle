@@ -23,6 +23,7 @@ def test_goal_audit_tracks_original_scope_and_remaining_gates():
     ]:
         assert requirement in audit
 
+    assert "OL10 is experimental" in audit
     assert "Explicit destructive FSFO rehearsal" in audit
     assert "DESTROY_PRIMARY_AND_REINSTATE" in audit
     assert "Live eligible standby-first patch apply" in audit

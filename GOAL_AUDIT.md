@@ -23,7 +23,7 @@ still needs outside input or a deliberately destructive run. It does not replace
 | Replace unsafe Docker/container lab with KVM/libvirt VMs | Proven | `lab/scripts/lab-up.sh`, direct libvirt XML/cloud-init, live `superdb1`/`superdb2`/`observer` lab, and full SSH pytest runs. |
 | Two DB VMs plus third observer/broker node | Proven | `inventory/hosts.yml`, `playbooks/site.yml`, observer role tests, and live FSFO observer checks. |
 | Oracle Linux 9 cloud-image lab base | Proven | Current live lab runs on OL9 cloud images; `LAB_OS_VERSION` defaults to `9`. |
-| Oracle Linux 10 where supported | Partial | `LAB_OS_VERSION=10` image discovery/rendering is tested offline; full Oracle 19c OL10 install is not claimed because certification/support depends on Oracle media and release support. |
+| Oracle Linux 10 where supported | Partial | `LAB_OS_VERSION=10` image discovery/rendering is tested offline, and preflight/render-config warn that OL10 is experimental; full Oracle 19c OL10 install is not claimed because certification/support depends on Oracle media and release support. |
 | Host `/etc/hosts` aliases for lab DNS names | Proven | `lab/scripts/update-hosts.sh`, KVM fixed IPs, and live listener/VIP tests for `superdb`, `superdc1`, `superdc2`, `duperdb`, and `fluffdb`. |
 | Databases installed under `/instancename` with `app`, `f01`, `r01`, `d01`, `a01` | Proven | Live `super`, `duper`, and `fluff` placement tests verify data, archive, FRA/flashback, and redo paths. |
 | No ASM for database files | Proven | DBCA uses filesystem storage; live tests assert no DB file path starts with `+`. Grid/Restart metadata may use its own disk, but database files are filesystem-backed. |
@@ -87,3 +87,5 @@ still needs outside input or a deliberately destructive run. It does not replace
   `139 passed, 7 skipped`.
 - Full KVM-backed pytest after adding the remaining-gates runbook:
   `141 passed, 8 skipped`.
+- Full KVM-backed pytest after adding the OL10 support-boundary warning:
+  `144 passed, 8 skipped`.

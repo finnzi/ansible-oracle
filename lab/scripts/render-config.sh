@@ -27,6 +27,7 @@ EOF
 esac
 
 require_cmd genisoimage
+lab_os_support_note
 if [ ! -f "$(ssh_pubkey_file)" ]; then
   die "SSH public key not found: $(ssh_pubkey_file). Run: ssh-keygen -t ed25519 -f $(ssh_key_file) -N ''"
 fi

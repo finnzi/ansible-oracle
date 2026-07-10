@@ -390,3 +390,28 @@ def test_oracle_linux_image_discovery_returns_empty_string_without_match():
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "<>"
+
+
+def test_lab_os_support_note_marks_ol9_as_default_path():
+    result = run_common("lab_os_support_note", {"LAB_OS_VERSION": "9"})
+
+    assert result.returncode == 0
+    assert "Oracle Linux 9 lab OS selected" in result.stderr
+    assert "not claimed" not in result.stderr
+
+
+def test_lab_os_support_note_warns_that_ol10_is_experimental():
+    result = run_common("lab_os_support_note", {"LAB_OS_VERSION": "10"})
+
+    assert result.returncode == 0
+    assert "LAB_OS_VERSION=10 selected" in result.stderr
+    assert "discover/render OL10 KVM images" in result.stderr
+    assert "full Oracle Database 19c install proof is not claimed" in result.stderr
+
+
+def test_lab_os_support_note_warns_on_unknown_os_version():
+    result = run_common("lab_os_support_note", {"LAB_OS_VERSION": "11"})
+
+    assert result.returncode == 0
+    assert "LAB_OS_VERSION=11 is outside the tested OL9 path" in result.stderr
+    assert "Set ORACLE_LINUX_IMAGE_URL explicitly" in result.stderr

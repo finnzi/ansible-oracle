@@ -465,6 +465,22 @@ lab_preflight_session_network_note() {
   fi
 }
 
+lab_os_support_note() {
+  case "${LAB_OS_VERSION}" in
+    9)
+      log "Oracle Linux ${LAB_OS_VERSION} lab OS selected."
+      ;;
+    10)
+      warn "LAB_OS_VERSION=10 selected. The lab can discover/render OL10 KVM images, but full Oracle Database 19c install proof is not claimed for OL10 in this repo."
+      warn "Use OL10 for OS-image experiments until Oracle media/certification and a live install proof confirm this stack."
+      ;;
+    *)
+      warn "LAB_OS_VERSION=${LAB_OS_VERSION} is outside the tested OL9 path and OL10 image-discovery experiment."
+      warn "Set ORACLE_LINUX_IMAGE_URL explicitly and treat the run as experimental."
+      ;;
+  esac
+}
+
 lab_preflight_ssh_key() {
   if [ -f "$(ssh_pubkey_file)" ]; then
     log "SSH public key present: $(ssh_pubkey_file)"
@@ -531,6 +547,7 @@ lab_preflight_all() {
   local rc=0
   lab_preflight_commands || rc=1
   lab_preflight_session_network_note
+  lab_os_support_note
   lab_preflight_libvirt_groups
   lab_preflight_libvirt || rc=1
   lab_preflight_state_dir || rc=1

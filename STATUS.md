@@ -267,6 +267,8 @@ The supported lab path is now KVM/libvirt:
   `139 passed, 7 skipped`.
 - Full pytest verification after adding `REMAINING_GATES.md` on 2026-07-10:
   `141 passed, 8 skipped`.
+- Full pytest verification after adding the OL10 support-boundary warning on
+  2026-07-10: `144 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 

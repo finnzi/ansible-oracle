@@ -72,6 +72,11 @@ To try Oracle Linux 10:
 LAB_OS_VERSION=10 ./lab/scripts/lab-up.sh
 ```
 
+OL10 is treated as an experiment until a full Oracle Database 19c install and
+patch proof is run with supported media. The lab can discover and render OL10
+KVM images, and preflight/render-config prints an explicit warning that full
+Oracle Database 19c proof is still the OL9 path in this repo.
+
 `fetch-base-image.sh` tries to discover the latest x86_64 KVM qcow2 image from
 Oracle's Linux cloud images page at
 `https://yum.oracle.com/oracle-linux-templates.html`. If Oracle changes that
