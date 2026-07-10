@@ -12,6 +12,8 @@ Goal requirement: Data Guard availability mode is Maximum Availability
 (`MAXIMUM AVAILABILITY` protection mode). Any Data Guard proof or patching
 flow must preserve Maximum Availability unless a future task explicitly changes
 that requirement.
+`GOAL_AUDIT.md` records the requirement-by-requirement completion evidence and
+the remaining external gates.
 
 ## Current Lab Direction
 
@@ -261,6 +263,8 @@ The supported lab path is now KVM/libvirt:
 - Focused standby-first media scan verification on 2026-07-10: `22 passed`.
 - Full pytest verification after the standby-first staged-media scanner on
   2026-07-10: `136 passed, 8 skipped`.
+- Full pytest verification after adding `GOAL_AUDIT.md` on 2026-07-10:
+  `139 passed, 7 skipped`.
 
 ## Not Yet Proven End To End
 

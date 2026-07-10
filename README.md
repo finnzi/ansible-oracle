@@ -110,6 +110,9 @@ Still scaffolded or not yet proven end to end:
   changes. `playbooks/07-patch-standbyfirst-media.yml` scans staged zip media
   and currently reports zero fully eligible standby-first candidates.
 
+See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
+the evidence behind each status.
+
 ## Quickstart
 
 Install host prerequisites first. Package names vary by distribution, but the
