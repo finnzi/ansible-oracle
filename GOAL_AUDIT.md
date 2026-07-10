@@ -43,6 +43,7 @@ future task explicitly changes the desired protection mode.
 | Third server for automatic failover observer | Proven | Observer VM has Oracle Client, broker aliases, systemd observer ownership, and FSFO enabled. |
 | Automatic failover | Partial | Live OHASD interruption triggered FSFO promotion and auto-reinstate, but the dedicated destructive VM-crash rehearsal remains intentionally unrun. |
 | Manual switchover | Proven | Broker switchover `super` -> `super_sby` -> `super` verified live. |
+| Automatic switchover target selection | Proven | Broker switchover with `oracle_dataguard_switchover_target=auto` selects the current standby, is idempotent when the selected target is already primary, and restores `super` as primary after the proof. |
 | Dedicated listener IPs for Data Guard and standalone DBs | Proven | `superdc1`, `superdc2`, `superdb`, `duperdb`, and `fluffdb` mappings/listeners tested. |
 | Standby open read-only instead of not open | Proven | Live tests validate `READ ONLY WITH APPLY`. |
 | Multiple DB instances per machine (`super`, `duper`, `fluff`) | Proven | Live multi-instance primary host proof with Restart/service ownership. |
@@ -106,3 +107,5 @@ future task explicitly changes the desired protection mode.
   `155 passed, 9 skipped`.
 - Full KVM-backed pytest after adding live patch target summaries:
   `156 passed, 8 skipped`.
+- Full KVM-backed pytest after adding explicit automatic switchover audit row:
+  `155 passed, 9 skipped`.

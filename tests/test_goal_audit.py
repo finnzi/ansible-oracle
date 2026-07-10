@@ -22,6 +22,7 @@ def test_goal_audit_tracks_original_scope_and_remaining_gates():
         "Data Guard availability mode Maximum Availability",
         "No ASM for database files",
         "Multiple DB instances per machine",
+        "Automatic switchover target selection",
         "Dedicated patch playbooks",
         "Standby-first Data Guard patching when release notes allow",
         "Automatically read standby-first support from release notes",
@@ -29,6 +30,7 @@ def test_goal_audit_tracks_original_scope_and_remaining_gates():
         assert requirement in audit
 
     assert "OL10 is experimental" in audit
+    assert "oracle_dataguard_switchover_target=auto" in audit
     assert "Explicit destructive FSFO rehearsal" in audit
     assert "DESTROY_PRIMARY_AND_REINSTATE" in audit
     assert "Live eligible standby-first patch apply" in audit
