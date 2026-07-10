@@ -111,7 +111,8 @@ Still scaffolded or not yet proven end to end:
   and currently reports zero fully eligible standby-first candidates.
 
 See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
-the evidence behind each status.
+`REMAINING_GATES.md` for the exact commands behind the two remaining explicit
+actions.
 
 ## Quickstart
 

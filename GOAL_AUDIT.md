@@ -5,6 +5,7 @@ Source requirement: `/home/finnur/.codex/attachments/abed9c0e-80d5-475e-8b53-b82
 This audit records what is proven in the current repository and lab, and what
 still needs outside input or a deliberately destructive run. It does not replace
 `STATUS.md`; it is the requirement-by-requirement completion check.
+`REMAINING_GATES.md` has the exact commands for the remaining explicit actions.
 
 ## Status Key
 
@@ -84,3 +85,5 @@ still needs outside input or a deliberately destructive run. It does not replace
   `131 passed, 8 skipped`.
 - Full KVM-backed pytest after adding this goal audit:
   `139 passed, 7 skipped`.
+- Full KVM-backed pytest after adding the remaining-gates runbook:
+  `141 passed, 8 skipped`.

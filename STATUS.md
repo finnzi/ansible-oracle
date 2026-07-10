@@ -265,6 +265,8 @@ The supported lab path is now KVM/libvirt:
   2026-07-10: `136 passed, 8 skipped`.
 - Full pytest verification after adding `GOAL_AUDIT.md` on 2026-07-10:
   `139 passed, 7 skipped`.
+- Full pytest verification after adding `REMAINING_GATES.md` on 2026-07-10:
+  `141 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
