@@ -11,6 +11,10 @@ def test_goal_audit_tracks_original_scope_and_remaining_gates():
     audit = (REPO_ROOT / "GOAL_AUDIT.md").read_text(encoding="utf-8")
 
     assert "pasted-text-1.txt" in audit
+    assert (
+        "Data Guard configurations must use Maximum Availability unless a"
+        in audit
+    )
     assert "forbids Docker/Compose lab artifacts" in audit
     for requirement in [
         "Replace unsafe Docker/container lab with KVM/libvirt VMs",

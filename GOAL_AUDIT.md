@@ -7,6 +7,9 @@ still needs outside input or a deliberately destructive run. It does not replace
 `STATUS.md`; it is the requirement-by-requirement completion check.
 `REMAINING_GATES.md` has the exact commands for the remaining explicit actions.
 
+Goal update: Data Guard configurations must use Maximum Availability unless a
+future task explicitly changes the desired protection mode.
+
 ## Status Key
 
 - Proven: implemented and verified by current tests, live KVM evidence, or both.
