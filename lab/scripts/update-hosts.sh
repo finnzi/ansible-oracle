@@ -8,6 +8,7 @@
 #
 #   ./update-hosts.sh           # (re)write the block (standalone slice)
 #   ./update-hosts.sh --dg      # switch to Data Guard hostnames
+#   ./update-hosts.sh --dg --multi  # include extra standalone listener VIPs
 #   ./update-hosts.sh --print   # print the standalone block without writing
 #   ./update-hosts.sh --dg --print
 #   ./update-hosts.sh --clean   # remove the block entirely
@@ -18,13 +19,15 @@ set -euo pipefail
 source "$(dirname "$0")/lib/common.sh"
 
 MODE="standalone"
+MULTI=false
 PRINT_ONLY=false
 for arg in "$@"; do
   case "${arg}" in
     --dg)    MODE="dataguard" ;;
+    --multi) MULTI=true ;;
     --clean) MODE="clean" ;;
     --print) PRINT_ONLY=true ;;
-    *) die "Unknown option: ${arg} (use --dg, --print, --clean, or none)" ;;
+    *) die "Unknown option: ${arg} (use --dg, --multi, --print, --clean, or none)" ;;
   esac
 done
 
@@ -36,6 +39,10 @@ block() {
       # Vertical slice: a single DB, listener VIP superdb.domain.is
       echo "${IP_SUPERDB1}  superdb1.domain.is superdb1"
       echo "${IP_SUPERDB}  superdb.domain.is superdb"
+      if $MULTI; then
+        echo "${IP_DUPERDB}  duperdb.domain.is duperdb"
+        echo "${IP_FLUFFDB}  fluffdb.domain.is fluffdb"
+      fi
       # Short-name aliases the playbooks/tests also use.
       echo "${IP_SUPERDB1}  superdb1"
       echo "${IP_SUPERDB2}  superdb2.domain.is superdb2"
@@ -45,6 +52,10 @@ block() {
       # When DG lands: each node binds its own listener VIP.
       echo "${IP_SUPERDB1}  superdb1.domain.is superdb1"
       echo "${IP_SUPERDC1}  superdc1.domain.is superdc1"
+      if $MULTI; then
+        echo "${IP_DUPERDB}  duperdb.domain.is duperdb"
+        echo "${IP_FLUFFDB}  fluffdb.domain.is fluffdb"
+      fi
       echo "${IP_SUPERDB2}  superdb2.domain.is superdb2"
       echo "${IP_SUPERDC2}  superdc2.domain.is superdc2"
       echo "${IP_OBSERVER}  observer.domain.is observer"
@@ -58,7 +69,7 @@ block() {
 strip_block() {
   local tmp; tmp="$(mktemp)"
   local aliases
-  aliases="superdb1\\.domain\\.is|superdb1|superdb\\.domain\\.is|superdb|superdb2\\.domain\\.is|superdb2|superdc1\\.domain\\.is|superdc1|superdc2\\.domain\\.is|superdc2|observer\\.domain\\.is|observer"
+  aliases="superdb1\\.domain\\.is|superdb1|superdb\\.domain\\.is|superdb|duperdb\\.domain\\.is|duperdb|fluffdb\\.domain\\.is|fluffdb|superdb2\\.domain\\.is|superdb2|superdc1\\.domain\\.is|superdc1|superdc2\\.domain\\.is|superdc2|observer\\.domain\\.is|observer"
   if [ -w /etc/hosts ]; then
     SUDO=""
   elif sudo -n true 2>/dev/null; then

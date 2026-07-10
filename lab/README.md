@@ -10,6 +10,8 @@ not a reliable or safe fit for this repo.
 |---|---:|---|---|
 | `ansible-oracle-lab-superdb1` | `192.168.87.11` | `superdb1.domain.is` | Primary or standalone DB host |
 | standalone listener VIP | `192.168.87.21` | `superdb.domain.is` | Standalone listener address |
+| standalone listener VIP | `192.168.87.22` | `duperdb.domain.is` | Additional standalone listener address |
+| standalone listener VIP | `192.168.87.23` | `fluffdb.domain.is` | Additional standalone listener address |
 | Data Guard primary listener VIP | `192.168.87.31` | `superdc1.domain.is` | Primary listener address |
 | `ansible-oracle-lab-superdb2` | `192.168.87.12` | `superdb2.domain.is` | Future Data Guard standby host |
 | Data Guard standby listener VIP | `192.168.87.32` | `superdc2.domain.is` | Standby listener address |
@@ -143,6 +145,9 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 
 # Switch host aliases from standalone to Data Guard naming.
 ./lab/scripts/update-hosts.sh --dg
+
+# Include extra standalone listener aliases for multi-instance smoke runs.
+./lab/scripts/update-hosts.sh --dg --multi
 ```
 
 `lab-up.sh` also writes `inventory/hosts.yml` from

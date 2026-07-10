@@ -19,6 +19,8 @@ The supported lab path is now KVM/libvirt:
 - Fixed libvirt DHCP leases on `192.168.87.0/24`.
 - Dedicated listener VIPs on the same lab subnet:
   - `192.168.87.21` for `superdb.domain.is`.
+  - `192.168.87.22` for `duperdb.domain.is`.
+  - `192.168.87.23` for `fluffdb.domain.is`.
   - `192.168.87.31` for `superdc1.domain.is`.
   - `192.168.87.32` for `superdc2.domain.is`.
 - Oracle Linux cloud image backing disks, defaulting to OL9 with `LAB_OS_VERSION`
@@ -29,7 +31,8 @@ The supported lab path is now KVM/libvirt:
 - `~/sources/oracle` mounted read-only at `/u01/stage`.
 - Generated `inventory/hosts.yml`.
 - `/etc/hosts` block for `superdb.domain.is`, `superdc1.domain.is`,
-  `superdc2.domain.is`, and observer hostnames when permissions allow.
+  `superdc2.domain.is`, optional multi-instance aliases such as
+  `duperdb.domain.is`, and observer hostnames when permissions allow.
 
 ## Implemented Pieces
 
@@ -53,6 +56,9 @@ The supported lab path is now KVM/libvirt:
 - Multi-instance inventory example for `super`, `duper`, and `fluff`, with
   distinct filesystem trees, listener names/ports, services, and host-specific
   Data Guard overrides covered by unit tests.
+- Focused multi-instance smoke vars for a primary host running Data Guard
+  `super` plus standalone `duper`, with Data Guard network mode and per-role
+  override flags bundled so direct playbook runs do not regress host mappings.
 - Existing Ansible role scaffolding for OS prep, storage, DB home install,
   network/listener, DB create/manage, Restart, Data Guard, observer, service,
   and patching.
@@ -112,6 +118,21 @@ The supported lab path is now KVM/libvirt:
     broker switchover restored `super` as primary while retaining Maximum
     Availability and `READ ONLY WITH APPLY` on the resulting standby.
   - ARCHIVELOG and FORCE LOGGING enabled.
+- Live KVM multi-instance creation on `superdb1`:
+  - Existing Data Guard primary `super` stayed `PRIMARY|READ WRITE` with
+    `MAXIMUM AVAILABILITY` protection mode and level.
+  - Standalone `duper` was installed under `/duper/app/oracle/db_home1`, created
+    by DBCA under `/duper`, and registered in `/etc/oratab`.
+  - `duperdb.domain.is` maps to `192.168.87.22` inside the guest, the VIP is
+    assigned alongside `superdc1.domain.is` / `192.168.87.31`, and stale
+    unmanaged lab listener VIPs are removed by `oracle_network`.
+  - `duper` reports `PRIMARY|READ WRITE|ARCHIVELOG|NO|YES`, meaning
+    ARCHIVELOG enabled, flashback off, and force logging on.
+  - Online redo members live under `/duper/r01`.
+  - `LISTENER_DUPER`, database `duper`, and service `duper_svc` are managed by
+    Oracle Restart; `duper_svc` is active.
+  - The smoke create and Restart/service playbooks both reconverged with
+    `changed=0`.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
     primary prep, so `superdb1` binds `superdc1.domain.is` / `192.168.87.31`
@@ -193,6 +214,8 @@ The supported lab path is now KVM/libvirt:
   inventory, current-home dual-home validation, and embedded pytest
   (`118 passed, 7 skipped`; the seventh skip is the separately verified,
   opt-in standby OHASD restart test).
+- Full pytest verification after the live multi-instance smoke proof on
+  2026-07-10: `122 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -200,7 +223,8 @@ The supported lab path is now KVM/libvirt:
   `playbooks/08-failover-reinstate.yml`; its underlying FSFO promotion,
   auto-reinstate, and switchback behavior is now proven live through an OHASD
   interruption.
-- Live creation of multiple database instances on the same DB host.
+- Live creation of the full three-instance `super`/`duper`/`fluff` example on
+  the same DB host; the live proof currently covers `super` plus `duper`.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU.
 
@@ -218,13 +242,16 @@ The supported lab path is now KVM/libvirt:
 - The required media files are present under `~/sources/oracle`; `info.txt`
   does not mention `p39062956_190000_Linux-x86-64.zip`, so preflight warns
   about that metadata mismatch.
-- `sudo` is not available non-interactively here, so package installation and
-  libvirt group/service changes need to be done by the user outside this agent
-  session.
+- `sudo` is not available non-interactively here, so package installation,
+  libvirt group/service changes, and host `/etc/hosts` writes need to be done
+  by the user outside this agent session.
 - The host had a stale unmarked Docker-era `/etc/hosts` entry for
   `superdb.domain.is` pointing at `172.28.0.11`. `update-hosts.sh` now scrubs
   known lab aliases before writing the KVM block, but applying it still needs
   root or passwordless sudo on the host.
+- `lab/scripts/update-hosts.sh --dg --multi --print` now emits the Data Guard
+  listener aliases plus `duperdb.domain.is` and `fluffdb.domain.is`; applying
+  it still requires write access to `/etc/hosts`.
 
 ## Useful Commands
 

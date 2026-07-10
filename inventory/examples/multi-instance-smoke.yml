@@ -1,0 +1,110 @@
+---
+# Focused live-smoke vars for proving multiple instances on the primary host.
+# Use with --limit superdb1. It keeps the existing Data Guard `super` primary
+# and adds one standalone `duper` database on the same VM.
+
+oracle_network_dataguard_enabled: true
+oracle_lab_host_map_mode: dataguard
+oracle_db_manage_apply_instance_overrides_require_dataguard: false
+oracle_restart_apply_instance_overrides_require_dataguard: false
+oracle_service_apply_instance_overrides_require_dataguard: false
+
+oracle_instances:
+  - name: super
+    oracle_base: /super/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /super/d01
+      archive: /super/a01
+      flashback: /super/f01
+      redo: /super/r01
+    dataguard: true
+    archivelog: true
+    flashback: true
+    force_logging: true
+    memory:
+      sga_target: 2G
+      pga_aggregate_target: 1G
+    listener_vip: superdb.domain.is
+    listener_port: 1521
+    service_name: super_svc
+
+  - name: duper
+    oracle_base: /duper/app/oracle
+    db_homes:
+      - suffix: db_home1
+        current: true
+      - suffix: db_home2
+        current: false
+    gi_base: /grid
+    gi_homes:
+      - suffix: 19c/gi_home1
+        current: true
+      - suffix: 19c/gi_home2
+        current: false
+    dirs:
+      data: /duper/d01
+      archive: /duper/a01
+      flashback: /duper/f01
+      redo: /duper/r01
+    dataguard: false
+    archivelog: true
+    flashback: false
+    force_logging: true
+    memory:
+      sga_target: 1G
+      pga_aggregate_target: 512M
+    listener_vip: duperdb.domain.is
+    listener_port: 1522
+    service_name: duper_svc
+
+oracle_instance_overrides:
+  super:
+    dataguard: true
+    flashback: true
+    listener_vip: superdc1.domain.is
+    dg_role: primary
+    db_unique_name: super
+
+oracle_lab_guest_hosts:
+  - ip: 192.168.87.11
+    names: superdb1.domain.is superdb1
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.12
+    names: superdb2.domain.is superdb2
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.13
+    names: observer.domain.is observer
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.21
+    names: superdb.domain.is superdb
+    modes: [standalone]
+  - ip: 192.168.87.22
+    names: duperdb.domain.is duperdb
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.31
+    names: superdc1.domain.is superdc1
+    modes: [dataguard]
+  - ip: 192.168.87.32
+    names: superdc2.domain.is superdc2
+    modes: [dataguard]
+
+oracle_lab_listener_vips:
+  - ip: 192.168.87.21
+    names: superdb.domain.is superdb
+  - ip: 192.168.87.22
+    names: duperdb.domain.is duperdb
+  - ip: 192.168.87.31
+    names: superdc1.domain.is superdc1
+  - ip: 192.168.87.32
+    names: superdc2.domain.is superdc2

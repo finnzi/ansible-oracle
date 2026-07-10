@@ -50,14 +50,20 @@ Implemented:
   file paths are ASM-backed, data/temp files live under `/super/d01`, archive
   destination is `/super/a01`, FRA is `/super/f01`, and online redo members
   live under `/super/r01`.
+- Live multi-instance primary host proof: `superdb1` now runs the Data Guard
+  primary `super` and a standalone `duper` database under `/duper`, with
+  `LISTENER_DUPER`, `duper_svc`, `duperdb.domain.is` / `192.168.87.22`,
+  dedicated redo under `/duper/r01`, and idempotent create/Register reruns.
 - Data Guard and patching role interfaces.
 - Data Guard prep wiring for dc1/dc2 listener identities, `_DGMGRL` static
   listener services, and broker TNS aliases.
-- Dedicated listener VIPs in the KVM lab (`superdb`, `superdc1`, `superdc2`)
-  separate from VM management IPs.
+- Dedicated listener VIPs in the KVM lab (`superdb`, `duperdb`, `fluffdb`,
+  `superdc1`, `superdc2`) separate from VM management IPs.
 - Multi-instance inventory example for `super`, `duper`, and `fluff`, with
   distinct filesystem trees, listener names/ports, services, and host-specific
   Data Guard overrides covered by unit tests.
+- Focused multi-instance smoke vars for proving Data Guard `super` plus
+  standalone `duper` on the same primary host.
 - Standby-first patch eligibility parser and dedicated Data Guard standby-first
   orchestration playbook with unit/static coverage.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
@@ -81,7 +87,8 @@ Still scaffolded or not yet proven end to end:
 - The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
   the underlying FSFO promotion, auto-reinstate, and switchback behavior has
   been exercised live through an OHASD interruption.
-- Live creation of multiple database instances on the same DB host.
+- Live creation of the full three-instance `super`/`duper`/`fluff` example on
+  the same DB host; the live proof currently covers `super` plus `duper`.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
@@ -132,6 +139,10 @@ source .venv/bin/activate
 # if the current user can write it directly or via passwordless sudo.
 ./lab/scripts/lab-up.sh
 
+# Optional: print or apply Data Guard host aliases plus multi-instance listener
+# aliases for duper/fluff on the control host.
+./lab/scripts/update-hosts.sh --dg --multi --print
+
 # Run the umbrella playbook.
 ansible-playbook playbooks/site.yml
 
@@ -175,7 +186,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Data Guard availability mode | `oracle_dataguard` sets broker protection mode to Maximum Availability |
 | FSFO failover/reinstate rehearsal | `playbooks/08-failover-reinstate.yml` validates readiness by default; destructive VM crash/reinstate requires explicit confirmation |
 | Dedicated listener names/IPs | `oracle_network`; `lab/scripts/update-hosts.sh` |
-| Multiple instances per host | `oracle_instances` list; `inventory/examples/multi-instance.yml`; `tests/test_instance_overrides.py` |
+| Multiple instances per host | `oracle_instances` list; `inventory/examples/multi-instance.yml`; `inventory/examples/multi-instance-smoke.yml`; `tests/test_instance_overrides.py`; `tests/test_09_multi_instance.py` |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
 | Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |

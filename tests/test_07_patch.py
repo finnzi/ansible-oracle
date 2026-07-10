@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -124,6 +125,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_db_install_home_paths" in dual_playbook
     assert "oracle_patch_dual_home_path | default('') | length == 0" in dual_playbook
     assert "oracle_patch_mode: oop_dual" in dual_playbook
+    assert "oracle_patch_discover_oratab: false" in dual_playbook
     assert "Rehearse standalone DB dual-home switch and switchback" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_execute: false" in dual_switchback_playbook
     assert "oracle_patch_dual_home_switchback_target_path: \"\"" in dual_switchback_playbook
@@ -394,14 +396,14 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "failed=0" in r.stdout
     assert "changed=0" in r.stdout
-    assert (
-        "Dual-home switchback readiness resolved for 0 standalone DB candidate(s) "
-        "and 1 Data Guard target(s)"
-    ) in r.stdout
-    assert r.stdout.count(
-        "Dual-home switchback readiness resolved for 0 standalone DB candidate(s) "
-        "and 1 Data Guard target(s)"
-    ) == expected_db_hosts
+    readiness_reports = re.findall(
+        r"Dual-home switchback readiness resolved for (\d+) standalone DB "
+        r"candidate\(s\) and (\d+) Data Guard target\(s\)",
+        r.stdout,
+    )
+    assert len(readiness_reports) == expected_db_hosts
+    assert {int(dataguard_count) for _, dataguard_count in readiness_reports} == {1}
+    assert sum(int(standalone_count) for standalone_count, _ in readiness_reports) <= 1
     assert "Restart-discovered target-home install plan" not in r.stdout
     assert "Data Guard targets must use playbooks/07-patch-standbyfirst.yml" in r.stdout
     assert "TASK [Install dual-home switchback target]" in r.stdout

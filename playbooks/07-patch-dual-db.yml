@@ -93,3 +93,7 @@
       vars:
         oracle_patch_target: db
         oracle_patch_mode: oop_dual
+        # This playbook switches inventory-modeled homes. Brownfield-only
+        # Restart DBs use playbooks/07-patch-dual-db-switchback.yml where
+        # discovery is explicit and destructive execution is gated.
+        oracle_patch_discover_oratab: false

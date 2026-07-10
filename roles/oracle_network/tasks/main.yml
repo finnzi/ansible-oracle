@@ -93,6 +93,60 @@
   when: oracle_lab_guest_hosts | length > 0
   register: _guest_hosts
 
+- name: Remove unmanaged lab listener VIPs from the guest interface
+  ansible.builtin.shell: |
+    set -o pipefail
+    iface="{{ oracle_network_listener_interface | default('') }}"
+    if [ -z "$iface" ]; then
+      iface="$(ip -o route show default | awk '{print $5; exit}')"
+    fi
+
+    desired=" {{ _net_instances | selectattr('_vip', 'defined') | map(attribute='_vip') | reject('equalto', '') | unique | join(' ') }} "
+    managed="{{ oracle_lab_listener_vips | default([]) | map(attribute='ip') | unique | join(' ') }}"
+    prefix="{{ oracle_network_listener_vip_prefix }}"
+    persist="{{ '1' if (oracle_network_persist_listener_vips | bool) else '0' }}"
+    changed=0
+
+    conn=""
+    if [ "$persist" -eq 1 ] && [ -n "$managed" ]; then
+      if ! command -v nmcli >/dev/null 2>&1; then
+        echo "nmcli is required to remove stale listener VIPs" >&2
+        exit 1
+      fi
+      conn="$(nmcli -g GENERAL.CONNECTION device show "$iface" | awk 'NF {print; exit}')"
+      if [ -z "$conn" ] || [ "$conn" = "--" ]; then
+        echo "No NetworkManager connection found for listener interface $iface" >&2
+        exit 1
+      fi
+    fi
+
+    for ip in $managed; do
+      case "$desired" in
+        *" $ip "*) continue ;;
+      esac
+
+      if ip -4 addr show dev "$iface" | grep -Eq '(^|[[:space:]])'"$ip"'/'; then
+        ip addr del "$ip/$prefix" dev "$iface"
+        changed=1
+      fi
+
+      if [ "$persist" -eq 1 ]; then
+        if nmcli -g ipv4.addresses connection show "$conn" |
+             tr ',' '\n' | awk '{$1=$1};1' | grep -Fxq "$ip/$prefix"; then
+          nmcli connection modify "$conn" -ipv4.addresses "$ip/$prefix"
+          changed=1
+        fi
+      fi
+    done
+
+    if [ "$changed" -eq 1 ]; then
+      echo CHANGED
+    fi
+  args: { executable: /bin/bash }
+  register: _listener_vip_cleanup
+  changed_when: "'CHANGED' in (_listener_vip_cleanup.stdout | default(''))"
+  when: oracle_lab_listener_vips | length > 0
+
 - name: Assign dedicated listener VIPs to the guest interface
   ansible.builtin.shell: |
     set -o pipefail

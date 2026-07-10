@@ -340,6 +340,22 @@ def test_update_hosts_dataguard_uses_dedicated_listener_vips():
     assert "192.168.87.12  superdc2.domain.is" not in result.stdout
 
 
+def test_update_hosts_multi_mode_adds_extra_listener_vips():
+    result = run_lab_script("update-hosts.sh", "--dg", "--multi", "--print")
+    script = (REPO_ROOT / "lab/scripts/update-hosts.sh").read_text(
+        encoding="utf-8"
+    )
+    common = (REPO_ROOT / "lab/scripts/lib/common.sh").read_text(encoding="utf-8")
+
+    assert result.returncode == 0
+    assert "IP_DUPERDB=\"${LAB_NET_PREFIX}.22\"" in common
+    assert "IP_FLUFFDB=\"${LAB_NET_PREFIX}.23\"" in common
+    assert "192.168.87.22  duperdb.domain.is duperdb" in result.stdout
+    assert "192.168.87.23  fluffdb.domain.is fluffdb" in result.stdout
+    assert "duperdb\\\\.domain\\\\.is" in script
+    assert "fluffdb\\\\.domain\\\\.is" in script
+
+
 def test_oracle_linux_image_discovery_selects_latest_ol9_kvm_image():
     result = run_common(
         "discover_oracle_linux_image_url_from_page \"$(cat tests/fixtures/oracle-linux-templates.html)\"",

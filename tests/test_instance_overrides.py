@@ -10,6 +10,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 FILTER_PATH = REPO_ROOT / "filter_plugins/oracle_instances.py"
 MULTI_INSTANCE_EXAMPLE = REPO_ROOT / "inventory/examples/multi-instance.yml"
+MULTI_INSTANCE_SMOKE = REPO_ROOT / "inventory/examples/multi-instance-smoke.yml"
 
 spec = importlib.util.spec_from_file_location("oracle_instances_filter", FILTER_PATH)
 assert spec is not None and spec.loader is not None
@@ -179,3 +180,34 @@ def test_multi_instance_example_maps_every_listener_hostname_to_a_lab_vip():
 
     assert listener_hosts <= host_aliases
     assert listener_hosts <= vip_aliases
+
+
+def test_multi_instance_smoke_is_primary_host_super_plus_duper():
+    smoke = yaml.safe_load(MULTI_INSTANCE_SMOKE.read_text(encoding="utf-8"))
+    instances = smoke["oracle_instances"]
+    resolved = oracle_instances_filter.oracle_apply_instance_overrides(
+        instances,
+        smoke["oracle_instance_overrides"],
+        require_dataguard=False,
+    )
+    by_name = {inst["name"]: inst for inst in resolved}
+
+    assert [inst["name"] for inst in instances] == ["super", "duper"]
+    assert smoke["oracle_network_dataguard_enabled"] is True
+    assert smoke["oracle_lab_host_map_mode"] == "dataguard"
+    assert smoke["oracle_db_manage_apply_instance_overrides_require_dataguard"] is False
+    assert smoke["oracle_restart_apply_instance_overrides_require_dataguard"] is False
+    assert smoke["oracle_service_apply_instance_overrides_require_dataguard"] is False
+    assert by_name["super"]["dataguard"] is True
+    assert by_name["super"]["listener_vip"] == "superdc1.domain.is"
+    assert by_name["duper"]["dataguard"] is False
+    assert by_name["duper"]["listener_vip"] == "duperdb.domain.is"
+    assert by_name["duper"]["listener_port"] == 1522
+    assert by_name["duper"]["service_name"] == "duper_svc"
+
+    vip_aliases = {
+        alias
+        for entry in smoke["oracle_lab_listener_vips"]
+        for alias in entry["names"].split()
+    }
+    assert {inst["listener_vip"] for inst in resolved} <= vip_aliases

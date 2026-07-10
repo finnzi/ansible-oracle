@@ -123,6 +123,10 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "192.168.87.32" in lab_group_vars
     assert "names: superdc2.domain.is superdc2" in lab_group_vars
     assert "Assign dedicated listener VIPs to the guest interface" in network_tasks
+    assert "Remove unmanaged lab listener VIPs from the guest interface" in network_tasks
+    assert "nmcli is required to remove stale listener VIPs" in network_tasks
+    assert "ip addr del \"$ip/$prefix\" dev \"$iface\"" in network_tasks
+    assert " -ipv4.addresses \"$ip/$prefix\"" in network_tasks
     assert "nmcli is required to persist listener VIP" in network_tasks
     assert "nmcli connection modify" in network_tasks
     assert "ip addr add" in network_tasks
@@ -201,16 +205,13 @@ def test_listener_answers_on_vip(db_conn_kwargs):
 def test_standalone_listener_uses_dedicated_vip(lab_exec):
     host_lookup = lab_exec("getent hosts superdb.domain.is | awk '{print $1}'")
     dg_lookup = lab_exec("getent hosts superdc1.domain.is")
+    vip_addr = lab_exec("ip -4 addr show | grep -w '192.168.87.21/24'")
     if dg_lookup.returncode == 0 and dg_lookup.stdout.strip():
-        if (
-            host_lookup.returncode != 0
-            or host_lookup.stdout.strip() != "192.168.87.21"
-        ):
+        if vip_addr.returncode != 0:
             pytest.skip("Lab is in Data Guard listener mode; standalone VIP is not mapped.")
     assert host_lookup.returncode == 0, host_lookup.stderr
     assert host_lookup.stdout.strip().splitlines()[-1] == "192.168.87.21"
 
-    vip_addr = lab_exec("ip -4 addr show | grep -w '192.168.87.21/24'")
     assert vip_addr.returncode == 0, vip_addr.stderr
 
 
