@@ -4,7 +4,8 @@
 # Create the dedicated client-facing service that always points at the
 # current primary. Clients connect to <instance>_svc and don't need to know
 # which node is primary. For standalone, it lives on the local listener.
-# For Data Guard (scaffolded), the DG role will relocate it on switchover.
+# For Data Guard, the DG switchover flow keeps the service on the current
+# primary.
 
 oracle_user: oracle
 oracle_group: oinstall

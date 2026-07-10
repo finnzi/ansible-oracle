@@ -13,8 +13,8 @@ future task explicitly changes the desired protection mode.
 ## Status Key
 
 - Proven: implemented and verified by current tests, live KVM evidence, or both.
-- Partial: implemented or scaffolded, but not fully proven for every requested
-  operating mode.
+- Partial: implemented, but not fully proven for every requested operating
+  mode.
 - External gate: blocked by missing media or host/operator approval.
 - Intentional unrun: available, gated, and tested for safety, but not executed
   because it destroys or disrupts live lab state.
@@ -133,3 +133,6 @@ future task explicitly changes the desired protection mode.
   `playbooks/99-test.yml` through the same wrapper: `164 passed, 9 skipped`.
 - Full KVM-backed pytest through `scripts/run-tests.sh` after adding KVM host
   resource preflight: `170 passed, 9 skipped`.
+- Full KVM-backed pytest through `scripts/run-tests.sh` after removing stale
+  scaffold-era wording from implemented roles and inventory: `171 passed, 9
+  skipped`.

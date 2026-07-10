@@ -64,7 +64,7 @@ The supported lab path is now KVM/libvirt:
   `super` plus standalone databases, with Data Guard network mode and per-role
   override flags bundled so direct playbook runs do not regress host mappings or
   the Maximum Availability requirement.
-- Existing Ansible role scaffolding for OS prep, storage, DB home install,
+- Implemented Ansible role coverage for OS prep, storage, DB home install,
   network/listener, DB create/manage, Restart, Data Guard, observer, service,
   and patching.
 - Standby-first patch parser and its unit tests.

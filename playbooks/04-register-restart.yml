@@ -2,9 +2,9 @@
 # playbooks/04-register-restart.yml — register each instance + listener with
 # Oracle Restart and create the dedicated client-facing service.
 #
-# In the slice, Restart may not be installed (Grid install is scaffolded).
-# oracle_restart_manage detects that and reports the gap; the DB and listener
-# still come up via lsnrctl/sqlplus, so downstream tests can run.
+# oracle_restart_manage detects hosts where Restart is not installed and reports
+# the gap; the DB and listener can still come up via lsnrctl/sqlplus, so
+# downstream tests can run on partial labs.
 
 - name: Register with Oracle Restart and create client services
   hosts: oracle_db_hosts

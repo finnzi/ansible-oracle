@@ -1,9 +1,9 @@
 ---
 # inventory/group_vars/standby.yml
 #
-# Hosts in the [standby] group run a physical standby. Reserved for the Data
-# Guard slice (scaffolded); the vertical slice does not populate this group.
-# Kept here so the inventory contract is stable when DG lands.
+# Hosts in the [standby] group run the physical standby side of a Data Guard
+# pair. The base inventory keeps this override here so the Data Guard host
+# contract stays explicit.
 
 oracle_instance_overrides:
   super:

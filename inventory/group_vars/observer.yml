@@ -2,8 +2,8 @@
 # inventory/group_vars/observer.yml
 #
 # The third machine: runs the Data Guard broker observer (Fast-Start Failover).
-# Reserved for the FSFO slice (scaffolded). Requires only the Oracle Client
-# (Administrator) install + a systemd unit running dgmgrl.
+# Requires the Oracle Client Administrator install plus a systemd unit running
+# dgmgrl as the broker observer.
 
 # The observer needs a home that is binary-compatible with the monitored DBs.
 # We reuse the client installer staged under download/.
@@ -11,7 +11,7 @@ observer_oracle_base: /observer/app/oracle
 observer_client_home: /observer/app/oracle/client_home1
 
 # How the observer connects to the broker. TNS aliases to both sites are
-# materialised by oracle_observer (scaffolded).
+# materialised by oracle_observer.
 observer_dg_connect_identifier: super_dgb
 observer_dg_primary_unique_name: super
 observer_dg_standby_unique_name: super_sby

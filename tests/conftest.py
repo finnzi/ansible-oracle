@@ -34,7 +34,6 @@ SSH_KEY = _env("ORACLE_TEST_SSH_KEY", os.path.expanduser("~/.ssh/lab_oracle"))
 def pytest_configure(config):
     """Register markers used by the suite and make library/ importable."""
     config.addinivalue_line("markers", "slice: part of the vertical slice (must pass)")
-    config.addinivalue_line("markers", "scaffolded: depends on a role still being scaffolded")
     config.addinivalue_line("markers", "slow: test may take many minutes")
     # Make library/ importable at collection time so unit tests can import the
     # detectors directly (before any fixture runs).

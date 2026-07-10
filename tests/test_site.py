@@ -138,6 +138,25 @@ def test_operator_docs_describe_current_kvm_dataguard_lab_state():
     assert "observer candidate" not in combined
 
 
+def test_implemented_roles_and_inventory_do_not_describe_themselves_as_scaffolded():
+    files = [
+        "inventory/group_vars/observer.yml",
+        "inventory/group_vars/standby.yml",
+        "playbooks/04-register-restart.yml",
+        "roles/oracle_gi_install/meta/main.yml",
+        "roles/oracle_patch/meta/main.yml",
+        "roles/oracle_service_manage/defaults/main.yml",
+        "tests/test_04_restart.py",
+    ]
+    stale = {
+        path: (REPO_ROOT / path).read_text(encoding="utf-8")
+        for path in files
+        if "scaffold" in (REPO_ROOT / path).read_text(encoding="utf-8").lower()
+    }
+
+    assert stale == {}
+
+
 def test_operator_docs_describe_kvm_migration_as_current_path():
     readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     status = (REPO_ROOT / "STATUS.md").read_text(encoding="utf-8")
@@ -149,5 +168,6 @@ def test_operator_docs_describe_kvm_migration_as_current_path():
     assert "## Remaining Explicit Gates" in readme
     assert "being moved" not in combined
     assert "migration began" not in combined
+    assert "role scaffolding" not in combined
     assert "vertical slice plus scaffolding" not in combined
     assert "Still scaffolded or not yet proven end to end" not in combined

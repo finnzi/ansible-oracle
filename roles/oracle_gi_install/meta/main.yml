@@ -1,7 +1,7 @@
 ---
 galaxy_info:
   author: ansible-oracle
-  description: Grid Infrastructure (Oracle Restart) install — scaffolded stub
+  description: Grid Infrastructure (Oracle Restart) install
   license: MIT
   min_ansible_version: "2.16"
   platforms:

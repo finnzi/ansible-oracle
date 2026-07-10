@@ -172,9 +172,8 @@ def test_srvctl_status_or_honest_gap(lab_exec):
     """Either srvctl reports super ONLINE, or we honestly record Restart absent."""
     if not _restart_installed(lab_exec):
         pytest.skip(
-            "Oracle Restart is not installed (Grid install is scaffolded in this "
-            "slice). The DB still runs under sqlplus/lsnrctl; Restart registration "
-            "will be asserted once oracle_gi_install is implemented."
+            "Oracle Restart is not installed in this lab. The DB still runs under "
+            "sqlplus/lsnrctl; Restart registration tests require a Grid home."
         )
 
     _ensure_restart_database_running(lab_exec)
