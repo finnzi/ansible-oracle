@@ -278,6 +278,18 @@
       brownfield discovery, or extra-home variables.
   when: _patch_targets | length == 0
 
+- name: Report resolved Oracle patch targets
+  ansible.builtin.debug:
+    msg:
+      name: "{{ item.name }}"
+      source: "{{ item.source }}"
+      home_path: "{{ item.home_path }}"
+      home_suffix: "{{ item.home_suffix }}"
+      restart_db_name: "{{ item.restart_db_name | default('') }}"
+  loop: "{{ _patch_targets }}"
+  loop_control:
+    label: "{{ item.name }}:{{ item.home_suffix }}"
+
 - name: Fail when dual-home target is not inventory-backed
   ansible.builtin.fail:
     msg: >-

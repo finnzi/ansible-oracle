@@ -107,6 +107,10 @@ def test_patch_role_db_apply_contract():
     assert "Resolve extra brownfield Grid patch targets" in tasks
     assert "oracle_patch_extra_homes" in tasks
     assert "oracle_patch_extra_grid_homes" in tasks
+    assert "Report resolved Oracle patch targets" in tasks
+    assert "home_path" in tasks
+    assert "home_suffix" in tasks
+    assert "restart_db_name" in tasks
     assert "Check Oracle home patch inventory" in tasks
     assert "installed_patch_ids" in tasks
     assert "Fail when patches are missing but apply is disabled" in tasks
@@ -463,6 +467,14 @@ def test_patch_playbook_converges_when_ru_already_present():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "failed=0" in r.stdout
     assert "changed=0" in r.stdout
+    assert '"name": "super"' in r.stdout
+    assert '"name": "duper"' in r.stdout
+    assert '"name": "fluff"' in r.stdout
+    assert '"source": "inventory"' in r.stdout
+    assert '"source": "oratab"' in r.stdout
+    assert '"home_path": "/super/app/oracle/db_home1"' in r.stdout
+    assert '"home_path": "/duper/app/oracle/db_home1"' in r.stdout
+    assert '"home_path": "/fluff/app/oracle/db_home1"' in r.stdout
 
 
 def test_grid_patch_playbook_converges_when_ru_already_present():
@@ -486,6 +498,9 @@ def test_grid_patch_playbook_converges_when_ru_already_present():
     assert r.returncode == 0, r.stdout + r.stderr
     assert "failed=0" in r.stdout
     assert "changed=0" in r.stdout
+    assert '"name": "super_grid"' in r.stdout
+    assert '"source": "inventory"' in r.stdout
+    assert '"home_path": "/grid/19c/gi_home1"' in r.stdout
 
 
 def test_dual_home_switch_playbook_converges_when_target_is_current_home():

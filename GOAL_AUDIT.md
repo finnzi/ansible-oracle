@@ -35,8 +35,8 @@ future task explicitly changes the desired protection mode.
 | Data Guard databases | Proven | Live `super` / `super_sby` physical standby, broker config, SYNC transport, and Maximum Availability. |
 | Data Guard availability mode Maximum Availability | Proven | Broker mode/level verified live as `MAXIMUM AVAILABILITY`; site and patch tests pin this requirement. |
 | Oracle Restart/Grid support | Proven | Grid install, OHASD/CSS startup recovery, Restart database/listener/service registration, and srvctl stop/start tests. |
-| Patch Oracle Database homes | Proven | DB RU inventory/apply path, expected patch derivation, live idempotent 19.31 DB RU convergence. |
-| Patch Oracle Grid homes | Proven | GI RU inventory/apply path, expected component derivation, live idempotent 19.31 GI RU convergence. |
+| Patch Oracle Database homes | Proven | DB RU inventory/apply path, expected patch derivation, resolved target summaries, and live idempotent 19.31 DB RU convergence. |
+| Patch Oracle Grid homes | Proven | GI RU inventory/apply path, expected component derivation, resolved target summaries, and live idempotent 19.31 GI RU convergence. |
 | Dedicated home/data/archive/flashback/redo paths | Proven | Inventory/roles plus live SQL/file placement checks. |
 | Flashback/archive/redo toggles | Proven | Live `duper` and `fluff` prove different ARCHIVELOG, flashback, and force logging settings with redo under each instance tree. |
 | Data Guard multiple machines | Proven | `super` primary on `superdb1`, `super_sby` physical standby on `superdb2`. |
@@ -104,3 +104,5 @@ future task explicitly changes the desired protection mode.
   `151 passed, 9 skipped`.
 - Full KVM-backed pytest after adding live Restart registration-detail checks:
   `155 passed, 9 skipped`.
+- Full KVM-backed pytest after adding live patch target summaries:
+  `156 passed, 8 skipped`.
