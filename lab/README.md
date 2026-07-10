@@ -4,6 +4,9 @@ The lab provisions three Oracle Linux VMs with libvirt/KVM. It replaces the
 old privileged-container approach because Oracle Restart and host cgroups were
 not a reliable or safe fit for this repo.
 
+KVM/libvirt is the only supported lab backend in this repository. Docker,
+Compose, and Containerfile lab artifacts are intentionally absent.
+
 ## Topology
 
 | VM/VIP | IP | Hostname(s) | Purpose |

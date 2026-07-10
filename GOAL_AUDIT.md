@@ -20,7 +20,7 @@ still needs outside input or a deliberately destructive run. It does not replace
 
 | Requirement | Status | Current Evidence |
 |---|---|---|
-| Replace unsafe Docker/container lab with KVM/libvirt VMs | Proven | `lab/scripts/lab-up.sh`, direct libvirt XML/cloud-init, live `superdb1`/`superdb2`/`observer` lab, and full SSH pytest runs. |
+| Replace unsafe Docker/container lab with KVM/libvirt VMs | Proven | `lab/scripts/lab-up.sh`, direct libvirt XML/cloud-init, live `superdb1`/`superdb2`/`observer` lab, full SSH pytest runs, and a repository contract that forbids Docker/Compose lab artifacts. |
 | Two DB VMs plus third observer/broker node | Proven | `inventory/hosts.yml`, `playbooks/site.yml`, observer role tests, and live FSFO observer checks. |
 | Oracle Linux 9 cloud-image lab base | Proven | Current live lab runs on OL9 cloud images; `LAB_OS_VERSION` defaults to `9`. |
 | Oracle Linux 10 where supported | Partial | `LAB_OS_VERSION=10` image discovery/rendering is tested offline, and preflight/render-config warn that OL10 is experimental; full Oracle 19c OL10 install is not claimed because certification/support depends on Oracle media and release support. |
@@ -89,3 +89,5 @@ still needs outside input or a deliberately destructive run. It does not replace
   `141 passed, 8 skipped`.
 - Full KVM-backed pytest after adding the OL10 support-boundary warning:
   `144 passed, 8 skipped`.
+- Full KVM-backed pytest after adding the no-Docker lab artifact guard:
+  `145 passed, 8 skipped`.

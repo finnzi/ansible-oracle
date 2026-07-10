@@ -18,6 +18,23 @@ REQUIRED_MEDIA = [
     "p39062956_190000_Linux-x86-64.zip",
 ]
 
+IGNORED_TREE_NAMES = {
+    ".git",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+    "download",
+}
+
+FORBIDDEN_CONTAINER_LAB_NAMES = {
+    "dockerfile",
+    "docker-compose.yml",
+    "docker-compose.yaml",
+    "compose.yml",
+    "compose.yaml",
+    "containerfile",
+}
+
 
 def run_common(script: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     merged_env = os.environ.copy()
@@ -53,6 +70,22 @@ def write_fake_virsh(bin_dir: Path, body: str) -> None:
     virsh = bin_dir / "virsh"
     virsh.write_text(f"#!/usr/bin/env bash\nset -euo pipefail\n{body}\n", encoding="utf-8")
     virsh.chmod(0o755)
+
+
+def test_repo_has_no_docker_or_compose_lab_artifacts():
+    forbidden: list[str] = []
+    for path in REPO_ROOT.rglob("*"):
+        rel = path.relative_to(REPO_ROOT)
+        if any(part in IGNORED_TREE_NAMES for part in rel.parts):
+            continue
+        if not path.is_file():
+            continue
+        lower_name = path.name.lower()
+        lower_rel = rel.as_posix().lower()
+        if lower_name in FORBIDDEN_CONTAINER_LAB_NAMES or "docker" in lower_rel:
+            forbidden.append(rel.as_posix())
+
+    assert forbidden == []
 
 
 def test_required_media_list_is_complete():

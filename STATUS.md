@@ -269,6 +269,8 @@ The supported lab path is now KVM/libvirt:
   `141 passed, 8 skipped`.
 - Full pytest verification after adding the OL10 support-boundary warning on
   2026-07-10: `144 passed, 8 skipped`.
+- Full pytest verification after adding the no-Docker lab artifact guard on
+  2026-07-10: `145 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
