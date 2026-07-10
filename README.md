@@ -214,7 +214,7 @@ roles/            Oracle OS, storage, install, network, Restart, DG, observer,
 library/          custom modules: patch_standbyfirst_info, oracle_db_facts,
                   oracle_session
 tests/            pytest suite
-scripts/          bootstrap-venv.sh, run-tests.sh
+scripts/          bootstrap-venv.sh, run-tests.sh, check-remaining-gates.sh
 download/         reserved staging directory; large Oracle media is gitignored
 ```
 

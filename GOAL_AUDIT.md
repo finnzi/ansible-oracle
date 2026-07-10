@@ -127,3 +127,5 @@ future task explicitly changes the desired protection mode.
   tasks executed.
 - Full KVM-backed pytest after adding the safe remaining-gates wrapper:
   `161 passed, 9 skipped`.
+- Full KVM-backed pytest through `scripts/run-tests.sh` after adding full
+  three-VM lab defaults and dry-run support: `165 passed, 8 skipped`.
