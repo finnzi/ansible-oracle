@@ -108,6 +108,8 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "names: superdb.domain.is superdb" in lab_group_vars
     assert "modes: [standalone]" in lab_group_vars
     assert "_listener_host" in instance_tasks
+    assert "ALTER SYSTEM SET sga_target" in instance_tasks
+    assert "ALTER SYSTEM SET pga_aggregate_target" in instance_tasks
     assert "ALTER SYSTEM SET local_listener" in instance_tasks
     assert "_db_reachable: false" in instance_tasks
     assert "_dbfacts_fields: []" in instance_tasks
@@ -235,6 +237,24 @@ def test_db_unique_name(db_connection):
     assert row is not None
     # Standalone: db_unique_name == db_name == super.
     assert row[0].lower() == "super", f"unexpected db_unique_name: {row[0]}"
+
+
+def test_configured_memory_parameters_match_inventory(db_connection):
+    cur = db_connection.cursor()
+    cur.execute(
+        """
+        SELECT name, value
+          FROM v$parameter
+         WHERE name IN ('sga_target', 'pga_aggregate_target')
+        """
+    )
+    rows = dict(cur.fetchall())
+    cur.close()
+
+    assert rows == {
+        "sga_target": str(2 * 1024 * 1024 * 1024),
+        "pga_aggregate_target": str(1 * 1024 * 1024 * 1024),
+    }
 
 
 def test_dedicated_data_path_used(lab_exec):

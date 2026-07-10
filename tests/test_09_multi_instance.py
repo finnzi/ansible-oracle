@@ -119,6 +119,39 @@ def test_fluff_standalone_instance_is_read_write(lab_exec):
     assert "FLUFF|PRIMARY|READ WRITE|NOARCHIVELOG|NO|NO" in result.stdout
 
 
+@pytest.mark.parametrize(
+    ("name", "sga_target", "pga_aggregate_target"),
+    [
+        ("super", 2 * 1024 * 1024 * 1024, 1 * 1024 * 1024 * 1024),
+        ("duper", 1 * 1024 * 1024 * 1024, 512 * 1024 * 1024),
+        ("fluff", 1 * 1024 * 1024 * 1024, 512 * 1024 * 1024),
+    ],
+)
+def test_instance_memory_parameters_match_inventory(
+    lab_exec, name, sga_target, pga_aggregate_target
+):
+    result = _instance_sql(
+        lab_exec,
+        name,
+        """
+SELECT name || '|' || value
+  FROM v$parameter
+ WHERE name IN ('sga_target', 'pga_aggregate_target');
+""",
+    )
+
+    assert result.returncode == 0, result.stderr
+    values = dict(
+        line.strip().split("|", 1)
+        for line in result.stdout.splitlines()
+        if "|" in line
+    )
+    assert values == {
+        "sga_target": str(sga_target),
+        "pga_aggregate_target": str(pga_aggregate_target),
+    }
+
+
 @pytest.mark.parametrize("name", ["duper", "fluff"])
 def test_standalone_instance_files_are_filesystem_backed(lab_exec, name):
     result = _instance_sql(

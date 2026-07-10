@@ -46,7 +46,7 @@ future task explicitly changes the desired protection mode.
 | Dedicated listener IPs for Data Guard and standalone DBs | Proven | `superdc1`, `superdc2`, `superdb`, `duperdb`, and `fluffdb` mappings/listeners tested. |
 | Standby open read-only instead of not open | Proven | Live tests validate `READ ONLY WITH APPLY`. |
 | Multiple DB instances per machine (`super`, `duper`, `fluff`) | Proven | Live multi-instance primary host proof with Restart/service ownership. |
-| Tunable memory and DB settings | Proven | `oracle_instances[*].memory` and instance settings are wired and statically tested. |
+| Tunable memory and DB settings | Proven | `oracle_instances[*].memory` drives `sga_target` and `pga_aggregate_target`; live `super`, `duper`, and `fluff` tests verify the configured values from `v$parameter`. |
 | Idempotent playbooks | Proven | Site, create/register smoke, patch, Grid, and switchback paths have live idempotence checks where non-destructive. |
 | Oracle DB homes like `/super/app/oracle/db_home1`, `/super/app/oracle/db_home2` | Proven | Current and target homes installed/patched/switched for standalone `fluff`; inventory supports suffix and explicit path homes. |
 | Oracle Grid homes like `/grid/19c/gi_home1` | Proven | Grid home installed and patched at `/grid/19c/gi_home1`; brownfield discovery exists. |
@@ -94,3 +94,5 @@ future task explicitly changes the desired protection mode.
   `144 passed, 8 skipped`.
 - Full KVM-backed pytest after adding the no-Docker lab artifact guard:
   `145 passed, 8 skipped`.
+- Full KVM-backed pytest after adding live memory-parameter assertions:
+  `148 passed, 9 skipped`.
