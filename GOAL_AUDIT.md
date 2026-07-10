@@ -129,3 +129,5 @@ future task explicitly changes the desired protection mode.
   `161 passed, 9 skipped`.
 - Full KVM-backed pytest through `scripts/run-tests.sh` after adding full
   three-VM lab defaults and dry-run support: `165 passed, 8 skipped`.
+- Full KVM-backed pytest through `scripts/run-tests.sh` after routing
+  `playbooks/99-test.yml` through the same wrapper: `164 passed, 9 skipped`.

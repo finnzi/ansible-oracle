@@ -68,6 +68,8 @@ def test_test_playbook_runs_pytest_with_bounded_lab_environment():
     )
     assert play["vars"]["oracle_test_environment"]["XDG_CACHE_HOME"] == "/tmp/ansible-cache"
     assert "timeout {{ oracle_test_timeout_seconds | int }}" in run_task["ansible.builtin.shell"]
+    assert "./scripts/run-tests.sh {{ oracle_test_pytest_args }}" in run_task["ansible.builtin.shell"]
+    assert ".venv/bin/pytest" not in run_task["ansible.builtin.shell"]
     assert run_task["environment"] == "{{ oracle_test_environment }}"
     assert run_task["failed_when"] is False
 

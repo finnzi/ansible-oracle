@@ -11,27 +11,18 @@
     # pytest is run from the repo root so tests/conftest.py resolves imports.
     repo_root: "{{ playbook_dir | dirname }}"
     oracle_test_timeout_seconds: 1800
-    oracle_test_pytest_args: "tests/ -v --tb=short -ra"
+    oracle_test_pytest_args: "tests/ --tb=short -ra"
     oracle_test_environment:
       ANSIBLE_LOCAL_TEMP: /tmp/ansible-local
       ANSIBLE_SSH_CONTROL_PATH_DIR: /tmp/ansible-cp
       XDG_CACHE_HOME: /tmp/ansible-cache
       PYTHONUNBUFFERED: "1"
   tasks:
-    - name: Locate the venv pytest
-      ansible.builtin.stat:
-        path: "{{ repo_root }}/.venv/bin/pytest"
-      register: _pytest
-
-    - name: Resolve pytest command
-      ansible.builtin.set_fact:
-        _pytest_command: "{{ './.venv/bin/pytest' if _pytest.stat.exists else 'pytest' }}"
-
     - name: Run pytest against the lab
       ansible.builtin.shell: |
         set -o pipefail
         cd {{ repo_root }}
-        timeout {{ oracle_test_timeout_seconds | int }} {{ _pytest_command }} {{ oracle_test_pytest_args }}
+        timeout {{ oracle_test_timeout_seconds | int }} ./scripts/run-tests.sh {{ oracle_test_pytest_args }}
       args:
         executable: /bin/bash
       environment: "{{ oracle_test_environment }}"
