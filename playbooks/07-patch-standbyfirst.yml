@@ -12,6 +12,8 @@
     oracle_patch_db_zip: "{{ oracle_stage_dir }}/{{ oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip') }}"
     oracle_patch_zip: "{{ oracle_patch_db_zip }}"
     oracle_patch_standbyfirst_require_eligible: true
+    oracle_patch_standbyfirst_execute: false
+    oracle_patch_standbyfirst_confirm: ""
   tasks:
     - name: Read standby-first eligibility from the patch README
       patch_standbyfirst_info:
@@ -27,6 +29,17 @@
       when:
         - oracle_patch_standbyfirst_require_eligible | default(true) | bool
         - not _patch_standbyfirst.eligible | default(false) | bool
+
+    - name: Fail when standby-first execution is not explicitly confirmed
+      ansible.builtin.fail:
+        msg: >-
+          Standby-first patch execution installs/patches Data Guard homes,
+          performs a broker switchover, and runs datapatch. Re-run with
+          oracle_patch_standbyfirst_execute=true and
+          oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST to execute.
+      when:
+        - oracle_patch_standbyfirst_execute | default(false) | bool
+        - oracle_patch_standbyfirst_confirm | default('') != 'PATCH_STANDBY_FIRST'
 
 - name: Discover current Data Guard roles for standby-first patching
   hosts: oracle_db_hosts
@@ -131,7 +144,9 @@
         name: "{{ item }}"
         groups: patch_current_standby
       loop: "{{ groups.oracle_db_hosts | default([]) }}"
-      when: hostvars[item]._patch_sf_local_unique_name | default('') == _patch_sf_current_standby
+      when:
+        - oracle_patch_standbyfirst_execute | default(false) | bool
+        - hostvars[item]._patch_sf_local_unique_name | default('') == _patch_sf_current_standby
       run_once: true
 
     - name: Add host to current primary patch group  # noqa: run-once[task]
@@ -139,7 +154,9 @@
         name: "{{ item }}"
         groups: patch_current_primary
       loop: "{{ groups.oracle_db_hosts | default([]) }}"
-      when: hostvars[item]._patch_sf_local_unique_name | default('') == _patch_sf_current_primary
+      when:
+        - oracle_patch_standbyfirst_execute | default(false) | bool
+        - hostvars[item]._patch_sf_local_unique_name | default('') == _patch_sf_current_primary
       run_once: true
 
 - name: Install current Data Guard standby DB target homes
@@ -147,6 +164,7 @@
   become: true
   roles:
     - role: oracle_db_install
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
         oracle_db_install_home_selection: selected
         oracle_db_install_home_suffixes: >-
@@ -170,6 +188,7 @@
   become: true
   roles:
     - role: oracle_patch
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
         oracle_patch_target: db
         oracle_patch_mode: >-
@@ -186,7 +205,7 @@
         oracle_patch_dg_standbyfirst: false
         oracle_patch_allow_dataguard_dual_home_switch: true
 
-- name: Validate current Data Guard standby after target-home patch
+- name: Validate current Data Guard standby before standby-first switchover
   hosts: primary
   become: true
   tasks:
@@ -209,11 +228,23 @@
         'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_current_standby_after_patch.stdout | default(''))
       no_log: true
 
+    - name: Report standby-first readiness-only mode  # noqa: run-once[task]
+      ansible.builtin.debug:
+        msg: >-
+          Standby-first readiness passed for primary={{ _patch_sf_current_primary }},
+          standby={{ _patch_sf_current_standby }}, protection={{
+          _patch_sf_protection_mode }}. No DB homes were installed or patched,
+          no broker switchover was run, and datapatch was not executed because
+          oracle_patch_standbyfirst_execute=false.
+      when: not (oracle_patch_standbyfirst_execute | default(false) | bool)
+      run_once: true
+
 - name: Switchover Data Guard primary for standby-first patch
   hosts: primary
   become: true
   roles:
     - role: oracle_dataguard
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
         oracle_dataguard_run_switchover: true
         oracle_dataguard_switchover_target: "{{ _patch_sf_current_standby }}"
@@ -243,12 +274,14 @@
           'Patch installation complete' not in (_patch_sf_promoted_datapatch.stdout | default('')) and
           'SQL Patching tool complete' not in (_patch_sf_promoted_datapatch.stdout | default(''))
         )
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
 
 - name: Install new Data Guard standby DB target homes
   hosts: patch_current_primary
   become: true
   roles:
     - role: oracle_db_install
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
         oracle_db_install_home_selection: selected
         oracle_db_install_home_suffixes: >-
@@ -272,6 +305,7 @@
   become: true
   roles:
     - role: oracle_patch
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
         oracle_patch_target: db
         oracle_patch_mode: >-
@@ -323,3 +357,4 @@
         'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_broker_after.stdout | default('')) or
         'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_broker_after.stdout | default(''))
       no_log: true
+      when: oracle_patch_standbyfirst_execute | default(false) | bool

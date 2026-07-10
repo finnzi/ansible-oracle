@@ -243,9 +243,21 @@ def test_patch_role_db_apply_contract():
     assert "item.actual_original_home_path" in dual_switchback_playbook
     assert "Validate standby-first patch eligibility" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
+    assert "oracle_patch_standbyfirst_execute: false" in standbyfirst_playbook
+    assert 'oracle_patch_standbyfirst_confirm: ""' in standbyfirst_playbook
+    assert "PATCH_STANDBY_FIRST" in standbyfirst_playbook
+    assert "Fail when standby-first execution is not explicitly confirmed" in standbyfirst_playbook
+    assert "Report standby-first readiness-only mode" in standbyfirst_playbook
     assert "Discover current Data Guard roles for standby-first patching" in standbyfirst_playbook
     standbyfirst_gate = standbyfirst_playbook.index(
         "Fail when patch is not standby-first eligible"
+    )
+    standbyfirst_confirm_gate = standbyfirst_playbook.index(
+        "Fail when standby-first execution is not explicitly confirmed"
+    )
+    assert standbyfirst_gate < standbyfirst_confirm_gate
+    assert standbyfirst_confirm_gate < standbyfirst_playbook.index(
+        "Discover current Data Guard roles for standby-first patching"
     )
     for destructive_task in [
         "Discover current Data Guard roles for standby-first patching",
@@ -255,6 +267,22 @@ def test_patch_role_db_apply_contract():
         "Run datapatch on promoted Data Guard primary",
     ]:
         assert standbyfirst_gate < standbyfirst_playbook.index(destructive_task)
+    guarded_destructive_actions = [
+        "Install current Data Guard standby DB target homes",
+        "Patch current Data Guard standby DB homes",
+        "Switchover Data Guard primary for standby-first patch",
+        "Run datapatch on promoted Data Guard primary",
+        "Install new Data Guard standby DB target homes",
+        "Patch new Data Guard standby DB homes",
+        "Validate Data Guard broker after standby-first patching",
+    ]
+    for destructive_action in guarded_destructive_actions:
+        action_pos = standbyfirst_playbook.index(destructive_action)
+        guard_pos = standbyfirst_playbook.index(
+            "oracle_patch_standbyfirst_execute | default(false) | bool",
+            action_pos,
+        )
+        assert action_pos < guard_pos
     assert "Read Data Guard broker roles and protection mode" in standbyfirst_playbook
     assert "Publish standby-first broker facts to static primary hosts" in standbyfirst_playbook
     assert "Fail when broker is not in Maximum Availability" in standbyfirst_playbook
@@ -267,7 +295,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_db_install_home_paths" in standbyfirst_playbook
     assert "Patch current Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_standby" in standbyfirst_playbook
-    assert "Validate current Data Guard standby after target-home patch" in standbyfirst_playbook
+    assert "Validate current Data Guard standby before standby-first switchover" in standbyfirst_playbook
     assert "Validate current standby is read-only with apply before switchover" in standbyfirst_playbook
     assert "Switchover Data Guard primary for standby-first patch" in standbyfirst_playbook
     assert "oracle_dataguard_run_switchover: true" in standbyfirst_playbook

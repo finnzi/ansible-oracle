@@ -207,9 +207,13 @@ The supported lab path is now KVM/libvirt:
     `MAXIMUM AVAILABILITY`.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
     patch orchestration mechanics for eligible DB patch bundles: precheck
-    README eligibility, optional target-home staging on the current standby,
-    patch/switch that standby home, validate `MAXIMUM AVAILABILITY` and
-    `READ ONLY WITH APPLY`, switchover through broker, then optional target-home
+    README eligibility, broker role discovery, and `MAXIMUM AVAILABILITY` /
+    `READ ONLY WITH APPLY` readiness checks by default. The install/patch,
+    broker switchover, datapatch, and post-switch validation branch requires
+    `oracle_patch_standbyfirst_execute=true` and
+    `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`. When confirmed, it
+    supports optional target-home staging on the current standby, patch/switch
+    that standby home, switchover through broker, then optional target-home
     staging and patch/switch on the old primary as the new standby. The current
     staged OJVM+RU bundle is not standby-first eligible and is rejected before
     broker role discovery, target-home installation, DB-home patching,
@@ -224,7 +228,8 @@ The supported lab path is now KVM/libvirt:
 - Umbrella site orchestration now imports the non-destructive flow through Data
   Guard Maximum Availability, FSFO observer setup, DB/Grid patch inventory, and
   current-home dual-home validation. Standby-first patching remains a dedicated
-  opt-in playbook because it can switch broker roles and apply patches.
+  readiness-first playbook, and confirmed execution is still explicit because
+  it can switch broker roles and apply patches.
 - Live full `playbooks/site.yml` run verified on the KVM lab on 2026-07-09,
   including Data Guard Maximum Availability, FSFO observer setup, DB/Grid patch
   inventory, current-home dual-home validation, and embedded pytest
@@ -232,6 +237,8 @@ The supported lab path is now KVM/libvirt:
   opt-in standby OHASD restart test).
 - Full pytest verification after the live standalone dual-home switchback proof
   on 2026-07-10: `130 passed, 7 skipped`.
+- Full pytest verification after the standby-first readiness-first execution
+  guard on 2026-07-10: `129 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -240,6 +247,8 @@ The supported lab path is now KVM/libvirt:
   auto-reinstate, and switchback behavior is now proven live through an OHASD
   interruption.
 - Live standby-first patch apply with an actually eligible DB RU.
+  `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
+  eligible-RU apply still requires explicit execution confirmation.
 
 ## Host Findings From This Run
 

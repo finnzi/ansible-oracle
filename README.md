@@ -83,8 +83,11 @@ Implemented:
   convergence plus current-home dual mode are verified as idempotent.
 - `playbooks/site.yml` imports the non-destructive umbrella flow through Data
   Guard, observer, DB/Grid patch inventory, and current-home dual-home
-  validation. Role-changing standby-first patching remains opt-in through its
-  dedicated playbook.
+  validation. Standby-first patching remains in its dedicated playbook; it runs
+  eligibility and broker/read-only readiness checks by default, and the
+  install/patch/switchover/datapatch branch requires
+  `oracle_patch_standbyfirst_execute=true` plus
+  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
 Still scaffolded or not yet proven end to end:
@@ -94,7 +97,10 @@ Still scaffolded or not yet proven end to end:
   been exercised live through an OHASD interruption.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
-  broker discovery, home installation, patching, switchover, or datapatch.
+  broker discovery, home installation, patching, switchover, or datapatch. For
+  an eligible RU, the dedicated playbook is readiness-only unless explicitly
+  confirmed with `oracle_patch_standbyfirst_execute=true` and
+  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 
 ## Quickstart
 
@@ -191,7 +197,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Multiple instances per host | `oracle_instances` list; `inventory/examples/multi-instance.yml`; `inventory/examples/multi-instance-smoke.yml`; `tests/test_instance_overrides.py`; `tests/test_09_multi_instance.py` |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
-| Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml`; live eligible-RU apply still pending |
+| Standby-first patching | Detection in `library/patch_standbyfirst_info.py`; readiness-first target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml` with explicit execution confirmation; live eligible-RU apply still pending |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
 | No ASM for database files | DBCA uses `storageType=FS`; `oracle_db_manage` reconciles data/archive/FRA/redo paths; live tests assert no database file path starts with `+` |
