@@ -180,6 +180,94 @@ def test_srvctl_status_or_honest_gap(lab_exec):
     _ensure_restart_database_running(lab_exec)
 
 
+@pytest.mark.parametrize(
+    (
+        "exec_fixture",
+        "restart_db_name",
+        "database_name",
+        "home",
+        "spfile",
+        "role",
+        "start_options",
+        "service",
+        "instance",
+    ),
+    [
+        (
+            "lab_exec",
+            "super",
+            "super",
+            "/super/app/oracle/db_home1",
+            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+            "PRIMARY",
+            "open",
+            "super_svc",
+            "super",
+        ),
+        (
+            "standby_exec",
+            "super_sby",
+            "super",
+            "/super/app/oracle/db_home1",
+            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+            "PHYSICAL_STANDBY",
+            "read only",
+            "super_svc",
+            "super",
+        ),
+        (
+            "lab_exec",
+            "duper",
+            "duper",
+            "/duper/app/oracle/db_home1",
+            "/duper/app/oracle/db_home1/dbs/spfileduper.ora",
+            "PRIMARY",
+            "open",
+            "duper_svc",
+            "duper",
+        ),
+        (
+            "lab_exec",
+            "fluff",
+            "fluff",
+            "/fluff/app/oracle/db_home1",
+            "/fluff/app/oracle/db_home1/dbs/spfilefluff.ora",
+            "PRIMARY",
+            "open",
+            "fluff_svc",
+            "fluff",
+        ),
+    ],
+)
+def test_restart_database_registration_details(
+    request,
+    exec_fixture,
+    restart_db_name,
+    database_name,
+    home,
+    spfile,
+    role,
+    start_options,
+    service,
+    instance,
+):
+    exec_fn = request.getfixturevalue(exec_fixture)
+    config = exec_fn(
+        f"su - oracle -c '/grid/19c/gi_home1/bin/srvctl config database -db {restart_db_name}'"
+    )
+
+    assert config.returncode == 0, config.stdout + config.stderr
+    assert f"Database unique name: {restart_db_name}" in config.stdout
+    assert f"Database name: {database_name}" in config.stdout
+    assert f"Oracle home: {home}" in config.stdout
+    assert f"Spfile: {spfile}" in config.stdout
+    assert f"Start options: {start_options}" in config.stdout
+    assert f"Database role: {role}" in config.stdout
+    assert "Management policy: AUTOMATIC" in config.stdout
+    assert f"Services: {service}" in config.stdout
+    assert f"Database instance: {instance}" in config.stdout
+
+
 def test_restart_systemd_unit_starts_stack_after_monitor(lab_exec):
     """The native unit must launch the stack as well as the init monitor."""
     if not _restart_installed(lab_exec):

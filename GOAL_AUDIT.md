@@ -50,7 +50,7 @@ future task explicitly changes the desired protection mode.
 | Idempotent playbooks | Proven | Site, create/register smoke, patch, Grid, and switchback paths have live idempotence checks where non-destructive. |
 | Oracle DB homes like `/super/app/oracle/db_home1`, `/super/app/oracle/db_home2` | Proven | Current and target homes installed/patched/switched for standalone `fluff`; inventory supports suffix and explicit path homes. |
 | Oracle Grid homes like `/grid/19c/gi_home1` | Proven | Grid home installed and patched at `/grid/19c/gi_home1`; brownfield discovery exists. |
-| Register each database with Oracle Restart | Proven | `super`, `super_sby`, `duper`, and `fluff` Restart registration tested. |
+| Register each database with Oracle Restart | Proven | Live `srvctl config database` tests verify `super`, `super_sby`, `duper`, and `fluff` registration names, homes, spfiles, roles, start options, services, and instances. |
 | Dedicated client service to current primary | Proven | `super_svc` is verified live as running only on the current Data Guard primary before and after manual/automatic switchovers; standalone services are tested for `duper` and `fluff`. |
 | Tests for Restart, Data Guard, switchover, patching, lab preflight | Proven | Pytest suite covers OS, install, instance, Restart, Data Guard, observer, patching, failover readiness, multi-instance, and lab tooling. |
 | Dedicated patch playbooks | Proven | `07-patch.yml`, `07-patch-grid.yml`, `07-patch-dual-db.yml`, `07-patch-dual-db-switchback.yml`, `07-patch-standbyfirst.yml`, and `07-patch-standbyfirst-media.yml`. |
@@ -102,3 +102,5 @@ future task explicitly changes the desired protection mode.
   `151 passed, 9 skipped`.
 - Full KVM-backed pytest after adding live switchback target summaries:
   `151 passed, 9 skipped`.
+- Full KVM-backed pytest after adding live Restart registration-detail checks:
+  `155 passed, 9 skipped`.
