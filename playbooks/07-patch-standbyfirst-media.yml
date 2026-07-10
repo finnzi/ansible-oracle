@@ -1,0 +1,56 @@
+---
+# playbooks/07-patch-standbyfirst-media.yml - report staged standby-first media.
+#
+# This is a read-only preflight for the remaining eligible-RU apply proof. It
+# scans staged patch zips with the same README parser used by
+# 07-patch-standbyfirst.yml and reports whether any staged zip is fully Data
+# Guard Standby-First Installable.
+
+- name: Report Data Guard standby-first patch media
+  hosts: primary
+  become: true
+  vars:
+    oracle_patch_standbyfirst_media_pattern: "*.zip"
+    oracle_patch_standbyfirst_media_require_eligible: false
+  tasks:
+    - name: Scan staged patch zips for standby-first eligibility
+      patch_standbyfirst_info:
+        directory: "{{ oracle_stage_dir }}"
+        pattern: "{{ oracle_patch_standbyfirst_media_pattern }}"
+      register: _patch_sf_media
+
+    - name: Report standby-first media scan
+      ansible.builtin.debug:
+        msg: >-
+          Standby-first media scan examined {{
+          _patch_sf_media.zip_files_examined }} patch zip(s) under {{
+          oracle_stage_dir }}: eligible={{ _patch_sf_media.eligible_count }},
+          ineligible={{ _patch_sf_media.ineligible_count }}, errors={{
+          _patch_sf_media.error_count }}. Eligible zip(s): {{
+          (_patch_sf_media.eligible_patches | map(attribute='basename') | list | join(', '))
+          if (_patch_sf_media.eligible_count | int > 0) else 'none' }}.
+
+    - name: Report ineligible standby-first media
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.basename }}: {{ item.reason }}
+      loop: "{{ _patch_sf_media.ineligible_patches }}"
+      when: _patch_sf_media.ineligible_count | int > 0
+
+    - name: Report unreadable standby-first media
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.basename }}: {{ item.reason }}
+      loop: "{{ _patch_sf_media.errors }}"
+      when: _patch_sf_media.error_count | int > 0
+
+    - name: Fail when no eligible standby-first media is staged
+      ansible.builtin.fail:
+        msg: >-
+          No staged patch zip is fully Data Guard Standby-First Installable
+          under {{ oracle_stage_dir }}. Stage an eligible standalone DB RU zip,
+          or leave oracle_patch_standbyfirst_media_require_eligible=false for
+          reporting only.
+      when:
+        - oracle_patch_standbyfirst_media_require_eligible | bool
+        - _patch_sf_media.eligible_count | int == 0

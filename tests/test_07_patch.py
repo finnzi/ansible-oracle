@@ -74,6 +74,9 @@ def test_patch_role_db_apply_contract():
     standbyfirst_playbook = (
         REPO_ROOT / "playbooks/07-patch-standbyfirst.yml"
     ).read_text(encoding="utf-8")
+    standbyfirst_media_playbook = (
+        REPO_ROOT / "playbooks/07-patch-standbyfirst-media.yml"
+    ).read_text(encoding="utf-8")
 
     assert "oracle_patch_apply_enabled: false" in defaults
     assert "oracle_patch_expected_patch_ids: []" in defaults
@@ -328,6 +331,12 @@ def test_patch_role_db_apply_contract():
     )
     assert "Validate Data Guard broker after standby-first patching" in standbyfirst_playbook
     assert "Validate Maximum Availability after standby-first patching" in standbyfirst_playbook
+    assert "Report Data Guard standby-first patch media" in standbyfirst_media_playbook
+    assert "Scan staged patch zips for standby-first eligibility" in standbyfirst_media_playbook
+    assert "directory: \"{{ oracle_stage_dir }}\"" in standbyfirst_media_playbook
+    assert "oracle_patch_standbyfirst_media_require_eligible: false" in standbyfirst_media_playbook
+    assert "Report standby-first media scan" in standbyfirst_media_playbook
+    assert "No staged patch zip is fully Data Guard Standby-First Installable" in standbyfirst_media_playbook
 
 
 def test_patch_applied_to_db_home(lab_exec):
@@ -782,3 +791,69 @@ def test_standbyfirst_readiness_only_validates_dataguard_without_execution():
     assert "changed=0" in r.stdout
     assert "failed=0" in r.stdout
     assert "unreachable=0" in r.stdout
+
+
+def test_standbyfirst_media_scan_reports_current_staged_zips():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-standbyfirst-media.yml",
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    output = r.stdout + r.stderr
+    if (
+        r.returncode != 0
+        and ("unreachable=1" in output or "UNREACHABLE!" in output)
+    ):
+        pytest.skip("KVM lab host unreachable; standby-first media scan not run")
+
+    assert r.returncode == 0, output
+    assert "Standby-first media scan examined" in r.stdout
+    assert "eligible=0" in r.stdout
+    assert "Eligible zip(s): none" in r.stdout
+    assert "p39062931_190000_Linux-x86-64.zip" in r.stdout
+    assert "p39062956_190000_Linux-x86-64.zip" in r.stdout
+    assert "changed=0" in r.stdout
+    assert "failed=0" in r.stdout
+
+
+def test_standbyfirst_media_scan_can_require_eligible_zip():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-standbyfirst-media.yml",
+        "-e",
+        "oracle_patch_standbyfirst_media_require_eligible=true",
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    output = r.stdout + r.stderr
+    if (
+        r.returncode != 0
+        and "No staged patch zip is fully Data Guard Standby-First Installable"
+        not in output
+        and ("unreachable=1" in output or "UNREACHABLE!" in output)
+    ):
+        pytest.skip("KVM lab host unreachable; standby-first media gate not run")
+
+    assert r.returncode != 0, output
+    assert "eligible=0" in r.stdout
+    assert "No staged patch zip is fully Data Guard Standby-First Installable" in output
+    assert "oracle_patch_standbyfirst_media_require_eligible=false" in output

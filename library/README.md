@@ -16,11 +16,24 @@ Installable**, by parsing the README files bundled inside the zip.
 - debug: var=sf.eligible
 ```
 
+It can also scan every staged patch zip in a directory:
+
+```yaml
+- name: Find staged standby-first candidates
+  patch_standbyfirst_info:
+    directory: "/u01/stage"
+    pattern: "*.zip"
+  register: sf_media
+- debug: var=sf_media.eligible_patches
+```
+
 Returns `eligible` (bool), `components` (per-component verdicts with patch
 number, README-derived description, standby-first evidence snippet, and README
 path), `patch_inventory` (OPatch `etc/config/inventory.xml` entries with patch
 number, description, parent patch number, top-level patch number, and zip path),
 `reason` (human-readable summary), and `readme_files_examined`.
+Directory scans return `patches`, `eligible_patches`, `ineligible_patches`,
+`errors`, and count fields for each category.
 
 **Detection rule.** Oracle documents standby-first eligibility only as prose in
 the README — there is no machine-readable flag. The module normalises the

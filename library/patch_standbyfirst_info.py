@@ -41,6 +41,7 @@ import os
 import re
 import subprocess
 import zipfile
+from glob import glob
 from html.parser import HTMLParser
 
 # Defer the Ansible import so the parsing functions (analyze_zip,
@@ -52,7 +53,7 @@ except ImportError:  # pragma: no cover — Ansible is present in the venv
     AnsibleModule = None
 
 
-__all__ = ["analyze_zip", "analyze_readme_text"]
+__all__ = ["analyze_zip", "analyze_readme_text", "scan_directory"]
 
 
 # ── Standby-first phrase detection ────────────────────────────────────
@@ -322,26 +323,77 @@ def analyze_zip(zip_path: str) -> dict:
     }
 
 
+def scan_directory(directory: str, pattern: str = "*.zip") -> dict:
+    """Scan staged patch zips and summarize standby-first candidates."""
+    if not os.path.isdir(directory):
+        raise NotADirectoryError(directory)
+
+    patches: list[dict] = []
+    for zip_path in sorted(glob(os.path.join(directory, pattern))):
+        patch = {
+            "path": zip_path,
+            "basename": os.path.basename(zip_path),
+        }
+        try:
+            patch.update(analyze_zip(zip_path))
+        except (zipfile.BadZipFile, OSError) as exc:
+            patch.update(
+                {
+                    "eligible": False,
+                    "components": [],
+                    "patch_inventory": [],
+                    "reason": f"could not read patch zip: {exc}",
+                    "readme_files_examined": 0,
+                    "error": str(exc),
+                }
+            )
+        patches.append(patch)
+
+    eligible = [p for p in patches if p.get("eligible")]
+    errors = [p for p in patches if p.get("error")]
+    ineligible = [p for p in patches if not p.get("eligible") and not p.get("error")]
+    return {
+        "patches": patches,
+        "eligible_patches": eligible,
+        "ineligible_patches": ineligible,
+        "errors": errors,
+        "zip_files_examined": len(patches),
+        "eligible_count": len(eligible),
+        "ineligible_count": len(ineligible),
+        "error_count": len(errors),
+    }
+
+
 # ── Ansible module entry point ────────────────────────────────────────
 def main() -> None:
     if AnsibleModule is None:
         raise SystemExit("ansible.module_utils.basic is required to run as a module")
     module = AnsibleModule(
         argument_spec={
-            "zip": {"type": "str", "required": True},
+            "zip": {"type": "str", "required": False},
+            "directory": {"type": "str", "required": False},
+            "pattern": {"type": "str", "required": False, "default": "*.zip"},
         },
+        required_one_of=[("zip", "directory")],
+        mutually_exclusive=[("zip", "directory")],
         supports_check_mode=True,
     )
     zip_path = module.params["zip"]
+    directory = module.params["directory"]
+    pattern = module.params["pattern"]
 
     try:
-        result = analyze_zip(zip_path)
+        result = scan_directory(directory, pattern) if directory else analyze_zip(zip_path)
     except FileNotFoundError as exc:
         module.fail_json(msg=f"patch zip not found: {exc}")
+    except NotADirectoryError as exc:
+        module.fail_json(msg=f"patch directory not found: {exc}")
     except (zipfile.BadZipFile, OSError) as exc:
-        module.fail_json(msg=f"could not read patch zip {zip_path}: {exc}")
+        target = directory or zip_path
+        module.fail_json(msg=f"could not read patch media {target}: {exc}")
     except Exception as exc:  # noqa: BLE001 — surface any unexpected error to the user
-        module.fail_json(msg=f"unexpected error analysing {zip_path}: {exc}")
+        target = directory or zip_path
+        module.fail_json(msg=f"unexpected error analysing {target}: {exc}")
 
     module.exit_json(changed=False, **result)
 

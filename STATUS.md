@@ -226,6 +226,11 @@ The supported lab path is now KVM/libvirt:
     `standby=super_sby`, verified broker protection `MaxAvailability`,
     validated the standby as `READ ONLY WITH APPLY`, and completed with
     `changed=0`.
+  - `playbooks/07-patch-standbyfirst-media.yml` scans staged patch zip media
+    with the same README parser before an operator attempts an eligible-RU
+    apply. A live scan of the current `/u01/stage` media examined the staged
+    zip files and reported `eligible=0`; the OJVM+DB RU and GI RU bundles are
+    present, but no fully standby-first-eligible standalone DB RU is staged.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
     `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
     `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.
@@ -253,6 +258,9 @@ The supported lab path is now KVM/libvirt:
   confirmation gate on 2026-07-10: `4 passed`.
 - Full pytest verification after the FSFO destructive confirmation-gate proof
   on 2026-07-10: `131 passed, 8 skipped`.
+- Focused standby-first media scan verification on 2026-07-10: `22 passed`.
+- Full pytest verification after the standby-first staged-media scanner on
+  2026-07-10: `136 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -263,8 +271,9 @@ The supported lab path is now KVM/libvirt:
   the primary VM when execution is requested without the confirm value.
 - Live standby-first patch apply with an actually eligible DB RU.
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
-  readiness path is proven, but the eligible-RU apply still requires suitable
-  media plus explicit execution confirmation.
+  readiness path is proven, and the staged-media scanner currently reports no
+  eligible candidate. The eligible-RU apply still requires suitable media plus
+  explicit execution confirmation.
 
 ## Host Findings From This Run
 

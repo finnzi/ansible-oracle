@@ -25,6 +25,7 @@ import importlib
 patch_sf = importlib.import_module("patch_standbyfirst_info")
 analyze_readme_text = patch_sf.analyze_readme_text
 analyze_zip = patch_sf.analyze_zip
+scan_directory = patch_sf.scan_directory
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -131,6 +132,63 @@ class TestAnalyzeZip:
     def test_missing_zip_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             analyze_zip(str(tmp_path / "does-not-exist.zip"))
+
+
+@pytest.mark.slice
+class TestScanDirectory:
+    def _build_zip(self, tmp_path, name: str, layout: dict[str, str]) -> str:
+        zp = tmp_path / name
+        with zipfile.ZipFile(zp, "w") as zf:
+            for member, content in layout.items():
+                zf.writestr(member, content)
+        return str(zp)
+
+    def test_scan_directory_summarizes_eligible_and_ineligible_zips(self, tmp_path):
+        self._build_zip(
+            tmp_path,
+            "eligible.zip",
+            {
+                "12345678/README.html": (
+                    "<p>This patch is Data Guard Standby First Installable.</p>"
+                ),
+            },
+        )
+        self._build_zip(
+            tmp_path,
+            "ineligible.zip",
+            {
+                "87654321/README.html": (
+                    "<p>This patch is non-Data Guard Standby-First Installable.</p>"
+                ),
+            },
+        )
+
+        result = scan_directory(str(tmp_path))
+
+        assert result["zip_files_examined"] == 2
+        assert result["eligible_count"] == 1
+        assert result["ineligible_count"] == 1
+        assert result["error_count"] == 0
+        assert [p["basename"] for p in result["eligible_patches"]] == ["eligible.zip"]
+        assert [p["basename"] for p in result["ineligible_patches"]] == [
+            "ineligible.zip"
+        ]
+
+    def test_scan_directory_reports_bad_zip_without_failing_scan(self, tmp_path):
+        (tmp_path / "bad.zip").write_text("not a zip", encoding="utf-8")
+
+        result = scan_directory(str(tmp_path))
+
+        assert result["zip_files_examined"] == 1
+        assert result["eligible_count"] == 0
+        assert result["ineligible_count"] == 0
+        assert result["error_count"] == 1
+        assert result["errors"][0]["basename"] == "bad.zip"
+        assert "could not read patch zip" in result["errors"][0]["reason"]
+
+    def test_scan_directory_missing_directory_raises(self, tmp_path):
+        with pytest.raises(NotADirectoryError):
+            scan_directory(str(tmp_path / "missing"))
 
 
 # ── Real-patch tests (skipped if installers aren't staged) ─────────────
