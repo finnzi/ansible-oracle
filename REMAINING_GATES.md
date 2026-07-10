@@ -5,6 +5,16 @@ switchback, standby-first readiness, and staged-media scans are already proven.
 Two end-to-end gates remain because they require either new Oracle media or an
 explicit destructive lab action.
 
+Run the safe aggregate check at any time:
+
+```bash
+scripts/check-remaining-gates.sh
+```
+
+That command only runs the read-only standby-first media scan and the
+non-destructive FSFO readiness/libvirt check. It does not pass any destructive
+execution confirmation variables.
+
 ## 1. Eligible Standby-First Patch Apply
 
 Current state: `/u01/stage` contains no fully Data Guard Standby-First

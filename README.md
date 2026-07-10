@@ -115,7 +115,11 @@ Implemented:
 
 See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
 `REMAINING_GATES.md` for the exact commands behind the two remaining explicit
-actions.
+actions. To run the safe read-only checks for those gates, use:
+
+```bash
+scripts/check-remaining-gates.sh
+```
 
 ## Quickstart
 

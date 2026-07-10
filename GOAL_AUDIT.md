@@ -121,3 +121,9 @@ future task explicitly changes the desired protection mode.
   `159 passed, 9 skipped`.
 - Full KVM-backed pytest after adding FSFO libvirt primary-VM readiness:
   `159 passed, 9 skipped`.
+- Live safe remaining-gates wrapper check after adding
+  `scripts/check-remaining-gates.sh`: standby-first media scan reported
+  `eligible=0`, and FSFO readiness/libvirt checks completed with no destructive
+  tasks executed.
+- Full KVM-backed pytest after adding the safe remaining-gates wrapper:
+  `161 passed, 9 skipped`.
