@@ -70,8 +70,8 @@ The supported lab path is now KVM/libvirt:
 - Standby-first patch parser and its unit tests.
 - Live KVM lab boot and standalone database slice on this host:
   - `superdb1` primary/standalone DB host.
-  - `superdb2` prepared DB host for the future standby.
-  - `observer` VM used as the FSFO observer candidate.
+  - `superdb2` Data Guard standby host.
+  - `observer` FSFO observer host.
   - DB home install with OPatch/RU handling.
   - DBCA-created `super` database under `/super`.
   - Listener and `super_svc` client service reachable from the control host.

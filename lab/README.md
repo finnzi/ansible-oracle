@@ -16,9 +16,9 @@ Compose, and Containerfile lab artifacts are intentionally absent.
 | standalone listener VIP | `192.168.87.22` | `duperdb.domain.is` | Additional standalone listener address |
 | standalone listener VIP | `192.168.87.23` | `fluffdb.domain.is` | Additional standalone listener address |
 | Data Guard primary listener VIP | `192.168.87.31` | `superdc1.domain.is` | Primary listener address |
-| `ansible-oracle-lab-superdb2` | `192.168.87.12` | `superdb2.domain.is` | Future Data Guard standby host |
+| `ansible-oracle-lab-superdb2` | `192.168.87.12` | `superdb2.domain.is` | Data Guard standby host |
 | Data Guard standby listener VIP | `192.168.87.32` | `superdc2.domain.is` | Standby listener address |
-| `ansible-oracle-lab-observer` | `192.168.87.13` | `observer.domain.is` (`observer1` in Ansible inventory) | Future FSFO observer |
+| `ansible-oracle-lab-observer` | `192.168.87.13` | `observer.domain.is` (`observer1` in Ansible inventory) | FSFO observer |
 
 The libvirt network is `ansible-oracle-lab` on `192.168.87.0/24`, with fixed
 DHCP leases for the VM MAC addresses. Listener names use dedicated VIPs that

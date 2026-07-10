@@ -11,7 +11,7 @@ away from privileged containers and now provisions three KVM VMs from Oracle
 Linux cloud images:
 
 - `superdb1` - primary or standalone DB node
-- `superdb2` - future Data Guard standby
+- `superdb2` - Data Guard standby DB node
 - `observer` - Fast-Start Failover observer node
 
 Implemented:

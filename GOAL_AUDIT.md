@@ -113,3 +113,5 @@ future task explicitly changes the desired protection mode.
   `156 passed, 9 skipped`.
 - Full KVM-backed pytest after tightening libvirt group/session guidance:
   `157 passed, 9 skipped`.
+- Full KVM-backed pytest after refreshing current KVM Data Guard lab docs:
+  `158 passed, 9 skipped`.

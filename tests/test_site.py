@@ -115,3 +115,22 @@ def test_readme_documents_custom_instance_parameters():
     assert "quote: true" in readme
     assert "oracle_instances[*].parameters" in status
     assert "open_cursors" in status
+
+
+def test_operator_docs_describe_current_kvm_dataguard_lab_state():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    status = (REPO_ROOT / "STATUS.md").read_text(encoding="utf-8")
+    lab_readme = (REPO_ROOT / "lab/README.md").read_text(encoding="utf-8")
+
+    combined = "\n".join([readme, status, lab_readme])
+
+    assert "`superdb2` - Data Guard standby DB node" in readme
+    assert "`observer` - Fast-Start Failover observer node" in readme
+    assert "`superdb2` Data Guard standby host" in status
+    assert "`observer` FSFO observer host" in status
+    assert "Data Guard standby host" in lab_readme
+    assert "FSFO observer" in lab_readme
+    assert "future Data Guard standby" not in combined
+    assert "future standby" not in combined
+    assert "future FSFO observer" not in combined
+    assert "observer candidate" not in combined
