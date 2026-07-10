@@ -96,11 +96,6 @@ Implemented:
 
 ## Remaining Explicit Gates
 
-- The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
-  the underlying FSFO promotion, auto-reinstate, and switchback behavior has
-  been exercised live through an OHASD interruption, and the confirmation gate
-  has been proven to stop before destroying the primary VM when the confirm
-  value is absent.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
   OJVM+RU bundle is correctly rejected by the standby-first precheck before
   broker discovery, home installation, patching, switchover, or datapatch. For
@@ -114,8 +109,9 @@ Implemented:
   and currently reports zero fully eligible standby-first candidates.
 
 See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
-`REMAINING_GATES.md` for the exact commands behind the two remaining explicit
-actions. To run the safe read-only checks for those gates, use:
+`REMAINING_GATES.md` for the exact commands behind the remaining explicit
+action. To run the safe read-only checks for that gate and the proven FSFO
+readiness regression, use:
 
 ```bash
 scripts/check-remaining-gates.sh

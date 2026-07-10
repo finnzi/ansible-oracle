@@ -31,8 +31,7 @@ def test_goal_audit_tracks_original_scope_and_remaining_gates():
 
     assert "OL10 is experimental" in audit
     assert "oracle_dataguard_switchover_target=auto" in audit
-    assert "Explicit destructive FSFO rehearsal" in audit
-    assert "DESTROY_PRIMARY_AND_REINSTATE" in audit
+    assert "Confirmed destructive FSFO VM-crash rehearsal" in audit
     assert "Live eligible standby-first patch apply" in audit
     assert "currently reports zero staged" in audit
     assert "PATCH_STANDBY_FIRST" in audit
@@ -41,10 +40,10 @@ def test_goal_audit_tracks_original_scope_and_remaining_gates():
 def test_goal_audit_does_not_claim_external_gates_are_complete():
     audit = (REPO_ROOT / "GOAL_AUDIT.md").read_text(encoding="utf-8")
 
-    assert "| Automatic failover | Partial |" in audit
+    assert "| Automatic failover | Proven |" in audit
     assert (
         "| Standby-first Data Guard patching when release notes allow | External gate |"
         in audit
     )
-    assert "VM-crash branch is intentionally unrun" in audit
+    assert "VM-crash branch is intentionally unrun" not in audit
     assert "live eligible-RU apply requires suitable standalone DB RU media" in audit

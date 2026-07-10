@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # scripts/check-remaining-gates.sh
 #
-# Run the non-destructive checks for the two remaining explicit gates:
-# standby-first patch media discovery and FSFO readiness. This script never
-# passes the destructive execution confirmation variables.
+# Run the non-destructive checks for the remaining eligible-media gate and the
+# proven FSFO readiness regression. This script never passes destructive
+# execution confirmation variables.
 
 set -euo pipefail
 
@@ -25,9 +25,9 @@ usage() {
   cat <<'EOF'
 Usage: scripts/check-remaining-gates.sh [options]
 
-Run only safe, non-destructive checks for the remaining gates:
-  1. Standby-first media scan.
-  2. FSFO/readiness and primary-VM libvirt reachability.
+Run only safe, non-destructive checks:
+  1. Standby-first media scan for the remaining eligible-media gate.
+  2. FSFO/readiness and primary-VM libvirt reachability regression.
 
 Options:
   --dry-run                 Print commands without running them.

@@ -1,9 +1,9 @@
 # Remaining Gates Runbook
 
 The normal KVM lab, Data Guard, observer, patch inventory, standalone dual-home
-switchback, standby-first readiness, and staged-media scans are already proven.
-Two end-to-end gates remain because they require either new Oracle media or an
-explicit destructive lab action.
+switchback, FSFO VM-crash rehearsal, standby-first readiness, and staged-media
+scans are already proven. One end-to-end gate remains because it requires new
+Oracle media.
 
 Run the safe aggregate check at any time:
 
@@ -11,9 +11,9 @@ Run the safe aggregate check at any time:
 scripts/check-remaining-gates.sh
 ```
 
-That command only runs the read-only standby-first media scan and the
-non-destructive FSFO readiness/libvirt check. It does not pass any destructive
-execution confirmation variables.
+That command runs the read-only standby-first media scan and keeps the proven
+non-destructive FSFO readiness/libvirt regression check available. It does not
+pass any destructive execution confirmation variables.
 
 ## 1. Eligible Standby-First Patch Apply
 
@@ -64,12 +64,13 @@ Expected safety behavior:
   `07-patch-standbyfirst.yml` refuses execution.
 - The playbook requires Data Guard broker `MaxAvailability` before role changes.
 
-## 2. Destructive FSFO Failover/Reinstate Rehearsal
+## Proven: Destructive FSFO Failover/Reinstate Rehearsal
 
-Current state: the readiness path and missing-confirmation refusal are proven,
-and an OHASD interruption already proved FSFO promotion, auto-reinstate, and
-switchback behavior. The dedicated VM-crash rehearsal has not been run because
-it intentionally destroys the current primary VM.
+Current state: the readiness path, missing-confirmation refusal, and confirmed
+VM-crash rehearsal are proven. The confirmed run destroyed
+`ansible-oracle-lab-superdb1`, waited for FSFO to promote `super_sby`,
+restarted and reinstated `super`, waited for FSFO synchronization, switched back
+to `super`, and validated the standby as `READ ONLY WITH APPLY`.
 
 Before the destructive rehearsal, run the readiness path:
 
@@ -90,7 +91,7 @@ env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
 
 That command must fail before `virsh destroy`.
 
-The destructive rehearsal command is:
+The proven destructive rehearsal command is:
 
 ```bash
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \

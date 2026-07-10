@@ -41,7 +41,7 @@ future task explicitly changes the desired protection mode.
 | Flashback/archive/redo toggles | Proven | Live `duper` and `fluff` prove different ARCHIVELOG, flashback, and force logging settings with redo under each instance tree. |
 | Data Guard multiple machines | Proven | `super` primary on `superdb1`, `super_sby` physical standby on `superdb2`. |
 | Third server for automatic failover observer | Proven | Observer VM has Oracle Client, broker aliases, systemd observer ownership, and FSFO enabled. |
-| Automatic failover | Partial | Live OHASD interruption triggered FSFO promotion and auto-reinstate, but the dedicated destructive VM-crash rehearsal remains intentionally unrun. |
+| Automatic failover | Proven | Live OHASD interruption triggered FSFO promotion and auto-reinstate; the confirmed VM-crash rehearsal destroyed the primary VM, promoted `super_sby`, restarted/reinstated `super`, switched back, and validated `READ ONLY WITH APPLY`. |
 | Manual switchover | Proven | Broker switchover `super` -> `super_sby` -> `super` verified live. |
 | Automatic switchover target selection | Proven | Broker switchover with `oracle_dataguard_switchover_target=auto` selects the current standby, is idempotent when the selected target is already primary, and restores `super` as primary after the proof. |
 | Dedicated listener IPs for Data Guard and standalone DBs | Proven | `superdc1`, `superdc2`, `superdb`, `duperdb`, and `fluffdb` mappings/listeners tested. |
@@ -62,18 +62,9 @@ future task explicitly changes the desired protection mode.
 | Automatically read standby-first support from release notes | Proven | `library/patch_standbyfirst_info.py` parses README wording and staged zip directories; tests cover eligible, ineligible, corrupt, and current staged media. |
 | Switch Oracle homes old-to-new | Proven for standalone, partial for Data Guard | Standalone switch/switchback proven live; Data Guard old-to-new path exists in standby-first playbook but live apply requires eligible media. |
 
-## Remaining Completion Gates
+## Remaining Completion Gate
 
-1. Explicit destructive FSFO rehearsal:
-   `playbooks/08-failover-reinstate.yml` can crash the primary VM, wait for FSFO
-   promotion, reinstate, and switch back, but this branch requires
-   `oracle_failover_reinstate_execute=true` and
-   `oracle_failover_reinstate_confirm=DESTROY_PRIMARY_AND_REINSTATE`. The
-   readiness path and missing-confirmation refusal are proven. The destructive
-   VM-crash branch is intentionally unrun until explicitly confirmed by an
-   operator.
-
-2. Live eligible standby-first patch apply:
+1. Live eligible standby-first patch apply:
    `playbooks/07-patch-standbyfirst-media.yml` currently reports zero staged
    fully eligible standby-first patch zips. A live apply requires staging a
    standalone DB RU whose README marks every component as Data Guard
@@ -136,3 +127,10 @@ future task explicitly changes the desired protection mode.
 - Full KVM-backed pytest through `scripts/run-tests.sh` after removing stale
   scaffold-era wording from implemented roles and inventory: `171 passed, 9
   skipped`.
+- Confirmed destructive FSFO VM-crash rehearsal after hardening the recovery
+  path: `virsh destroy` stopped `ansible-oracle-lab-superdb1`, FSFO promoted
+  `super_sby`, the playbook restarted and reinstated `super`, waited for FSFO
+  synchronization, switched back to `super`, and completed with
+  `failed=0`.
+- Full KVM-backed pytest through `scripts/run-tests.sh` after the confirmed
+  destructive FSFO rehearsal: `171 passed, 9 skipped`.

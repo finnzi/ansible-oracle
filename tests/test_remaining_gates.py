@@ -23,9 +23,10 @@ def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     assert "refuses execution" in runbook
 
 
-def test_remaining_gates_documents_fsfo_readiness_gate_and_destructive_confirm():
+def test_remaining_gates_documents_proven_fsfo_rehearsal_command():
     runbook = (REPO_ROOT / "REMAINING_GATES.md").read_text(encoding="utf-8")
 
+    assert "Proven: Destructive FSFO Failover/Reinstate Rehearsal" in runbook
     assert "playbooks/08-failover-reinstate.yml" in runbook
     assert "oracle_failover_reinstate_execute=true" in runbook
     assert (
@@ -35,7 +36,7 @@ def test_remaining_gates_documents_fsfo_readiness_gate_and_destructive_confirm()
     assert "must fail before `virsh destroy`" in runbook
     assert "refuses to destroy the primary VM" in runbook
     assert "validates `virsh dominfo` for the primary VM" in runbook
-    assert "destroys the current primary VM" in runbook
+    assert "validated the standby as `READ ONLY WITH APPLY`" in runbook
 
 
 def test_readme_and_goal_audit_link_remaining_gates_runbook():

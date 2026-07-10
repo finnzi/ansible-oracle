@@ -49,7 +49,21 @@ def test_failover_reinstate_playbook_contract():
     assert "Wait for FSFO to promote target standby" in playbook
     assert "Start old primary VM for broker reinstate" in playbook
     assert "Wait for old primary VM SSH after restart" in playbook
+    assert "Restore lab host aliases on old primary after VM restart" in playbook
+    assert "oracle_failover_lab_host_map_mode: dataguard" in playbook
+    assert "Wait for old primary Oracle Restart after VM restart" in playbook
+    assert "crsctl" in playbook
+    assert "check" in playbook
+    assert "has" in playbook
+    assert "Start old primary broker listener after VM restart" in playbook
+    assert "oracle_failover_primary_listener" in playbook
+    assert "until: >-" in playbook
+    assert "_failover_start_primary_listener.rc == 0" in playbook
+    assert "Wait for old primary broker listener after restart" in playbook
     assert "REINSTATE DATABASE '{{ oracle_failover_original_primary }}'" in playbook
+    assert "Reinstatement of database" in playbook
+    assert "Wait for reinstated primary to become valid FSFO target" in playbook
+    assert "ORA-16817" in playbook
     assert "Switch back to original primary after reinstate through broker" in playbook
     assert "SWITCHOVER TO '{{ oracle_failover_original_primary }}'" in playbook
     assert "Validate original primary restored and standby read-only with apply" in playbook
@@ -59,7 +73,8 @@ def test_failover_reinstate_playbook_contract():
     )
     assert "A live OHASD interruption triggered FSFO promotion" in status
     assert "returned automatically as a synchronized physical standby" in status
-    assert "The explicit destructive execution branch" in status
+    assert "The confirmed destructive VM-crash rehearsal has now been run live" in status
+    assert "waited for Restart/listener readiness" in status
 
 
 def test_failover_reinstate_playbook_syntax_check():

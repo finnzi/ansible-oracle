@@ -21,6 +21,10 @@
     oracle_failover_primary_vm: "{{ lab_name | default('ansible-oracle-lab') }}-superdb1"
     oracle_failover_virsh_uri: "{{ lookup('env', 'VIRSH_URI') | default('qemu:///system', true) }}"
     oracle_failover_primary_ssh_host: "{{ hostvars[(groups.primary | first)].ansible_host | default('192.168.87.11') }}"
+    oracle_failover_primary_listener: "LISTENER_{{ oracle_failover_original_primary | upper }}"
+    oracle_failover_primary_listener_host: "{{ dg_primary.host | default('superdc1.domain.is') }}"
+    oracle_failover_grid_home: "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    oracle_failover_lab_host_map_mode: dataguard
     oracle_failover_wait_retries: 60
     oracle_failover_wait_delay: 10
   tasks:
@@ -123,9 +127,6 @@
         DGMGRL
         )"
         printf '%s\n' "$output"
-        case "$output" in
-          *ORA-*|*Error:*) exit 1 ;;
-        esac
         printf '%s\n' "$output" | awk '/Primary database/ {print $1; exit}' | grep -Fx {{ oracle_failover_target | quote }} >/dev/null
       args: { executable: /bin/bash }
       become: true
@@ -166,6 +167,71 @@
       become: false
       when: oracle_failover_reinstate_execute | bool
 
+    - name: Restore lab host aliases on old primary after VM restart
+      ansible.builtin.blockinfile:
+        path: /etc/hosts
+        marker: "# {mark} ANSIBLE-ORACLE lab guest hosts"
+        block: |
+          {% for entry in oracle_lab_guest_hosts | default([]) %}
+          {% if oracle_failover_lab_host_map_mode in (entry.modes | default([oracle_failover_lab_host_map_mode])) %}
+          {{ entry.ip }} {{ entry.names }}
+          {% endif %}
+          {% endfor %}
+        owner: root
+        group: root
+        mode: "0644"
+      delegate_to: "{{ groups.primary | first }}"
+      become: true
+      when: oracle_failover_reinstate_execute | bool
+
+    - name: Wait for old primary Oracle Restart after VM restart
+      ansible.builtin.command:
+        argv:
+          - "{{ oracle_failover_grid_home }}/bin/crsctl"
+          - check
+          - has
+      delegate_to: "{{ groups.primary | first }}"
+      become: true
+      register: _failover_old_primary_has
+      changed_when: false
+      retries: "{{ oracle_failover_wait_retries }}"
+      delay: "{{ oracle_failover_wait_delay }}"
+      until: _failover_old_primary_has.rc == 0
+      when: oracle_failover_reinstate_execute | bool
+
+    - name: Start old primary broker listener after VM restart
+      ansible.builtin.command:
+        argv:
+          - "{{ oracle_failover_grid_home }}/bin/srvctl"
+          - start
+          - listener
+          - -listener
+          - "{{ oracle_failover_primary_listener }}"
+      delegate_to: "{{ groups.primary | first }}"
+      become: true
+      register: _failover_start_primary_listener
+      changed_when: _failover_start_primary_listener.rc == 0
+      failed_when: >-
+        _failover_start_primary_listener.rc != 0 and
+        'already running' not in (_failover_start_primary_listener.stdout | default('') | lower) and
+        'already running' not in (_failover_start_primary_listener.stderr | default('') | lower)
+      retries: "{{ oracle_failover_wait_retries }}"
+      delay: "{{ oracle_failover_wait_delay }}"
+      until: >-
+        _failover_start_primary_listener.rc == 0 or
+        'already running' in (_failover_start_primary_listener.stdout | default('') | lower) or
+        'already running' in (_failover_start_primary_listener.stderr | default('') | lower)
+      when: oracle_failover_reinstate_execute | bool
+
+    - name: Wait for old primary broker listener after restart
+      ansible.builtin.wait_for:
+        host: "{{ oracle_failover_primary_listener_host }}"
+        port: 1521
+        delay: 2
+        timeout: 300
+      become: false
+      when: oracle_failover_reinstate_execute | bool
+
     - name: Reconcile old primary through broker reinstate
       ansible.builtin.shell: |
         set -o pipefail
@@ -178,10 +244,8 @@
         DGMGRL
         )"
         printf '%s\n' "$output"
-        case "$output" in
-          *Error:*|*ORA-*) exit 1 ;;
-        esac
-        printf '%s\n' "$output" | grep -F 'SUCCESS' >/dev/null || exit 1
+        printf '%s\n' "$output" | grep -F "Reinstatement of database \"{{ oracle_failover_original_primary }}\" succeeded" >/dev/null || exit 1
+        printf '%s\n' "$output" | grep -E '^[[:space:]]*{{ oracle_failover_original_primary }}[[:space:]]+-[[:space:]]+\(\*\)[[:space:]]+Physical standby database' >/dev/null || exit 1
       args: { executable: /bin/bash }
       become: true
       become_user: "{{ oracle_user }}"
@@ -202,7 +266,35 @@
     oracle_failover_original_primary: "{{ observer_dg_primary_unique_name | default('super') }}"
     oracle_failover_observer_config_dir: "{{ observer_config_dir | default(observer_client_home ~ '/network/admin') }}"
     oracle_failover_target_connect_identifier: "{{ observer_dg_standby_connect_identifier | default('super_sby_dgb') }}"
+    oracle_failover_wait_retries: 60
+    oracle_failover_wait_delay: 10
   tasks:
+    - name: Wait for reinstated primary to become valid FSFO target
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ observer_client_home }}
+        export TNS_ADMIN={{ oracle_failover_observer_config_dir }}
+        output="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ oracle_failover_target_connect_identifier }}" <<'DGMGRL'
+        SHOW FAST_START FAILOVER;
+        SHOW CONFIGURATION;
+        EXIT;
+        DGMGRL
+        )"
+        printf '%s\n' "$output"
+        printf '%s\n' "$output" | grep -E '^[[:space:]]*{{ oracle_failover_original_primary }}[[:space:]]+valid' >/dev/null || exit 1
+        printf '%s\n' "$output" | grep -F 'ORA-16817' >/dev/null && exit 1
+        printf '%s\n' "$output" | grep -F 'SUCCESS' >/dev/null || exit 1
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _failover_reinstated_target_ready
+      changed_when: false
+      retries: "{{ oracle_failover_wait_retries }}"
+      delay: "{{ oracle_failover_wait_delay }}"
+      until: _failover_reinstated_target_ready.rc == 0
+      no_log: true
+      when: oracle_failover_reinstate_execute | default(false) | bool
+
     - name: Switch back to original primary after reinstate through broker
       ansible.builtin.shell: |
         set -o pipefail
@@ -215,9 +307,6 @@
         DGMGRL
         )"
         printf '%s\n' "$output"
-        case "$output" in
-          *ORA-*|*Error:*) exit 1 ;;
-        esac
         printf '%s\n' "$output" | awk '/Primary database/ {print $1; exit}' | grep -Fx {{ oracle_failover_original_primary | quote }} >/dev/null
       args: { executable: /bin/bash }
       become: true
@@ -271,4 +360,7 @@
       failed_when: >-
         _failover_final_validate.rc != 0 or
         'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_failover_final_validate.stdout | default(''))
+      retries: "{{ oracle_failover_wait_retries | default(60) }}"
+      delay: "{{ oracle_failover_wait_delay | default(10) }}"
+      until: _failover_final_validate.rc == 0
       no_log: true

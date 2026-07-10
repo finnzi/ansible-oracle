@@ -121,6 +121,12 @@ The supported lab path is now KVM/libvirt:
     The execute-without-confirmation path has also been run live and refuses
     before `virsh destroy`, naming the protected primary VM and required
     confirmation value.
+    The confirmed destructive VM-crash rehearsal has now been run live:
+    `virsh destroy` stopped `ansible-oracle-lab-superdb1`, FSFO promoted
+    `super_sby`, the playbook restarted `superdb1`, restored lab aliases,
+    waited for Restart/listener readiness, reinstated `super`, waited for FSFO
+    synchronization, switched back to `super`, and validated the standby as
+    `READ ONLY WITH APPLY`.
   - A live OHASD interruption triggered FSFO promotion of `super_sby`.
     `super` returned automatically as a synchronized physical standby, and a
     broker switchover restored `super` as primary while retaining Maximum
@@ -278,11 +284,6 @@ The supported lab path is now KVM/libvirt:
 
 ## Not Yet Proven End To End
 
-- The explicit destructive execution branch of
-  `playbooks/08-failover-reinstate.yml`; its underlying FSFO promotion,
-  auto-reinstate, and switchback behavior is now proven live through an OHASD
-  interruption, and the confirmation gate is proven to refuse before destroying
-  the primary VM when execution is requested without the confirm value.
 - Live standby-first patch apply with an actually eligible DB RU.
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
   readiness path is proven, and the staged-media scanner currently reports no
