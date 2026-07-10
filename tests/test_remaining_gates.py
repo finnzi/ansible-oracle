@@ -13,6 +13,7 @@ def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     assert "playbooks/07-patch-standbyfirst-media.yml" in runbook
     assert "oracle_patch_standbyfirst_media_require_eligible=true" in runbook
     assert "playbooks/07-patch-standbyfirst.yml" in runbook
+    assert "-e oracle_patch_zip=/u01/stage/<eligible-standby-first-db-ru.zip>" in runbook
     assert "oracle_patch_standbyfirst_execute=true" in runbook
     assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in runbook
     assert "MaxAvailability" in runbook

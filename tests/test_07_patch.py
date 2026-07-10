@@ -343,6 +343,8 @@ def test_patch_role_db_apply_contract():
     assert "directory: \"{{ oracle_stage_dir }}\"" in standbyfirst_media_playbook
     assert "oracle_patch_standbyfirst_media_require_eligible: false" in standbyfirst_media_playbook
     assert "Report standby-first media scan" in standbyfirst_media_playbook
+    assert "Report eligible standby-first command handoff" in standbyfirst_media_playbook
+    assert "oracle_patch_zip={{ oracle_stage_dir }}/{{ item.basename }}" in standbyfirst_media_playbook
     assert "No staged patch zip is fully Data Guard Standby-First Installable" in standbyfirst_media_playbook
 
 

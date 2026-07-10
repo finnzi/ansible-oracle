@@ -117,3 +117,5 @@ future task explicitly changes the desired protection mode.
   `158 passed, 9 skipped`.
 - Full KVM-backed pytest after refreshing supported KVM lab status wording:
   `159 passed, 9 skipped`.
+- Full KVM-backed pytest after adding eligible standby-first media command handoff:
+  `159 passed, 9 skipped`.

@@ -37,6 +37,16 @@
       loop: "{{ _patch_sf_media.ineligible_patches }}"
       when: _patch_sf_media.ineligible_count | int > 0
 
+    - name: Report eligible standby-first command handoff
+      ansible.builtin.debug:
+        msg: >-
+          Eligible standby-first zip {{ item.basename }} detected. Use
+          -e oracle_patch_zip={{ oracle_stage_dir }}/{{ item.basename }} on the
+          readiness and confirmed apply commands for
+          playbooks/07-patch-standbyfirst.yml.
+      loop: "{{ _patch_sf_media.eligible_patches }}"
+      when: _patch_sf_media.eligible_count | int > 0
+
     - name: Report unreadable standby-first media
       ansible.builtin.debug:
         msg: >-

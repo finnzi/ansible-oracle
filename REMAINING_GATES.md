@@ -21,12 +21,14 @@ env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   -e oracle_patch_standbyfirst_media_require_eligible=true
 ```
 
-Then run the readiness path without applying anything:
+Then run the readiness path without applying anything, using the eligible
+`oracle_patch_zip` value printed by the media scan:
 
 ```bash
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
   playbooks/07-patch-standbyfirst.yml \
+  -e oracle_patch_zip=/u01/stage/<eligible-standby-first-db-ru.zip> \
   -e oracle_patch_standbyfirst_require_eligible=false
 ```
 
@@ -38,6 +40,7 @@ confirmed apply:
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
   playbooks/07-patch-standbyfirst.yml \
+  -e oracle_patch_zip=/u01/stage/<eligible-standby-first-db-ru.zip> \
   -e oracle_patch_standbyfirst_execute=true \
   -e oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST
 ```
