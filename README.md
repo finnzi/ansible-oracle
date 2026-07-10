@@ -100,7 +100,11 @@ Still scaffolded or not yet proven end to end:
   broker discovery, home installation, patching, switchover, or datapatch. For
   an eligible RU, the dedicated playbook is readiness-only unless explicitly
   confirmed with `oracle_patch_standbyfirst_execute=true` and
-  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
+  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`. The readiness-only
+  path has been run live by disabling the eligibility failure while leaving
+  execution false; it resolved the current broker roles, preserved Maximum
+  Availability, validated the standby as `READ ONLY WITH APPLY`, and made no
+  changes.
 
 ## Quickstart
 

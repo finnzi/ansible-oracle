@@ -218,6 +218,11 @@ The supported lab path is now KVM/libvirt:
     staged OJVM+RU bundle is not standby-first eligible and is rejected before
     broker role discovery, target-home installation, DB-home patching,
     switchover, or datapatch; an eligible live RU apply remains not yet proven.
+    The readiness-only path has also been run live with the eligibility failure
+    disabled and execution still false: it resolved `primary=super` and
+    `standby=super_sby`, verified broker protection `MaxAvailability`,
+    validated the standby as `READ ONLY WITH APPLY`, and completed with
+    `changed=0`.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
     `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
     `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.
@@ -239,6 +244,8 @@ The supported lab path is now KVM/libvirt:
   on 2026-07-10: `130 passed, 7 skipped`.
 - Full pytest verification after the standby-first readiness-first execution
   guard on 2026-07-10: `129 passed, 8 skipped`.
+- Full pytest verification after the live standby-first readiness-only proof
+  on 2026-07-10: `130 passed, 8 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -248,7 +255,8 @@ The supported lab path is now KVM/libvirt:
   interruption.
 - Live standby-first patch apply with an actually eligible DB RU.
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
-  eligible-RU apply still requires explicit execution confirmation.
+  readiness path is proven, but the eligible-RU apply still requires suitable
+  media plus explicit execution confirmation.
 
 ## Host Findings From This Run
 

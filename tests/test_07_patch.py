@@ -743,3 +743,42 @@ def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
         "Patch new Data Guard standby DB homes",
     ]:
         assert skipped_task not in r.stdout
+
+
+def test_standbyfirst_readiness_only_validates_dataguard_without_execution():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-standbyfirst.yml",
+        "-e",
+        "oracle_patch_standbyfirst_require_eligible=false",
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    output = r.stdout + r.stderr
+    if (
+        r.returncode != 0
+        and ("unreachable=1" in output or "UNREACHABLE!" in output)
+    ):
+        pytest.skip("KVM lab host unreachable; standby-first readiness not run")
+
+    assert r.returncode == 0, output
+    assert (
+        "Standby-first readiness passed for primary=super, standby=super_sby"
+        in r.stdout
+    )
+    assert "protection=MaxAvailability" in r.stdout
+    assert "No DB homes were installed or patched" in r.stdout
+    assert "no broker switchover was run" in r.stdout
+    assert "datapatch was not executed" in r.stdout
+    assert "changed=0" in r.stdout
+    assert "failed=0" in r.stdout
+    assert "unreachable=0" in r.stdout
