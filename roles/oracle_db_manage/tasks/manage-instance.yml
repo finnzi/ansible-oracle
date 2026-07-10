@@ -10,6 +10,11 @@
     _dbca_response_file: "{{ inst.oracle_base }}/.stage_{{ inst.name }}/dbca.rsp"
     _listener_host: "{{ inst.listener_vip }}"
     _listener_port: "{{ inst.listener_port | default(1521) }}"
+    # These facts are host-scoped, so reset them before every include_tasks
+    # iteration instead of inheriting the previous instance's SQL state.
+    _db_reachable: false
+    _dbfacts_fields: []
+    _db_reconcile_writable: false
 
 - name: Check if instance already exists (oratab + DB open)
   ansible.builtin.shell: |
@@ -94,6 +99,27 @@
     - _dbfacts_sql.rc == 0
     - "'|' in (_dbfacts_sql.stdout | default(''))"
 
+- name: Record whether this host currently owns the writable primary
+  ansible.builtin.set_fact:
+    _db_reconcile_writable: >-
+      {{ _dbfacts_fields[3] == 'PRIMARY' and _dbfacts_fields[0] == 'READ WRITE' }}
+  when: _db_reachable | default(false)
+
+- name: Fail when the database is not ready for reconciliation
+  ansible.builtin.fail:
+    msg: >-
+      {{ inst.name }} is not ready for inventory reconciliation: expected a
+      READ WRITE primary or a broker-managed physical standby, got
+      {{ (_dbfacts_fields[3] | default('unknown')) }}|
+      {{ (_dbfacts_fields[0] | default('unreachable')) }}. Restore the database
+      through Oracle Restart before applying inventory changes.
+  when: >-
+    not (_db_reachable | default(false)) or
+    (_dbfacts_fields[3] not in ['PRIMARY', 'PHYSICAL STANDBY']) or
+    (_dbfacts_fields[3] == 'PRIMARY' and _dbfacts_fields[0] != 'READ WRITE') or
+    (_dbfacts_fields[3] == 'PHYSICAL STANDBY' and
+     _dbfacts_fields[0] != 'READ ONLY WITH APPLY')
+
 # ── Reconcile runtime parameters (idempotent) ─────────────────────────
 - name: Apply memory / archivelog / flashback / force-logging settings
   ansible.builtin.shell: |
@@ -122,7 +148,7 @@
     _params_sql.rc != 0 or
     'ORA-' in (_params_sql.stdout | default('')) or
     'SP2-' in (_params_sql.stdout | default(''))
-  when: _db_reachable | default(false)
+  when: _db_reconcile_writable | default(false)
 
 # These require restarts of the right kind; gate on the *current* value so we
 # only change them when needed.
@@ -161,7 +187,18 @@
     _archivelog.rc != 0 or
     'ORA-' in (_archivelog.stdout | default('')) or
     'SP2-' in (_archivelog.stdout | default(''))
-  when: _db_reachable | default(false)
+  when: _db_reconcile_writable | default(false)
+
+- name: Fail when Data Guard inventory disables flashback
+  ansible.builtin.fail:
+    msg: >-
+      {{ inst.name }} uses Data Guard/FSFO and must keep flashback enabled for
+      automatic reinstate. Set flashback=true, or manage this database as a
+      non-FSFO standalone instance before disabling flashback.
+  when:
+    - _db_reconcile_writable | default(false)
+    - inst.dataguard | default(false) | bool
+    - not (inst.flashback | default(false) | bool)
 
 - name: Toggle FLASHBACK ON/OFF (if differs from desired)
   ansible.builtin.shell: |
@@ -175,7 +212,13 @@
     )"
     want="{{ 'YES' if (inst.flashback | default(false)) else 'NO' }}"
     if [ "${cur// /}" != "${want}" ]; then
-      printf '%s\n' 'ALTER DATABASE FLASHBACK ON;' 'EXIT;' |
+      printf '%s\n' \
+        {% if inst.flashback | default(false) -%}
+        'ALTER DATABASE FLASHBACK ON;' \
+        {% else -%}
+        'ALTER DATABASE FLASHBACK OFF;' \
+        {% endif -%}
+        'EXIT;' |
         "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
       echo CHANGED
     else
@@ -190,7 +233,7 @@
     _flashback.rc != 0 or
     'ORA-' in (_flashback.stdout | default('')) or
     'SP2-' in (_flashback.stdout | default(''))
-  when: _db_reachable | default(false) and (inst.flashback | default(false))
+  when: _db_reconcile_writable | default(false)
 
 - name: Toggle FORCE LOGGING (if differs from desired)
   ansible.builtin.shell: |
@@ -204,7 +247,13 @@
     )"
     want="{{ 'YES' if (inst.force_logging | default(true)) else 'NO' }}"
     if [ "${cur// /}" != "${want}" ]; then
-      printf '%s\n' 'ALTER DATABASE FORCE LOGGING;' 'EXIT;' |
+      printf '%s\n' \
+        {% if inst.force_logging | default(true) -%}
+        'ALTER DATABASE FORCE LOGGING;' \
+        {% else -%}
+        'ALTER DATABASE NO FORCE LOGGING;' \
+        {% endif -%}
+        'EXIT;' |
         "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
       echo CHANGED
     else
@@ -219,7 +268,7 @@
     _forcelog.rc != 0 or
     'ORA-' in (_forcelog.stdout | default('')) or
     'SP2-' in (_forcelog.stdout | default(''))
-  when: _db_reachable | default(false)
+  when: _db_reconcile_writable | default(false)
 
 - name: Ensure online redo groups have members in the dedicated redo directory
   ansible.builtin.shell: |
@@ -263,7 +312,7 @@
     'ORA-' in (_redo_members.stdout | default('')) or
     'SP2-' in (_redo_members.stdout | default('')) or
     'PLS-' in (_redo_members.stdout | default(''))
-  when: _db_reachable | default(false)
+  when: _db_reconcile_writable | default(false)
 
 - name: Remove online redo members outside the dedicated redo directory
   ansible.builtin.shell: |
@@ -351,4 +400,4 @@
     'ORA-' in (_redo_member_cleanup.stdout | default('')) or
     'SP2-' in (_redo_member_cleanup.stdout | default('')) or
     'PLS-' in (_redo_member_cleanup.stdout | default(''))
-  when: _db_reachable | default(false)
+  when: _db_reconcile_writable | default(false)

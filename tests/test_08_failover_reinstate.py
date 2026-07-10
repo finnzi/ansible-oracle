@@ -50,7 +50,9 @@ def test_failover_reinstate_playbook_contract():
         "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY"
         in playbook
     )
-    assert "Live destructive automatic failover simulation and reinstate execution" in status
+    assert "A live OHASD interruption triggered FSFO promotion" in status
+    assert "returned automatically as a synchronized physical standby" in status
+    assert "The explicit destructive execution branch" in status
 
 
 def test_failover_reinstate_playbook_syntax_check():

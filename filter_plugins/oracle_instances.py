@@ -7,10 +7,21 @@ from copy import deepcopy
 from typing import Any
 
 
+def _ansible_bool(value: Any) -> bool:
+    """Coerce booleans the same way operators expect from Ansible extra vars."""
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"false", "no", "off", "0", "", "none", "null"}:
+            return False
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+    return bool(value)
+
+
 def oracle_apply_instance_overrides(
     instances: list[dict[str, Any]] | None,
     overrides: Mapping[str, Mapping[str, Any]] | None = None,
-    require_dataguard: bool = True,
+    require_dataguard: Any = True,
 ) -> list[dict[str, Any]]:
     """Merge host/group overrides into instance dictionaries.
 
@@ -24,7 +35,10 @@ def oracle_apply_instance_overrides(
     for inst in instances or []:
         merged = deepcopy(inst)
         name = str(merged.get("name", ""))
-        if name and (not require_dataguard or bool(merged.get("dataguard"))):
+        if name and (
+            not _ansible_bool(require_dataguard)
+            or _ansible_bool(merged.get("dataguard"))
+        ):
             merged.update(deepcopy(dict(overrides.get(name, {}))))
         resolved.append(merged)
 

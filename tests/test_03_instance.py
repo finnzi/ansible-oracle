@@ -39,6 +39,9 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     main_tasks = (
         REPO_ROOT / "roles/oracle_db_manage/tasks/main.yml"
     ).read_text(encoding="utf-8")
+    manage_defaults = (
+        REPO_ROOT / "roles/oracle_db_manage/defaults/main.yml"
+    ).read_text(encoding="utf-8")
     instance_tasks = (
         REPO_ROOT / "roles/oracle_db_manage/tasks/manage-instance.yml"
     ).read_text(encoding="utf-8")
@@ -57,17 +60,27 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     service_main_tasks = (
         REPO_ROOT / "roles/oracle_service_manage/tasks/main.yml"
     ).read_text(encoding="utf-8")
+    service_defaults = (
+        REPO_ROOT / "roles/oracle_service_manage/defaults/main.yml"
+    ).read_text(encoding="utf-8")
     lab_group_vars = (
         REPO_ROOT / "inventory/group_vars/all.yml"
     ).read_text(encoding="utf-8")
     test_conftest = (REPO_ROOT / "tests/conftest.py").read_text(encoding="utf-8")
     test_runner = (REPO_ROOT / "scripts/run-tests.sh").read_text(encoding="utf-8")
+    site = (REPO_ROOT / "playbooks/site.yml").read_text(encoding="utf-8")
 
     assert "_db_instances" not in main_tasks
+    assert "oracle_db_manage_apply_instance_overrides_require_dataguard" in main_tasks
+    assert "oracle_db_manage_apply_instance_overrides_require_dataguard: true" in manage_defaults
+    assert "oracle_db_manage_apply_instance_overrides_require_dataguard: false" in site
     assert "'standby' not in group_names" in main_tasks
     assert "or (inst.dataguard" not in main_tasks
-    assert "'standby' not in group_names" in service_main_tasks
+    assert "inst.dataguard | default(false) | bool or 'standby' not in group_names" in service_main_tasks
     assert "or (inst.dataguard" not in service_main_tasks
+    assert "oracle_service_apply_instance_overrides_require_dataguard" in service_main_tasks
+    assert "oracle_service_apply_instance_overrides_require_dataguard: true" in service_defaults
+    assert "oracle_service_apply_instance_overrides_require_dataguard: false" in site
     assert "oracle_stage_dir }}/{{ inst.name }}_dbca.rsp" not in instance_tasks
     assert "_dbca_response_file" in instance_tasks
     assert "autostartDuringBuild" not in dbca_response
@@ -77,6 +90,12 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "'100% complete' in (_dbca.stdout | default(''))" in instance_tasks
     assert "map('combine'" not in network_tasks
     assert "'standby' not in group_names" in network_tasks
+    assert (
+        "set include_inst = ('standby' not in group_names or "
+        "(inst.dataguard | default(false) | bool))"
+        in network_tasks
+    )
+    assert "if dg_mode else ('standby' not in group_names" not in network_tasks
     assert "Ensure guest /etc/hosts has the lab host aliases" in network_tasks
     assert "oracle_network_open_firewall: false" in network_defaults
     assert "oracle_lab_host_map_mode: standalone" in network_defaults
@@ -90,6 +109,15 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "modes: [standalone]" in lab_group_vars
     assert "_listener_host" in instance_tasks
     assert "ALTER SYSTEM SET local_listener" in instance_tasks
+    assert "_db_reachable: false" in instance_tasks
+    assert "_dbfacts_fields: []" in instance_tasks
+    assert "_db_reconcile_writable: false" in instance_tasks
+    assert "Fail when the database is not ready for reconciliation" in instance_tasks
+    assert "_dbfacts_fields[3] == 'PRIMARY'" in instance_tasks
+    assert "PHYSICAL STANDBY" in instance_tasks
+    assert "READ ONLY WITH APPLY" in instance_tasks
+    assert "Fail when Data Guard inventory disables flashback" in instance_tasks
+    assert "when: _db_reconcile_writable | default(false)" in instance_tasks
     assert "192.168.87.31" in lab_group_vars
     assert "names: superdc1.domain.is superdc1" in lab_group_vars
     assert "192.168.87.32" in lab_group_vars
@@ -108,6 +136,12 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "r.inst is defined" in network_tasks
     assert "r.item is defined" not in network_tasks
     assert "ALTER SYSTEM REGISTER" in service_tasks
+    assert "Read local database role before service reconciliation" in service_tasks
+    assert "PRIMARY|READ WRITE" in service_tasks
+    assert "when: _svc_manage_current_primary | bool" in service_tasks
+    assert "_svc_restart_db" in service_tasks
+    assert "-db {{ _svc_restart_db }}" in service_tasks
+    assert "SERVICE_REGISTERED_FOR_PRIMARY_ROLE" in service_tasks
     assert "Srvctl enable + start service" in service_tasks
     assert "srvctl\" enable service" in service_tasks
     assert "srvctl\" start service" in service_tasks
@@ -131,6 +165,11 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     )
     assert "ALTER DATABASE DROP LOGFILE MEMBER" in instance_tasks
     assert "member NOT LIKE '{{ inst.dirs.redo }}/%'" in instance_tasks
+    assert "ALTER DATABASE FLASHBACK ON" in instance_tasks
+    assert "ALTER DATABASE FLASHBACK OFF" in instance_tasks
+    assert "and (inst.flashback | default(false))" not in instance_tasks
+    assert "ALTER DATABASE FORCE LOGGING" in instance_tasks
+    assert "ALTER DATABASE NO FORCE LOGGING" in instance_tasks
 
 
 def test_instance_is_open_read_write(db_connection):

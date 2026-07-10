@@ -38,3 +38,6 @@ oracle_gi_install_recreate_incomplete_home: true
 
 # Keep the install explicit while this path is being hardened in the lab.
 oracle_gi_install_enabled: false
+
+# Existing installations are report-only unless repair is explicitly enabled.
+oracle_gi_repair_existing_enabled: false

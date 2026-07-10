@@ -65,6 +65,29 @@ def test_overrides_apply_for_dataguard_instances():
     assert resolved[0]["dg_role"] == "standby"
 
 
+def test_string_false_disables_dataguard_requirement_for_cli_extra_vars():
+    instances = [{"name": "super", "dataguard": False}]
+    overrides = {"super": {"dataguard": True, "dg_role": "standby"}}
+
+    resolved = oracle_instances_filter.oracle_apply_instance_overrides(
+        instances, overrides, require_dataguard="false"
+    )
+
+    assert resolved[0]["dataguard"] is True
+    assert resolved[0]["dg_role"] == "standby"
+
+
+def test_string_true_keeps_overrides_dormant_for_standalone_instances():
+    instances = [{"name": "super", "dataguard": False}]
+    overrides = {"super": {"dataguard": True, "dg_role": "standby"}}
+
+    resolved = oracle_instances_filter.oracle_apply_instance_overrides(
+        instances, overrides, require_dataguard="true"
+    )
+
+    assert resolved[0] == {"name": "super", "dataguard": False}
+
+
 def test_overrides_do_not_mutate_source_instances():
     instances = [{"name": "super", "dataguard": True}]
     overrides = {"super": {"listener_vip": "superdc1.domain.is"}}

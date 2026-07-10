@@ -112,9 +112,11 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     )
     assert "set inst = raw_inst" in network_tasks
     assert (
-        "set include_inst = (inst.dataguard | default(false) | bool) if dg_mode"
+        "set include_inst = ('standby' not in group_names or "
+        "(inst.dataguard | default(false) | bool))"
         in network_tasks
     )
+    assert "if dg_mode else ('standby' not in group_names" not in network_tasks
     assert "oracle_lab_guest_hosts | map(attribute='names')" in network_tasks
     assert "Remove stale lab host aliases from guest /etc/hosts" in network_tasks
     assert "'dc2' if 'standby' in group_names else 'dc1'" in network_tasks

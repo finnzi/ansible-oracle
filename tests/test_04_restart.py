@@ -11,6 +11,7 @@ Restart is absent and the gap is honestly recorded).
 """
 from __future__ import annotations
 
+import os
 import shlex
 import time
 from pathlib import Path
@@ -28,6 +29,9 @@ def test_gi_install_role_has_oracle_restart_install_path():
     defaults = (REPO_ROOT / "roles/oracle_gi_install/defaults/main.yml").read_text(
         encoding="utf-8"
     )
+    all_vars = (REPO_ROOT / "inventory/group_vars/all.yml").read_text(
+        encoding="utf-8"
+    )
     tasks = (REPO_ROOT / "roles/oracle_gi_install/tasks/main.yml").read_text(
         encoding="utf-8"
     )
@@ -40,6 +44,8 @@ def test_gi_install_role_has_oracle_restart_install_path():
     assert "oracle_gi_asm_diskgroup_name: RESTART" in defaults
     assert "oracle_gi_asm_disk_discovery_string: /dev/vdb" in defaults
     assert "oracle_gi_install_recreate_incomplete_home: true" in defaults
+    assert "oracle_gi_repair_existing_enabled: false" in defaults
+    assert "oracle_gi_repair_existing_enabled: true" in all_vars
     assert "oracle_gi_install_min_free_mb" in defaults
     assert "Probe existing Restart stack before install" in tasks
     assert "Verify Grid ASM disk exists for Oracle Restart" in tasks
@@ -50,6 +56,13 @@ def test_gi_install_role_has_oracle_restart_install_path():
     assert "./gridSetup.sh -silent -force -waitforcompletion" in tasks
     assert "-applyRU {{ _gi_ru_apply_dir.stdout | trim | quote }}" in tasks
     assert "{{ oracle_gi_home }}/root.sh" in tasks
+    assert "Install systemd OHASD stack-start drop-in" in tasks
+    assert "Read native OHASD systemd unit" in tasks
+    assert "_gi_ohasd_native_starts_stack" in tasks
+    assert "Remove redundant OHASD stack-start drop-in" in tasks
+    assert "ExecStartPost=/etc/init.d/ohasd start" in tasks
+    assert "Recover an installed but offline Restart stack" in tasks
+    assert "Wait for Oracle High Availability Services" in tasks
     assert "oracle.install.option=HA_CONFIG" in response
     assert "oracle.install.crs.config.storageOption=FLEX_ASM_STORAGE" in response
     assert "oracle.install.asm.diskGroup.disks={{ oracle_gi_asm_disks }}" in response
@@ -65,6 +78,10 @@ def test_restart_registration_uses_supported_srvctl_syntax():
     ).read_text(encoding="utf-8")
 
     assert "Start local CSS before srvctl database operations" in main_tasks
+    assert "Read local CSS autostart policy" in main_tasks
+    assert "Configure local CSS to start with OHASD" in main_tasks
+    assert 'AUTO_START=always' in main_tasks
+    assert 'crsctl modify resource ora.cssd' in main_tasks
     assert "crsctl start resource ora.cssd -init" in main_tasks
     assert "srvctl\" add database" in register_tasks
     assert "-autostart" not in register_tasks
@@ -75,6 +92,13 @@ def test_restart_registration_uses_supported_srvctl_syntax():
     assert "listener_rc=$?" in register_tasks
     assert "database_rc=$?" in register_tasks
     assert "failed_when: _srvctl_start.rc != 0" in register_tasks
+    assert "Probe database open mode after Restart start" in register_tasks
+    assert "Recover a database left mounted by an earlier CSS failure" in register_tasks
+    assert "Wait for database role-appropriate readiness under Restart" in register_tasks
+    assert "database_role || '|' || open_mode" in register_tasks
+    assert "'PRIMARY|READ WRITE'" in register_tasks
+    assert "'PHYSICAL STANDBY|READ ONLY WITH APPLY'" in register_tasks
+    assert "-startoption OPEN" in register_tasks
 
 
 def _restart_installed(lab_exec) -> bool:
@@ -154,6 +178,57 @@ def test_srvctl_status_or_honest_gap(lab_exec):
         )
 
     _ensure_restart_database_running(lab_exec)
+
+
+def test_restart_systemd_unit_starts_stack_after_monitor(lab_exec):
+    """The native unit must launch the stack as well as the init monitor."""
+    if not _restart_installed(lab_exec):
+        pytest.skip("Oracle Restart not installed; skipping systemd unit test.")
+
+    unit = lab_exec("systemctl cat oracle-ohasd.service")
+    assert unit.returncode == 0, unit.stdout + unit.stderr
+    native_starts_stack = "ExecStart=/etc/init.d/ohasd " in unit.stdout
+    monitor_repair = (
+        "ExecStart=/etc/init.d/init.ohasd run" in unit.stdout
+        and "ExecStartPost=/etc/init.d/ohasd start" in unit.stdout
+    )
+    assert native_starts_stack or monitor_repair
+
+
+@pytest.mark.slow
+def test_standby_recovers_after_ohasd_unit_restart(standby_exec):
+    """Opt-in live test of OHASD, CSS, and standby database recovery."""
+    if os.environ.get("ORACLE_TEST_OHASD_RESTART") != "1":
+        pytest.skip("set ORACLE_TEST_OHASD_RESTART=1 to restart standby OHASD")
+
+    restart = standby_exec("systemctl restart oracle-ohasd.service", timeout=180)
+    assert restart.returncode == 0, restart.stdout + restart.stderr
+
+    sql_command = (
+        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super; "
+        "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
+        "SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF\n"
+        "SELECT database_role || '|' || open_mode FROM v$database;\n"
+        "EXIT;\n"
+        "SQL"
+    )
+    deadline = time.time() + RESTART_BRINGUP_WINDOW_S
+    last = ""
+    while time.time() < deadline:
+        state = standby_exec(
+            "/grid/19c/gi_home1/bin/crsctl check has 2>&1; "
+            "/grid/19c/gi_home1/bin/crsctl stat res ora.cssd -t -init 2>&1; "
+            f"su - oracle -c {shlex.quote(sql_command)}"
+        )
+        last = state.stdout
+        if (
+            "CRS-4638" in last
+            and "ONLINE  ONLINE" in last
+            and "PHYSICAL STANDBY|READ ONLY WITH APPLY" in last
+        ):
+            return
+        time.sleep(POLL_INTERVAL_S)
+    pytest.fail(f"standby did not recover after OHASD restart:\n{last}")
 
 
 @pytest.mark.slow

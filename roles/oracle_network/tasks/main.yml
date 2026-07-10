@@ -18,7 +18,9 @@
       {%- set require_dg = false if dg_mode else true -%}
       {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
         {%- set inst = raw_inst -%}
-        {%- set include_inst = (inst.dataguard | default(false) | bool) if dg_mode else ('standby' not in group_names or (inst.dataguard | default(false) | bool)) -%}
+        {# Primary hosts may mix standalone and Data Guard databases. Standby
+           hosts only need listeners for the Data Guard instances they host. #}
+        {%- set include_inst = ('standby' not in group_names or (inst.dataguard | default(false) | bool)) -%}
         {%- if include_inst -%}
           {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
           {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}

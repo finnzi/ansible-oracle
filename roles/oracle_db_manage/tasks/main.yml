@@ -6,7 +6,14 @@
 
 - name: Per-instance DBCA + reconcile loop
   ansible.builtin.include_tasks: manage-instance.yml
-  loop: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | oracle_apply_instance_overrides(
+          oracle_instance_overrides | default({}),
+          oracle_db_manage_apply_instance_overrides_require_dataguard | default(true)
+        )
+    }}
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"

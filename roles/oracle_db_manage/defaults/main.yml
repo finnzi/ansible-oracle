@@ -8,6 +8,7 @@
 oracle_user: oracle
 oracle_group: oinstall
 oracle_instances: []
+oracle_db_manage_apply_instance_overrides_require_dataguard: true
 
 oracle_lab_sys_password:    "SysPassword1_"
 oracle_lab_system_password: "SysPassword1_"

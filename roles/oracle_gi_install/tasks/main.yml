@@ -308,6 +308,112 @@
         group: "{{ oracle_group }}"
         mode: "0644"
 
+- name: Check OHASD systemd and stack-start scripts
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/systemd/system/oracle-ohasd.service
+    - /etc/init.d/ohasd
+  register: _gi_ohasd_boot_files
+
+- name: Resolve existing Restart repair policy
+  ansible.builtin.set_fact:
+    _gi_ohasd_repair_requested: >-
+      {{
+        (oracle_gi_install_enabled | bool) or
+        (oracle_gi_repair_existing_enabled | bool)
+      }}
+    _gi_ohasd_boot_files_present: >-
+      {{ _gi_ohasd_boot_files.results | map(attribute='stat.exists') | min }}
+    _gi_ohasd_native_starts_stack: false
+
+- name: Read native OHASD systemd unit
+  ansible.builtin.slurp:
+    path: /etc/systemd/system/oracle-ohasd.service
+  register: _gi_ohasd_native_unit
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_ohasd_boot_files_present | bool
+
+- name: Detect whether native OHASD unit already starts the stack
+  ansible.builtin.set_fact:
+    _gi_ohasd_native_starts_stack: >-
+      {{
+        ((_gi_ohasd_native_unit.content | b64decode)
+         | regex_search('(?m)^ExecStart=/etc/init\.d/ohasd(?:\s|$)'))
+        is not none
+      }}
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_ohasd_boot_files_present | bool
+
+# Some Oracle 19c OL9 units launch only the long-lived init.ohasd monitor. The
+# SysV action that runs `crsctl start has -nowait` is then lost under systemd.
+- name: Ensure OHASD systemd drop-in directory exists
+  ansible.builtin.file:
+    path: /etc/systemd/system/oracle-ohasd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_ohasd_boot_files_present | bool
+    - not (_gi_ohasd_native_starts_stack | bool)
+
+- name: Install systemd OHASD stack-start drop-in
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/oracle-ohasd.service.d/10-start-stack.conf
+    content: |
+      [Service]
+      ExecStartPost=/etc/init.d/ohasd start
+    owner: root
+    group: root
+    mode: "0644"
+  register: _gi_ohasd_dropin
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_ohasd_boot_files_present | bool
+    - not (_gi_ohasd_native_starts_stack | bool)
+
+- name: Remove redundant OHASD stack-start drop-in
+  ansible.builtin.file:
+    path: /etc/systemd/system/oracle-ohasd.service.d/10-start-stack.conf
+    state: absent
+  register: _gi_ohasd_dropin_remove
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_ohasd_boot_files_present | bool
+    - _gi_ohasd_native_starts_stack | bool
+
+- name: Reload systemd after OHASD unit repair
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: >-
+    (_gi_ohasd_dropin.changed | default(false)) or
+    (_gi_ohasd_dropin_remove.changed | default(false))
+
+- name: Recover an installed but offline Restart stack
+  ansible.builtin.command: /etc/init.d/ohasd start
+  register: _gi_ohasd_recover
+  changed_when: "'CRS-4123' in (_gi_ohasd_recover.stdout | default(''))"
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_ohasd_boot_files_present | bool
+    - _gi_srvctl.stat.exists
+    - "'CRS-4638' not in (_gi_existing_has_check.stdout | default(''))"
+
+- name: Wait for Oracle High Availability Services
+  ansible.builtin.command: "{{ oracle_gi_home }}/bin/crsctl check has"
+  register: _gi_has_wait
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: "'CRS-4638' in (_gi_has_wait.stdout | default(''))"
+  when:
+    - _gi_ohasd_repair_requested | bool
+    - _gi_srvctl.stat.exists
+
 - name: Probe Restart stack after GI install attempt
   ansible.builtin.shell: |
     set -o pipefail

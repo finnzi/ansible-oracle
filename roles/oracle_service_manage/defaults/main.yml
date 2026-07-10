@@ -11,3 +11,4 @@ oracle_group: oinstall
 oracle_instances: []
 oracle_gi_home: /grid/19c/gi_home1
 oracle_restart_available: false
+oracle_service_apply_instance_overrides_require_dataguard: true

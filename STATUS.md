@@ -68,6 +68,13 @@ The supported lab path is now KVM/libvirt:
     and `super_svc` registered and managed by Restart.
   - Restart ownership is verified by stopping/starting `super` through `srvctl`
     and waiting for SQL readiness.
+  - `super_svc` is registered and enabled with role `PRIMARY` against both
+    local Restart database resources; it runs on `super` and remains stopped
+    on `super_sby` until a role transition.
+  - Oracle's OL9 native `oracle-ohasd.service` is repaired with a managed
+    stack-start drop-in, and filesystem-backed Restart configures local CSS
+    with `AUTO_START=always`. A live unit restart verified OHASD and CSS return
+    without a manual `crsctl start`.
   - Oracle Restart/Grid install on `superdb2`, with the DB home present and no
     accidental standalone database created.
   - Standby auxiliary preparation on `superdb2`: `initsuper.ora`, matching
@@ -100,6 +107,10 @@ The supported lab path is now KVM/libvirt:
     `changed=0`, and the live readiness test asserts FSFO is enabled,
     protection mode is `MaxAvailability`, the current primary is `super`, the
     active failover target is `super_sby`, and an observer is present.
+  - A live OHASD interruption triggered FSFO promotion of `super_sby`.
+    `super` returned automatically as a synchronized physical standby, and a
+    broker switchover restored `super` as primary while retaining Maximum
+    Availability and `READ ONLY WITH APPLY` on the resulting standby.
   - ARCHIVELOG and FORCE LOGGING enabled.
 - Data Guard preparation:
   - `playbooks/05-dataguard.yml` applies Data Guard listener mode before
@@ -180,11 +191,15 @@ The supported lab path is now KVM/libvirt:
 - Live full `playbooks/site.yml` run verified on the KVM lab on 2026-07-09,
   including Data Guard Maximum Availability, FSFO observer setup, DB/Grid patch
   inventory, current-home dual-home validation, and embedded pytest
-  (`97 passed, 6 skipped`).
+  (`118 passed, 7 skipped`; the seventh skip is the separately verified,
+  opt-in standby OHASD restart test).
 
 ## Not Yet Proven End To End
 
-- Live destructive automatic failover simulation and reinstate execution.
+- The explicit destructive execution branch of
+  `playbooks/08-failover-reinstate.yml`; its underlying FSFO promotion,
+  auto-reinstate, and switchback behavior is now proven live through an OHASD
+  interruption.
 - Live creation of multiple database instances on the same DB host.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU.

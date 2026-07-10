@@ -21,6 +21,10 @@
 oracle_version: "19.3.0.0"
 oracle_release_update: "19.31.0.0.260421"   # informational; surfaces in facts/tests
 
+# The KVM lab opts into repairing/recovering an already-installed Restart stack
+# even when the slow Grid installer itself is disabled.
+oracle_gi_repair_existing_enabled: true
+
 oracle_install_files:
   db_zip: "V982063-01-Oracle.19c.Database.Enterprise.Edition.zip"
   gi_zip: "V982068-01-Oracle.19c.Grid.Infrastructure.zip"

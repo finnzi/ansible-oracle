@@ -42,6 +42,26 @@
     - not oracle_restart_available
     - oracle_restart_required | bool
 
+- name: Read local CSS autostart policy
+  ansible.builtin.command: >-
+    {{ oracle_gi_home }}/bin/crsctl stat res ora.cssd -p -init
+  register: _restart_css_properties
+  changed_when: false
+  when: oracle_restart_available
+
+# With filesystem-backed databases there is no ASM resource to pull CSS up.
+# The Restart database agent still requires local cluster membership, so CSS
+# must start directly with OHASD after a host reboot.
+- name: Configure local CSS to start with OHASD
+  ansible.builtin.command: >-
+    {{ oracle_gi_home }}/bin/crsctl modify resource ora.cssd
+    -attr AUTO_START=always -init
+  register: _restart_css_autostart
+  changed_when: true
+  when:
+    - oracle_restart_available
+    - "'AUTO_START=always' not in (_restart_css_properties.stdout | default(''))"
+
 - name: Check local CSS status for Restart database resources
   ansible.builtin.shell: |
     set -o pipefail

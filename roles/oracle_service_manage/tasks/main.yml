@@ -15,21 +15,34 @@
       with DBMS_SERVICE because it would not follow the current primary after
       switchover. Install/register Restart first, then create the role PRIMARY
       service with srvctl/broker ownership.
-  loop: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | oracle_apply_instance_overrides(
+          oracle_instance_overrides | default({}),
+          oracle_service_apply_instance_overrides_require_dataguard | default(true)
+        )
+    }}
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"
   when:
-    - "'standby' not in group_names"
     - inst.dataguard | default(false) | bool
     - not (oracle_restart_available | default(false) | bool)
 
 - name: Per-instance service loop
   ansible.builtin.include_tasks: create-service.yml
-  loop: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({})) }}"
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | oracle_apply_instance_overrides(
+          oracle_instance_overrides | default({}),
+          oracle_service_apply_instance_overrides_require_dataguard | default(true)
+        )
+    }}
   loop_control:
     loop_var: inst
     label: "{{ inst.name }}"
   when:
-    - "'standby' not in group_names"
+    - inst.dataguard | default(false) | bool or 'standby' not in group_names
     - not (inst.dataguard | default(false) | bool) or (oracle_restart_available | default(false) | bool)

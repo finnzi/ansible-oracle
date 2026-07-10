@@ -156,3 +156,58 @@
     'LISTENER_STARTED' in (_srvctl_start.stdout | default('')) or
     'DATABASE_STARTED' in (_srvctl_start.stdout | default(''))
   failed_when: _srvctl_start.rc != 0
+
+- name: Probe database open mode after Restart start
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _restart_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _restart_db_open_mode
+  changed_when: false
+  failed_when: false
+
+- name: Recover a database left mounted by an earlier CSS failure
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" stop database -d {{ inst.name }} -stopoption IMMEDIATE
+    "$ORACLE_HOME/bin/srvctl" start database -d {{ inst.name }} -startoption OPEN
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _restart_db_recover
+  changed_when: true
+  when:
+    - (_restart_db_open_mode.stdout | default('') | trim).startswith('PRIMARY|')
+    - (_restart_db_open_mode.stdout | default('') | trim) != 'PRIMARY|READ WRITE'
+
+- name: Wait for database role-appropriate readiness under Restart
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _restart_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _restart_db_ready
+  changed_when: false
+  retries: 60
+  delay: 3
+  until:
+    - _restart_db_ready.rc == 0
+    - >-
+      (_restart_db_ready.stdout | default('') | trim) in
+      ['PRIMARY|READ WRITE', 'PHYSICAL STANDBY|READ ONLY WITH APPLY']

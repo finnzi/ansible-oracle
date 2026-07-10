@@ -20,9 +20,10 @@ Implemented:
   per-instance filesystem layout.
 - DB home install, standalone instance creation, listener, and `super_svc`
   service verified in the KVM lab.
-- Oracle Restart/Grid install path, Restart registration, and stop/start recovery
-  verified on the KVM primary.
-- Restart-managed `super_svc` client service.
+- Oracle Restart/Grid install path, Restart registration, systemd OHASD stack
+  startup, CSS autostart, and stop/start recovery verified on the KVM primary.
+- Restart-managed `super_svc` client service registered with role `PRIMARY` on
+  both Data Guard members, running only on the current primary.
 - Standby-candidate baseline on `superdb2`: Restart online, DB home present,
   Grid disk owned for ASM metadata, no standalone database created, and a
   NOMOUNT RMAN auxiliary reachable through `super_sby_dgb`.
@@ -39,6 +40,9 @@ Implemented:
   and foreground systemd observer ownership verified from the third KVM VM.
 - Opt-in FSFO failover/reinstate rehearsal playbook with a safe readiness-only
   default and explicit destructive confirmation gate.
+- Live FSFO promotion and auto-reinstate verified during an OHASD recovery
+  test: `super_sby` was promoted, `super` rejoined as a synchronized physical
+  standby, and broker switchover restored `super` as primary.
 - Primary-side Data Guard preparation: broker start enabled, standby file
   management set to `AUTO`, FAL/DG config parameters rendered, and standby
   redo logs placed under `/super/r01`.
@@ -74,7 +78,9 @@ Implemented:
 
 Still scaffolded or not yet proven end to end:
 
-- Destructive automatic failover simulation and reinstate workflow.
+- The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
+  the underlying FSFO promotion, auto-reinstate, and switchback behavior has
+  been exercised live through an OHASD interruption.
 - Live creation of multiple database instances on the same DB host.
 - Live switch to a newly installed dual-home target before switching back.
 - Live standby-first patch apply with an actually eligible DB RU; the staged
