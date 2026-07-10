@@ -67,6 +67,26 @@
       when:
         - not oracle_failover_reinstate_execute | bool
 
+    - name: Validate libvirt primary VM is addressable before destructive rehearsal
+      ansible.builtin.command:
+        argv:
+          - virsh
+          - --connect
+          - "{{ oracle_failover_virsh_uri }}"
+          - dominfo
+          - "{{ oracle_failover_primary_vm }}"
+      delegate_to: localhost
+      become: false
+      register: _failover_primary_vm_dominfo
+      changed_when: false
+
+    - name: Report libvirt readiness for destructive rehearsal
+      ansible.builtin.debug:
+        msg: >-
+          Libvirt readiness validated: {{ oracle_failover_primary_vm }} is
+          addressable through {{ oracle_failover_virsh_uri }} before any
+          destructive rehearsal command.
+
     - name: Fail when destructive rehearsal confirmation is missing
       ansible.builtin.fail:
         msg: >-

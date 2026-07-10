@@ -36,6 +36,10 @@ def test_failover_reinstate_playbook_contract():
     assert "protection mode is MaxAvailability" in playbook
     assert "active failover target is" in playbook
     assert "and an observer is present" in playbook
+    assert "Validate libvirt primary VM is addressable before destructive rehearsal" in playbook
+    assert "dominfo" in playbook
+    assert "Report libvirt readiness for destructive rehearsal" in playbook
+    assert "Libvirt readiness validated" in playbook
     assert "Report readiness-only mode" in playbook
     assert "Fail when destructive rehearsal confirmation is missing" in playbook
     assert "Refusing destructive FSFO rehearsal before destroying" in playbook
@@ -100,6 +104,8 @@ def test_failover_reinstate_readiness_playbook_converges_without_destructive_cha
     assert "FSFO readiness validated" in r.stdout
     assert "Fast-Start Failover is enabled" in r.stdout
     assert "protection mode is MaxAvailability" in r.stdout
+    assert "Libvirt readiness validated" in r.stdout
+    assert "ansible-oracle-lab-superdb1 is addressable through qemu:///system" in r.stdout
     assert "current primary is super" in r.stdout
     assert "active failover target is super_sby" in r.stdout
     assert "and an observer is present" in r.stdout
@@ -137,4 +143,5 @@ def test_failover_reinstate_execute_without_confirmation_refuses_before_destroy(
     assert "Refusing destructive FSFO rehearsal before destroying" in output
     assert "ansible-oracle-lab-superdb1" in output
     assert "DESTROY_PRIMARY_AND_REINSTATE" in output
+    assert "TASK [Validate libvirt primary VM is addressable before destructive rehearsal]" in output
     assert "TASK [Destroy current primary VM to trigger FSFO]" not in output

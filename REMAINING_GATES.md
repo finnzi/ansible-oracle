@@ -94,6 +94,8 @@ Expected safety behavior:
 
 - The playbook validates FSFO enabled, `MaxAvailability`, current primary
   `super`, active target `super_sby`, and observer presence first.
+- It validates `virsh dominfo` for the primary VM through the configured
+  libvirt URI before any `virsh destroy` command can run.
 - It refuses to destroy the primary VM unless
   `oracle_failover_reinstate_confirm=DESTROY_PRIMARY_AND_REINSTATE`.
 - When confirmed, it destroys the current primary VM, waits for FSFO promotion,

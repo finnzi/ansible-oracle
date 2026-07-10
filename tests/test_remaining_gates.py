@@ -32,6 +32,7 @@ def test_remaining_gates_documents_fsfo_readiness_gate_and_destructive_confirm()
     )
     assert "must fail before `virsh destroy`" in runbook
     assert "refuses to destroy the primary VM" in runbook
+    assert "validates `virsh dominfo` for the primary VM" in runbook
     assert "destroys the current primary VM" in runbook
 
 

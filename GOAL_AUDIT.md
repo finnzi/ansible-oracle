@@ -119,3 +119,5 @@ future task explicitly changes the desired protection mode.
   `159 passed, 9 skipped`.
 - Full KVM-backed pytest after adding eligible standby-first media command handoff:
   `159 passed, 9 skipped`.
+- Full KVM-backed pytest after adding FSFO libvirt primary-VM readiness:
+  `159 passed, 9 skipped`.
