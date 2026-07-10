@@ -115,3 +115,5 @@ future task explicitly changes the desired protection mode.
   `157 passed, 9 skipped`.
 - Full KVM-backed pytest after refreshing current KVM Data Guard lab docs:
   `158 passed, 9 skipped`.
+- Full KVM-backed pytest after refreshing supported KVM lab status wording:
+  `159 passed, 9 skipped`.

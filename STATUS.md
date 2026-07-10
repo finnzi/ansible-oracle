@@ -1,13 +1,13 @@
 # Status - ansible-oracle
 
-Last updated after the lab migration began.
+Last updated after the KVM/Data Guard lab proof.
 
 ## Goal
 
 This repo is intended to manage Oracle Database installations, upgrades,
 Oracle Restart, Data Guard, Fast-Start Failover observer nodes, and patching.
-The test environment is now being moved from Docker containers to KVM VMs after
-the container lab proved unsafe and unreliable on the host.
+The test environment has moved from Docker containers to KVM VMs after the
+container lab proved unsafe and unreliable on the host.
 Goal requirement: Data Guard availability mode is Maximum Availability
 (`MAXIMUM AVAILABILITY` protection mode). Any Data Guard proof or patching
 flow must preserve Maximum Availability unless a future task explicitly changes
@@ -15,7 +15,7 @@ that requirement.
 `GOAL_AUDIT.md` records the requirement-by-requirement completion evidence and
 the remaining external gates.
 
-## Current Lab Direction
+## Current Lab
 
 The supported lab path is now KVM/libvirt:
 

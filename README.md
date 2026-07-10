@@ -6,9 +6,8 @@ patching, and a KVM/libvirt lab for testing the automation end to end.
 
 ## Current Status
 
-This repository is a vertical slice plus scaffolding. The lab has been moved
-away from privileged containers and now provisions three KVM VMs from Oracle
-Linux cloud images:
+KVM/libvirt is the supported lab path. The repository has moved away from
+privileged containers and now provisions three Oracle Linux cloud-image VMs:
 
 - `superdb1` - primary or standalone DB node
 - `superdb2` - Data Guard standby DB node
@@ -95,7 +94,7 @@ Implemented:
   `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
-Still scaffolded or not yet proven end to end:
+## Remaining Explicit Gates
 
 - The explicit destructive branch of `playbooks/08-failover-reinstate.yml`;
   the underlying FSFO promotion, auto-reinstate, and switchback behavior has

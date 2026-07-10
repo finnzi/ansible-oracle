@@ -134,3 +134,18 @@ def test_operator_docs_describe_current_kvm_dataguard_lab_state():
     assert "future standby" not in combined
     assert "future FSFO observer" not in combined
     assert "observer candidate" not in combined
+
+
+def test_operator_docs_describe_kvm_migration_as_current_path():
+    readme = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    status = (REPO_ROOT / "STATUS.md").read_text(encoding="utf-8")
+    combined = "\n".join([readme, status])
+
+    assert "KVM/libvirt is the supported lab path" in readme
+    assert "The test environment has moved from Docker containers to KVM VMs" in status
+    assert "## Current Lab" in status
+    assert "## Remaining Explicit Gates" in readme
+    assert "being moved" not in combined
+    assert "migration began" not in combined
+    assert "vertical slice plus scaffolding" not in combined
+    assert "Still scaffolded or not yet proven end to end" not in combined
