@@ -225,6 +225,19 @@
             | list
           }}
 
+    - name: Report resolved dual-home switchback targets
+      ansible.builtin.debug:
+        msg:
+          restart_db_name: "{{ item.restart_db_name }}"
+          source: "{{ item.source }}"
+          dataguard: "{{ item.dataguard }}"
+          original_home_path: "{{ item.original_home_path }}"
+          target_home_path: "{{ item.target_home_path }}"
+      loop: "{{ _dual_switchback_targets }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}"
+      when: not oracle_patch_dual_home_switchback_execute | bool
+
     - name: Resolve Restart-discovered target homes for installation
       ansible.builtin.set_fact:
         _dual_switchback_restart_install_instances: >-

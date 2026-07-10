@@ -166,6 +166,9 @@ def test_patch_role_db_apply_contract():
     assert "Merge inventory and Restart-discovered switchback targets" in dual_switchback_playbook
     assert "Resolve standalone switchback execution targets" in dual_switchback_playbook
     assert "_dual_switchback_standalone_targets" in dual_switchback_playbook
+    assert "Report resolved dual-home switchback targets" in dual_switchback_playbook
+    assert "original_home_path" in dual_switchback_playbook
+    assert "target_home_path" in dual_switchback_playbook
     assert "'dataguard': item.dataguard | default(false) | bool" in dual_switchback_playbook
     assert "'dataguard': result.dataguard | default(false) | bool" in dual_switchback_playbook
     assert "Report Restart-discovered install plan" in dual_switchback_playbook
@@ -548,6 +551,18 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     assert len(readiness_reports) == expected_db_hosts
     assert {int(dataguard_count) for _, dataguard_count in readiness_reports} == {1}
     assert sum(int(standalone_count) for standalone_count, _ in readiness_reports) <= 2
+    assert '"restart_db_name": "super"' in r.stdout
+    assert '"restart_db_name": "super_sby"' in r.stdout
+    assert '"restart_db_name": "duper"' in r.stdout
+    assert '"restart_db_name": "fluff"' in r.stdout
+    assert '"source": "inventory"' in r.stdout
+    assert '"source": "restart"' in r.stdout
+    assert '"original_home_path": "/super/app/oracle/db_home1"' in r.stdout
+    assert '"original_home_path": "/duper/app/oracle/db_home1"' in r.stdout
+    assert '"original_home_path": "/fluff/app/oracle/db_home1"' in r.stdout
+    assert '"target_home_path": "/super/app/oracle/db_home2"' in r.stdout
+    assert '"target_home_path": "/duper/app/oracle/db_home2"' in r.stdout
+    assert '"target_home_path": "/fluff/app/oracle/db_home2"' in r.stdout
     assert "Restart-discovered target-home install plan" not in r.stdout
     assert "Data Guard targets must use playbooks/07-patch-standbyfirst.yml" in r.stdout
     assert "TASK [Install dual-home switchback target]" in r.stdout

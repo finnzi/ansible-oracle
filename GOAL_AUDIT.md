@@ -56,7 +56,7 @@ future task explicitly changes the desired protection mode.
 | Dedicated patch playbooks | Proven | `07-patch.yml`, `07-patch-grid.yml`, `07-patch-dual-db.yml`, `07-patch-dual-db-switchback.yml`, `07-patch-standbyfirst.yml`, and `07-patch-standbyfirst-media.yml`. |
 | Single-home patching | Proven | Current-home DB/Grid patch inventory/apply paths converge idempotently. |
 | Dual-home DB patching and Oracle home switching | Proven for standalone | `fluff` live switch to `/fluff/app/oracle/db_home2` and switchback to `/fluff/app/oracle/db_home1`; Data Guard dual-home switches are routed to standby-first orchestration. |
-| Greenfield and brownfield patching | Proven for inventory/discovery paths | Inventory-installed homes and discovered `/etc/oratab`/`olr.loc` homes are supported; destructive brownfield execution requires explicit names/mappings. |
+| Greenfield and brownfield patching | Proven for inventory/discovery paths | Inventory-installed homes and Restart-discovered brownfield-style targets are reported with concrete names and home paths in the live readiness run; `/etc/oratab`, `/etc/oracle/olr.loc`, and explicit extra homes are supported. Destructive brownfield execution requires explicit names/mappings. |
 | Standby-first Data Guard patching when release notes allow | External gate | Eligibility parser, media scanner, readiness path, confirmation gate, and orchestration are implemented. Current staged media reports `eligible=0`; live eligible-RU apply requires suitable standalone DB RU media. |
 | Automatically read standby-first support from release notes | Proven | `library/patch_standbyfirst_info.py` parses README wording and staged zip directories; tests cover eligible, ineligible, corrupt, and current staged media. |
 | Switch Oracle homes old-to-new | Proven for standalone, partial for Data Guard | Standalone switch/switchback proven live; Data Guard old-to-new path exists in standby-first playbook but live apply requires eligible media. |
@@ -99,4 +99,6 @@ future task explicitly changes the desired protection mode.
 - Full KVM-backed pytest after adding live Data Guard service role assertions:
   `149 passed, 9 skipped`.
 - Full KVM-backed pytest after adding custom per-instance DB parameters:
+  `151 passed, 9 skipped`.
+- Full KVM-backed pytest after adding live switchback target summaries:
   `151 passed, 9 skipped`.
