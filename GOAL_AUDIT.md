@@ -51,7 +51,7 @@ future task explicitly changes the desired protection mode.
 | Oracle DB homes like `/super/app/oracle/db_home1`, `/super/app/oracle/db_home2` | Proven | Current and target homes installed/patched/switched for standalone `fluff`; inventory supports suffix and explicit path homes. |
 | Oracle Grid homes like `/grid/19c/gi_home1` | Proven | Grid home installed and patched at `/grid/19c/gi_home1`; brownfield discovery exists. |
 | Register each database with Oracle Restart | Proven | `super`, `super_sby`, `duper`, and `fluff` Restart registration tested. |
-| Dedicated client service to current primary | Proven | `super_svc` role-primary service behavior is tested across Data Guard members; standalone services are tested for `duper` and `fluff`. |
+| Dedicated client service to current primary | Proven | `super_svc` is verified live as running only on the current Data Guard primary before and after manual/automatic switchovers; standalone services are tested for `duper` and `fluff`. |
 | Tests for Restart, Data Guard, switchover, patching, lab preflight | Proven | Pytest suite covers OS, install, instance, Restart, Data Guard, observer, patching, failover readiness, multi-instance, and lab tooling. |
 | Dedicated patch playbooks | Proven | `07-patch.yml`, `07-patch-grid.yml`, `07-patch-dual-db.yml`, `07-patch-dual-db-switchback.yml`, `07-patch-standbyfirst.yml`, and `07-patch-standbyfirst-media.yml`. |
 | Single-home patching | Proven | Current-home DB/Grid patch inventory/apply paths converge idempotently. |
@@ -96,3 +96,5 @@ future task explicitly changes the desired protection mode.
   `145 passed, 8 skipped`.
 - Full KVM-backed pytest after adding live memory-parameter assertions:
   `148 passed, 9 skipped`.
+- Full KVM-backed pytest after adding live Data Guard service role assertions:
+  `149 passed, 9 skipped`.

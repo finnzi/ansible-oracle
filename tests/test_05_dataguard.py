@@ -496,6 +496,10 @@ def test_dgmgrrl_configuration_healthy(lab_exec):
     assert "super_sby" in last.stdout
 
 
+def test_super_service_runs_only_on_current_dataguard_primary(lab_exec, standby_exec):
+    _assert_super_service_role(lab_exec, standby_exec, "super")
+
+
 @pytest.mark.slow
 def test_manual_switchover(lab_exec, standby_exec):
     try:
@@ -507,6 +511,7 @@ def test_manual_switchover(lab_exec, standby_exec):
         old_primary_state = _database_state(lab_exec)
         assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in standby_state
         assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in old_primary_state
+        _assert_super_service_role(lab_exec, standby_exec, "super_sby")
     finally:
         restored = _run_dataguard_switchover("super")
         assert restored.returncode == 0, restored.stdout + restored.stderr
@@ -516,6 +521,7 @@ def test_manual_switchover(lab_exec, standby_exec):
     standby_state = _database_state(standby_exec)
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in primary_state
     assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in standby_state
+    _assert_super_service_role(lab_exec, standby_exec, "super")
 
 
 @pytest.mark.slow
@@ -534,11 +540,13 @@ def test_automatic_switchover(lab_exec, standby_exec):
         old_primary_state = _database_state(lab_exec)
         assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in standby_state
         assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in old_primary_state
+        _assert_super_service_role(lab_exec, standby_exec, "super_sby")
 
         repeated = _run_dataguard_switchover("auto")
         assert repeated.returncode == 0, repeated.stdout + repeated.stderr
         assert "failed=0" in repeated.stdout
         assert "changed=0" in repeated.stdout
+        _assert_super_service_role(lab_exec, standby_exec, "super_sby")
     finally:
         if "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" not in _database_state(lab_exec):
             restored = _run_dataguard_switchover("super")
@@ -549,6 +557,7 @@ def test_automatic_switchover(lab_exec, standby_exec):
     standby_state = _database_state(standby_exec)
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY" in primary_state
     assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY" in standby_state
+    _assert_super_service_role(lab_exec, standby_exec, "super")
 
 
 def _run_dataguard_switchover(target: str) -> subprocess.CompletedProcess:
@@ -596,3 +605,38 @@ def _database_state(exec_fn) -> str:
         time.sleep(10)
     assert last is not None
     return last.stdout
+
+
+def _assert_super_service_role(lab_exec, standby_exec, expected_primary: str) -> None:
+    expected = {
+        "super": {
+            "primary": "Service super_svc is running",
+            "standby": "Service super_svc is not running",
+        },
+        "super_sby": {
+            "primary": "Service super_svc is not running",
+            "standby": "Service super_svc is running",
+        },
+    }[expected_primary]
+
+    last_primary = ""
+    last_standby = ""
+    for _ in range(18):
+        last_primary = _service_state(lab_exec, "super")
+        last_standby = _service_state(standby_exec, "super_sby")
+        if expected["primary"] in last_primary and expected["standby"] in last_standby:
+            return
+        time.sleep(10)
+
+    assert expected["primary"] in last_primary
+    assert expected["standby"] in last_standby
+
+
+def _service_state(exec_fn, db_unique_name: str) -> str:
+    command = (
+        "/grid/19c/gi_home1/bin/srvctl status service "
+        f"-db {db_unique_name} -service super_svc 2>&1"
+    )
+    result = exec_fn(f"su - oracle -c {shlex.quote(command)}", timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
+    return result.stdout
