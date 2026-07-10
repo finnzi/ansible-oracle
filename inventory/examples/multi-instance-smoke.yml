@@ -65,6 +65,10 @@ oracle_instances:
     memory:
       sga_target: 1G
       pga_aggregate_target: 512M
+    parameters:
+      - name: open_cursors
+        value: 450
+        scope: BOTH
     listener_vip: duperdb.domain.is
     listener_port: 1522
     service_name: duper_svc
@@ -94,6 +98,10 @@ oracle_instances:
     memory:
       sga_target: 1G
       pga_aggregate_target: 512M
+    parameters:
+      - name: open_cursors
+        value: 350
+        scope: BOTH
     listener_vip: fluffdb.domain.is
     listener_port: 1523
     service_name: fluff_svc

@@ -152,6 +152,28 @@ SELECT name || '|' || value
     }
 
 
+@pytest.mark.parametrize(
+    ("name", "open_cursors"),
+    [
+        ("duper", "450"),
+        ("fluff", "350"),
+    ],
+)
+def test_custom_instance_parameters_match_inventory(lab_exec, name, open_cursors):
+    result = _instance_sql(
+        lab_exec,
+        name,
+        """
+SELECT value
+  FROM v$parameter
+ WHERE name = 'open_cursors';
+""",
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == open_cursors
+
+
 @pytest.mark.parametrize("name", ["duper", "fluff"])
 def test_standalone_instance_files_are_filesystem_backed(lab_exec, name):
     result = _instance_sql(

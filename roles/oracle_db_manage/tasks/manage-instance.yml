@@ -150,6 +150,48 @@
     'SP2-' in (_params_sql.stdout | default(''))
   when: _db_reconcile_writable | default(false)
 
+- name: Validate custom database parameters
+  ansible.builtin.assert:
+    that:
+      - param.name is defined
+      - param.name is match('^[A-Za-z][A-Za-z0-9_$#]*$')
+      - param.value is defined
+      - (param.scope | default('BOTH') | upper) in ['MEMORY', 'SPFILE', 'BOTH']
+      - (param.sid | default('*') | string) is match('^[A-Za-z0-9_$#*]+$')
+    fail_msg: >-
+      {{ inst.name }} has an invalid custom database parameter. Each entry
+      requires a safe Oracle parameter name, a value, optional scope
+      MEMORY/SPFILE/BOTH, and optional SID.
+  loop: "{{ inst.parameters | default([]) }}"
+  loop_control:
+    loop_var: param
+    label: "{{ param.name | default('unnamed') }}"
+  when: _db_reconcile_writable | default(false)
+
+- name: Apply custom database parameters
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    {% for param in inst.parameters | default([]) %}
+    ALTER SYSTEM SET {{ param.name }}={% if param.quote | default(false) %}q'[{{ param.value | string }}]'{% else %}{{ param.value }}{% endif %} SCOPE={{ param.scope | default('BOTH') | upper }} SID='{{ param.sid | default('*') }}';
+    {% endfor %}
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _custom_params_sql
+  changed_when: false
+  failed_when: >-
+    _custom_params_sql.rc != 0 or
+    'ORA-' in (_custom_params_sql.stdout | default('')) or
+    'SP2-' in (_custom_params_sql.stdout | default(''))
+  when:
+    - _db_reconcile_writable | default(false)
+    - (inst.parameters | default([]) | length) > 0
+
 # These require restarts of the right kind; gate on the *current* value so we
 # only change them when needed.
 - name: Toggle ARCHIVELOG mode (if differs from desired)

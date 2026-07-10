@@ -110,6 +110,11 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "_listener_host" in instance_tasks
     assert "ALTER SYSTEM SET sga_target" in instance_tasks
     assert "ALTER SYSTEM SET pga_aggregate_target" in instance_tasks
+    assert "Validate custom database parameters" in instance_tasks
+    assert "param.name is match" in instance_tasks
+    assert "Apply custom database parameters" in instance_tasks
+    assert "ALTER SYSTEM SET {{ param.name }}" in instance_tasks
+    assert "param.quote | default(false)" in instance_tasks
     assert "ALTER SYSTEM SET local_listener" in instance_tasks
     assert "_db_reachable: false" in instance_tasks
     assert "_dbfacts_fields: []" in instance_tasks

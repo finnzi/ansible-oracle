@@ -2,8 +2,9 @@
 # defaults/main.yml for oracle_db_manage
 #
 # Create (or reconcile) a database instance via DBCA, then apply the runtime
-# parameters from inventory: sga/pga, archivelog, flashback, force logging,
-# and the dedicated file paths for data/archive/flashback/redo.
+# parameters from inventory: sga/pga, optional custom database parameters,
+# archivelog, flashback, force logging, and the dedicated file paths for
+# data/archive/flashback/redo.
 
 oracle_user: oracle
 oracle_group: oinstall
@@ -18,6 +19,19 @@ oracle_lab_dg_password:     "DgPassword1_"
 oracle_default_memory:
   sga_target: 2G
   pga_aggregate_target: 1G
+
+# Optional per-instance custom database settings:
+#
+# oracle_instances:
+#   - name: example
+#     parameters:
+#       - name: open_cursors
+#         value: 450
+#         scope: BOTH   # MEMORY, SPFILE, or BOTH
+#         sid: "*"
+#
+# Values are rendered unquoted by default for numeric/boolean Oracle settings.
+# Set quote: true for trusted string values that need an Oracle string literal.
 
 # DBCA template — General Purpose with the default structures.
 oracle_dbca_template: General_Purpose.dbc
