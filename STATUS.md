@@ -334,8 +334,10 @@ The supported lab path is now KVM/libvirt:
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
   readiness path is proven, and the staged-media scanner reports eligible DB RU
   component `39062931/39034528` inside the staged combo. The eligible-RU apply
-  still requires explicit component selection, execution confirmation, and the
-  optional restore-primary cleanup for the least disruptive lab proof.
+  still requires explicit component selection and execution confirmation.
+  `scripts/run-standbyfirst-apply.sh` wraps the final staged-component command,
+  runs the safe standby-first preflight first, and defaults to restore-primary
+  cleanup for the least disruptive lab proof.
 
 ## Host Findings From This Run
 

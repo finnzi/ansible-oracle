@@ -122,6 +122,13 @@ check, and proven FSFO readiness regression, use:
 scripts/check-remaining-gates.sh
 ```
 
+To run the final staged-component standby-first apply through the guarded
+helper, use:
+
+```bash
+scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST
+```
+
 ## Quickstart
 
 Install host prerequisites first. Package names vary by distribution, but the
@@ -215,7 +222,8 @@ roles/            Oracle OS, storage, install, network, Restart, DG, observer,
 library/          custom modules: patch_standbyfirst_info, oracle_db_facts,
                   oracle_session
 tests/            pytest suite
-scripts/          bootstrap-venv.sh, run-tests.sh, check-remaining-gates.sh
+scripts/          bootstrap-venv.sh, run-tests.sh, check-remaining-gates.sh,
+                  run-standbyfirst-apply.sh
 download/         reserved staging directory; large Oracle media is gitignored
 ```
 

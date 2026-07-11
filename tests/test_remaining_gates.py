@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     runbook = (REPO_ROOT / "REMAINING_GATES.md").read_text(encoding="utf-8")
 
+    assert "scripts/run-standbyfirst-apply.sh" in runbook
     assert "playbooks/07-patch-standbyfirst-media.yml" in runbook
     assert "oracle_patch_standbyfirst_media_require_eligible=true" in runbook
     assert "playbooks/07-patch-standbyfirst.yml" in runbook
@@ -52,6 +53,8 @@ def test_readme_and_goal_audit_link_remaining_gates_runbook():
     assert "REMAINING_GATES.md" in audit
     assert "scripts/check-remaining-gates.sh" in readme
     assert "scripts/check-remaining-gates.sh" in runbook
+    assert "scripts/run-standbyfirst-apply.sh" in readme
+    assert "scripts/run-standbyfirst-apply.sh" in runbook
 
 
 def test_remaining_gates_safe_check_script_dry_run():
@@ -120,3 +123,60 @@ def test_remaining_gates_safe_check_script_can_prove_confirmation_gate():
     assert "oracle_patch_standbyfirst_restore_primary=true" in result.stdout
     assert "PATCH_STANDBY_FIRST" not in result.stdout
     assert "DESTROY_PRIMARY_AND_REINSTATE" not in result.stdout
+
+
+def test_standbyfirst_apply_helper_refuses_without_execute():
+    script = REPO_ROOT / "scripts/run-standbyfirst-apply.sh"
+    assert os.access(script, os.X_OK)
+    result = subprocess.run(
+        [str(script)],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "requires --execute" in result.stderr
+    assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
+
+
+def test_standbyfirst_apply_helper_refuses_without_exact_confirmation():
+    script = REPO_ROOT / "scripts/run-standbyfirst-apply.sh"
+    result = subprocess.run(
+        [str(script), "--dry-run", "--execute", "--confirm", "WRONG"],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode != 0
+    assert "requires --confirm PATCH_STANDBY_FIRST" in result.stderr
+    assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
+
+
+def test_standbyfirst_apply_helper_dry_run_prints_preflight_and_final_apply():
+    script = REPO_ROOT / "scripts/run-standbyfirst-apply.sh"
+    result = subprocess.run(
+        [str(script), "--dry-run", "--execute", "--confirm", "PATCH_STANDBY_FIRST"],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "scripts/check-remaining-gates.sh" in result.stdout
+    assert "--skip-fsfo" in result.stdout
+    assert "--prove-confirmation-gate" in result.stdout
+    assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
+    assert "oracle_patch_zip=/u01/stage/p39062931_190000_Linux-x86-64.zip" in result.stdout
+    assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
+    assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
+    assert "oracle_patch_standbyfirst_execute=true" in result.stdout
+    assert "oracle_patch_standbyfirst_restore_primary=true" in result.stdout
+    assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in result.stdout

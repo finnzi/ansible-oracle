@@ -23,6 +23,20 @@ confirmation token, run:
 scripts/check-remaining-gates.sh --prove-confirmation-gate
 ```
 
+To run the confirmed staged-component apply through the guarded helper, use:
+
+```bash
+scripts/run-standbyfirst-apply.sh \
+  --execute \
+  --confirm PATCH_STANDBY_FIRST
+```
+
+That helper runs the safe standby-first media/readiness/missing-confirmation
+preflight first, then passes the final confirmation token to
+`playbooks/07-patch-standbyfirst.yml`. Its staged-component defaults are
+`oracle_patch_dual_home_suffix=db_home2` and
+`oracle_patch_standbyfirst_restore_primary=true`.
+
 ## 1. Eligible Standby-First Patch Apply
 
 Current state: `/u01/stage` contains no fully Data Guard Standby-First
@@ -82,15 +96,9 @@ env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
 For the staged 19.31 combo's eligible DB RU component:
 
 ```bash
-env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
-  .venv/bin/ansible-playbook -i inventory/hosts.yml \
-  playbooks/07-patch-standbyfirst.yml \
-  -e oracle_patch_zip=/u01/stage/p39062931_190000_Linux-x86-64.zip \
-  -e oracle_patch_apply_component_path=39062931/39034528 \
-  -e oracle_patch_dual_home_suffix=db_home2 \
-  -e oracle_patch_standbyfirst_execute=true \
-  -e oracle_patch_standbyfirst_restore_primary=true \
-  -e oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST
+scripts/run-standbyfirst-apply.sh \
+  --execute \
+  --confirm PATCH_STANDBY_FIRST
 ```
 
 Expected safety behavior:

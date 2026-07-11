@@ -70,9 +70,12 @@ future task explicitly changes the desired protection mode.
    component `39062931/39034528` inside the staged combo. A live apply requires
    either an eligible standalone DB RU zip or selecting that eligible component
    with `oracle_patch_apply_component_path=39062931/39034528`, then running the
-   confirmed standby-first path with `oracle_patch_standbyfirst_execute=true`,
-   optional `oracle_patch_standbyfirst_restore_primary=true` for lab proof
-   cleanup, and `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
+   confirmed standby-first path directly or through
+   `scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST`,
+   which sets `oracle_patch_standbyfirst_execute=true`, uses
+   `oracle_patch_standbyfirst_restore_primary=true` by default for lab proof
+   cleanup, and passes
+   `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 
 ## Latest Verification
 
