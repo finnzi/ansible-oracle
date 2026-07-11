@@ -321,6 +321,12 @@ The supported lab path is now KVM/libvirt:
   current primary VM, promoted `super_sby`, restarted and reinstated `super`,
   switched back to `super`, and validated the standby as `READ ONLY WITH APPLY`
   with `failed=0`.
+- Post-rehearsal safe remaining-gates wrapper check on 2026-07-11: media scan
+  examined 6 staged patch zips and found 2 eligible DB RU components;
+  selected-component standby-first readiness still reported `super` primary,
+  `super_sby` standby, and `MaxAvailability`; the final command shape refused
+  without confirmation; FSFO readiness remained non-destructive with
+  `changed=0`.
 
 ## Not Yet Proven End To End
 

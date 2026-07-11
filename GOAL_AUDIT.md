@@ -126,6 +126,12 @@ future task explicitly changes the desired protection mode.
   destroyed the current primary VM, promoted `super_sby`, restarted and
   reinstated `super`, switched back to `super`, and validated the standby as
   `READ ONLY WITH APPLY` with `failed=0`.
+- Post-rehearsal safe remaining-gates wrapper check: the media scan examined 6
+  staged patch zips, found 2 eligible DB RU components, selected-component
+  standby-first readiness still reported `current_primary=super`,
+  `current_standby=super_sby`, and `protection=MaxAvailability`, the final
+  command shape still refused without confirmation, and FSFO readiness remained
+  non-destructive with `changed=0`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:
