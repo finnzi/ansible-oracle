@@ -135,6 +135,8 @@ future task explicitly changes the desired protection mode.
   `current_standby=super_sby`, and `protection=MaxAvailability`, the final
   command shape still refused without confirmation, and FSFO readiness remained
   non-destructive with `changed=0`.
+- Full KVM-backed pytest after adding the guarded standby-first apply helper:
+  `177 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

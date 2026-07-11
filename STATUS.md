@@ -327,6 +327,8 @@ The supported lab path is now KVM/libvirt:
   `super_sby` standby, and `MaxAvailability`; the final command shape refused
   without confirmation; FSFO readiness remained non-destructive with
   `changed=0`.
+- Full KVM-backed pytest after adding the guarded standby-first apply helper on
+  2026-07-11: `177 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 
