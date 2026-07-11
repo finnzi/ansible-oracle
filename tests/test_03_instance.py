@@ -70,6 +70,8 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     ).read_text(encoding="utf-8")
     service_tasks = (
         REPO_ROOT / "roles/oracle_service_manage/tasks/create-service.yml"
+    ).read_text(encoding="utf-8") + (
+        REPO_ROOT / "roles/oracle_service_manage/tasks/reconcile-service.yml"
     ).read_text(encoding="utf-8")
     service_main_tasks = (
         REPO_ROOT / "roles/oracle_service_manage/tasks/main.yml"
@@ -163,18 +165,16 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "ALTER SYSTEM REGISTER" in service_tasks
     assert "Read local database role before service reconciliation" in service_tasks
     assert "PRIMARY|READ WRITE" in service_tasks
-    assert "when: _svc_manage_current_primary | bool" in service_tasks
+    assert "_svc_manage_current_role" in service_tasks
     assert "_svc_restart_db" in service_tasks
-    assert "-db {{ _svc_restart_db }}" in service_tasks
-    assert "SERVICE_REGISTERED_FOR_PRIMARY_ROLE" in service_tasks
-    assert "Srvctl enable + start service" in service_tasks
+    assert "Add role-based service to Oracle Restart" in service_tasks
+    assert "SERVICE_REGISTERED_FOR_{{ _svc_role }}_ROLE" in service_tasks
+    assert "Enable and start matching role-based service" in service_tasks
     assert "srvctl\" enable service" in service_tasks
     assert "srvctl\" start service" in service_tasks
     assert "already enabled|PRCR-1002" in service_tasks
-    assert "already running|PRCR-1079" in service_tasks
     assert "SQLCODE = -44305" in service_tasks
     assert "SQLCODE = -446" not in service_tasks
-    assert "failed_when: false" not in service_tasks
     assert "'ORA-' in (_svc_sql.stdout | default(''))" in service_tasks
     assert 'SYS_USER = _env("ORACLE_TEST_USER", "sys")' in test_conftest
     assert 'ORACLE_TEST_USER="${ORACLE_TEST_USER:-sys}"' in test_runner

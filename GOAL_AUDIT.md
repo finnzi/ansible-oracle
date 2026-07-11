@@ -10,6 +10,21 @@ the repeatable commands for the explicit destructive/safety-gated actions.
 Goal update: Data Guard configurations must use Maximum Availability unless a
 future task explicitly changes the desired protection mode.
 
+## Native Client Availability Goal
+
+| Requirement | Status | Evidence |
+| --- | --- | --- |
+| `<instance>_pri` follows the writable primary | Proven | `super_pri` is registered as `PRIMARY` on both Restart databases and moved correctly through an out-and-back broker switchover. |
+| `<instance>_stb` follows the read-only standby | Proven | `super_stb` is registered as `PHYSICAL_STANDBY`, primed once per Oracle's broker pattern, and moved through the same switchover while the standby remained `READ ONLY WITH APPLY`. |
+| Native client lists both lab sites | Proven | Observer/client aliases contain `superdc1.domain.is` and `superdc2.domain.is`; live `tnsping` and SQL*Plus connections passed. |
+| Least-disruptive `tnsnames.ora`-only mode selected | Proven | OCI TAF `SELECT/BASIC` with connect-time address failover is implemented; `CLIENT_AVAILABILITY.md` records transaction, cursor, driver, and licensing boundaries. |
+| Repeatable destructive switchover proof | Proven | The guarded helper fetched 5,000 unique rows without an Oracle error, continued the same SQL*Plus session on the new primary, cleaned up, and restored the starting primary. |
+| No unlicensed option introduced | Proven | TAF and role-based Restart services are used. Application Continuity is documented only as later driver/pool work permitted by the declared Active Data Guard licenses. |
+
+The final 2026-07-11 regression run passed `182` tests with `10` expected
+skips. A subsequent focused live proof verified idempotent standby-service
+priming and bidirectional movement of both role services.
+
 ## Status Key
 
 - Proven: implemented and verified by current tests, live KVM evidence, or both.

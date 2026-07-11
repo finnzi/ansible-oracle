@@ -21,6 +21,8 @@ def test_observer_role_installs_client_and_tns_contract():
     ).read_text(encoding="utf-8")
     tasks = (REPO_ROOT / "roles/oracle_observer/tasks/main.yml").read_text(
         encoding="utf-8"
+    ) + (REPO_ROOT / "roles/oracle_observer/tasks/client-config.yml").read_text(
+        encoding="utf-8"
     )
     tns = (REPO_ROOT / "roles/oracle_observer/templates/tnsnames.ora.j2").read_text(
         encoding="utf-8"
@@ -55,7 +57,7 @@ def test_observer_role_installs_client_and_tns_contract():
     assert "observer_sysdg_password: \"{{ oracle_lab_dg_password" in defaults
     assert "Verify the client installer zip is staged" in tasks
     assert "Run Oracle Client installer for observer" in tasks
-    assert "Write observer tnsnames.ora for Data Guard broker aliases" in tasks
+    assert "Write native client aliases and broker aliases" in tasks
     assert "Validate observer DGMGRL can inspect Data Guard broker" in tasks
     assert "Configure Fast-Start Failover target and threshold" in tasks
     assert "ENABLE FAST_START FAILOVER" in tasks

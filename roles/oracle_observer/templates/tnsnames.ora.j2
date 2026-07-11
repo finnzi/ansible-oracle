@@ -18,3 +18,49 @@
       (SERVICE_NAME = {{ dg_standby.db_unique_name | default('super_sby') }}_DGMGRL)
     )
   )
+
+# Writable service. Both site addresses are tried in order; only the database
+# currently in PRIMARY role registers {{ observer_client_primary_service }}.
+{{ observer_client_primary_alias }} =
+  (DESCRIPTION =
+    (CONNECT_TIMEOUT = 5)
+    (TRANSPORT_CONNECT_TIMEOUT = 3)
+    (RETRY_COUNT = {{ observer_client_failover_retries }})
+    (RETRY_DELAY = {{ observer_client_failover_delay }})
+    (ADDRESS_LIST =
+      (LOAD_BALANCE = OFF)
+      (FAILOVER = ON)
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_primary.host | default('superdc1.domain.is') }})(PORT = {{ dg_primary.port | default(1521) }}))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_standby.host | default('superdc2.domain.is') }})(PORT = {{ dg_standby.port | default(1521) }}))
+    )
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ observer_client_primary_service }})
+      (FAILOVER_MODE =
+        (TYPE = SELECT)
+        (METHOD = BASIC)
+        (RETRIES = {{ observer_client_failover_retries }})
+        (DELAY = {{ observer_client_failover_delay }})
+      )
+    )
+  )
+
+# Read-only service. It follows the PHYSICAL_STANDBY role and requires Active
+# Data Guard when a PDB or non-CDB workload is open while apply is running.
+{{ observer_client_standby_alias }} =
+  (DESCRIPTION =
+    (CONNECT_TIMEOUT = 5)
+    (TRANSPORT_CONNECT_TIMEOUT = 3)
+    (RETRY_COUNT = {{ observer_client_failover_retries }})
+    (RETRY_DELAY = {{ observer_client_failover_delay }})
+    (ADDRESS_LIST =
+      (LOAD_BALANCE = OFF)
+      (FAILOVER = ON)
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_primary.host | default('superdc1.domain.is') }})(PORT = {{ dg_primary.port | default(1521) }}))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_standby.host | default('superdc2.domain.is') }})(PORT = {{ dg_standby.port | default(1521) }}))
+    )
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ observer_client_standby_service }})
+    )
+  )

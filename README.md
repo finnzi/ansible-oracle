@@ -23,6 +23,9 @@ Implemented:
   startup, CSS autostart, and stop/start recovery verified on the KVM primary.
 - Restart-managed `super_svc` client service registered with role `PRIMARY` on
   both Data Guard members, running only on the current primary.
+- Role-based `super_pri` and `super_stb` services plus native two-site Oracle
+  Client aliases. OCI TAF `SELECT/BASIC` is proven through a live switchover
+  with a 5,000-row cursor and same-session continuation on the new primary.
 - Standby-candidate baseline on `superdb2`: Restart online, DB home present,
   Grid disk owned for ASM metadata, no standalone database created, and a
   NOMOUNT RMAN auxiliary reachable through `super_sby_dgb`.
@@ -109,6 +112,8 @@ Implemented:
 
 See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
 `REMAINING_GATES.md` for the exact commands behind the explicit gated proofs.
+See `CLIENT_AVAILABILITY.md` for the native-client decision, retrofit commands,
+licensing boundary, limitations, and repeatable switchover proof.
 To run the safe media scan, selected-component standby-first readiness
 check, expected `super` / `super_sby` role guard, and proven FSFO readiness
 regression, use:

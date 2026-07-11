@@ -2,6 +2,12 @@
 
 Last updated after the KVM/Data Guard lab proof.
 
+Native client availability verification on 2026-07-11 added role-based
+`super_pri` and `super_stb` services, two-site Oracle Client aliases, and a
+guarded TAF switchover proof. The full KVM regression result is `182 passed,
+10 skipped`; a subsequent focused out-and-back switchover proved both role
+services move correctly after one-time standby-service priming.
+
 ## Goal
 
 This repo is intended to manage Oracle Database installations, upgrades,
@@ -141,6 +147,12 @@ The supported lab path is now KVM/libvirt:
     by DBCA under `/fluff`, and registered in `/etc/oratab`.
   - `duperdb.domain.is` maps to `192.168.87.22` inside the guest, the VIP is
     assigned alongside `superdc1.domain.is` / `192.168.87.31`.
+  - `super_pri` follows the `PRIMARY` role with OCI TAF `SELECT/BASIC`, while
+    `super_stb` follows `PHYSICAL_STANDBY` for Active Data Guard reads.
+    The observer Oracle Client uses both Data Guard listener addresses and a
+    destructive proof fetched 5,000 unique rows through a switchover, continued
+    the same SQL*Plus session on the new primary, and restored the starting
+    primary.
   - `fluffdb.domain.is` maps to `192.168.87.23` inside the guest, and stale
     unmanaged lab listener VIPs are removed by `oracle_network`.
   - `duper` reports `PRIMARY|READ WRITE|ARCHIVELOG|NO|YES`, meaning

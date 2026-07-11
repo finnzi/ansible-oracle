@@ -1,0 +1,215 @@
+---
+# Reconcile one role-based service. Oracle Restart owns Data Guard services so
+# broker role transitions can start the matching service automatically.
+
+- name: Validate service definition
+  ansible.builtin.assert:
+    that:
+      - svc.name | default('') | length > 0
+      - (svc.role | default('PRIMARY')) in ['PRIMARY', 'PHYSICAL_STANDBY', 'LOGICAL_STANDBY', 'SNAPSHOT_STANDBY']
+      - (svc.failover_type | default('NONE')) in ['NONE', 'SESSION', 'SELECT', 'TRANSACTION', 'AUTO']
+      - (svc.failover_method | default('NONE')) in ['NONE', 'BASIC']
+    fail_msg: "Invalid Oracle service definition for {{ inst.name }}: {{ svc }}"
+
+- name: Set service facts
+  ansible.builtin.set_fact:
+    _svc_name: "{{ svc.name }}"
+    _svc_role: "{{ svc.role | default('PRIMARY') }}"
+    _svc_failover_type: "{{ svc.failover_type | default('NONE') }}"
+    _svc_failover_method: "{{ svc.failover_method | default('NONE') }}"
+    _svc_manage_current_role: >-
+      {{
+        ((_svc_database_state.stdout | default('') | trim) == 'PRIMARY|READ WRITE' and
+         (svc.role | default('PRIMARY')) == 'PRIMARY') or
+        ((_svc_database_state.stdout | default('') | trim).startswith('PHYSICAL STANDBY|READ ONLY') and
+         (svc.role | default('PRIMARY')) == 'PHYSICAL_STANDBY')
+      }}
+
+- name: Create and start standalone client service via DBMS_SERVICE
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _svc_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    SET SERVEROUTPUT ON
+    DECLARE
+      v_count NUMBER;
+    BEGIN
+      SELECT COUNT(*) INTO v_count FROM dba_services WHERE name = '{{ _svc_name }}';
+      IF v_count = 0 THEN
+        DBMS_SERVICE.CREATE_SERVICE(service_name => '{{ _svc_name }}', network_name => '{{ _svc_name }}');
+        DBMS_OUTPUT.PUT_LINE('CREATED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('EXISTS');
+      END IF;
+      BEGIN
+        DBMS_SERVICE.START_SERVICE(service_name => '{{ _svc_name }}');
+        DBMS_OUTPUT.PUT_LINE('STARTED');
+      EXCEPTION
+        WHEN OTHERS THEN
+          IF SQLCODE = -44305 THEN DBMS_OUTPUT.PUT_LINE('ALREADY_RUNNING'); ELSE RAISE; END IF;
+      END;
+    END;
+    /
+    ALTER SYSTEM REGISTER;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _svc_sql
+  changed_when: "'CREATED' in (_svc_sql.stdout | default('')) or 'STARTED' in (_svc_sql.stdout | default(''))"
+  failed_when: >-
+    _svc_sql.rc != 0 or
+    'ORA-' in (_svc_sql.stdout | default('')) or
+    'SP2-' in (_svc_sql.stdout | default('')) or
+    'PLS-' in (_svc_sql.stdout | default(''))
+  when:
+    - not (oracle_restart_available | bool)
+    - _svc_manage_current_role | bool
+
+- name: Inspect Restart service configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ oracle_gi_home }}/bin/srvctl"
+      - config
+      - service
+      - -db
+      - "{{ _svc_restart_db }}"
+      - -service
+      - "{{ _svc_name }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_config_svc
+  changed_when: false
+  failed_when: false
+  when: oracle_restart_available | bool
+
+- name: Add role-based service to Oracle Restart
+  ansible.builtin.command:
+    argv:
+      - "{{ oracle_gi_home }}/bin/srvctl"
+      - add
+      - service
+      - -db
+      - "{{ _svc_restart_db }}"
+      - -service
+      - "{{ _svc_name }}"
+      - -role
+      - "{{ _svc_role }}"
+      - -policy
+      - AUTOMATIC
+      - -failovertype
+      - "{{ _svc_failover_type }}"
+      - -failovermethod
+      - "{{ _svc_failover_method }}"
+      - -failoverretry
+      - "{{ svc.failover_retries | default(30) | string }}"
+      - -failoverdelay
+      - "{{ svc.failover_delay | default(1) | string }}"
+      - -notification
+      - "{{ svc.notification | default(true) | ternary('TRUE', 'FALSE') }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_add_svc
+  changed_when: true
+  when:
+    - oracle_restart_available | bool
+    - _srvctl_config_svc.rc != 0
+
+- name: Validate existing Restart service contract
+  ansible.builtin.assert:
+    that:
+      - "('Service role: ' ~ _svc_role) in _srvctl_config_svc.stdout"
+      - "('Failover type: ' ~ _svc_failover_type) in _srvctl_config_svc.stdout"
+      - "('Failover method: ' ~ _svc_failover_method) in _srvctl_config_svc.stdout"
+    fail_msg: >-
+      Existing service {{ _svc_name }} on {{ _svc_restart_db }} does not match
+      the requested role/failover contract. Remove it explicitly or reconcile
+      it with srvctl modify service before rerunning Ansible.
+  when:
+    - oracle_restart_available | bool
+    - _srvctl_config_svc.rc == 0
+
+- name: Check standby-role service priming marker
+  ansible.builtin.stat:
+    path: "{{ oracle_service_prime_marker_dir }}/{{ _svc_restart_db }}-{{ _svc_name }}"
+  register: _svc_prime_marker
+  when:
+    - oracle_restart_available | bool
+    - oracle_service_prime_standby_role_services | bool
+    - _svc_role == 'PHYSICAL_STANDBY'
+    - (_svc_database_state.stdout | default('') | trim) == 'PRIMARY|READ WRITE'
+
+- name: Prime standby-role service for broker role transitions
+  when:
+    - oracle_restart_available | bool
+    - oracle_service_prime_standby_role_services | bool
+    - _svc_role == 'PHYSICAL_STANDBY'
+    - (_svc_database_state.stdout | default('') | trim) == 'PRIMARY|READ WRITE'
+    - not (_svc_prime_marker.stat.exists | default(false))
+  block:
+    - name: Ensure service priming marker directory exists
+      ansible.builtin.file:
+        path: "{{ oracle_service_prime_marker_dir }}"
+        state: directory
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0755"
+
+    - name: Start and stop standby-role service once on the primary
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ oracle_gi_home }}
+        "$ORACLE_HOME/bin/srvctl" start service -db {{ _svc_restart_db }} -service {{ _svc_name }}
+        "$ORACLE_HOME/bin/srvctl" stop service -db {{ _svc_restart_db }} -service {{ _svc_name }}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      changed_when: true
+
+    - name: Record standby-role service priming
+      ansible.builtin.file:
+        path: "{{ oracle_service_prime_marker_dir }}/{{ _svc_restart_db }}-{{ _svc_name }}"
+        state: touch
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_group }}"
+        mode: "0644"
+        modification_time: preserve
+        access_time: preserve
+
+- name: Enable and start matching role-based service
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    enable_output="$("$ORACLE_HOME/bin/srvctl" enable service -db {{ _svc_restart_db }} -service {{ _svc_name }} 2>&1)"
+    enable_rc=$?
+    printf '%s\n' "$enable_output"
+    if [ "$enable_rc" -ne 0 ] &&
+       ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
+      exit "$enable_rc"
+    fi
+    if [ "$enable_rc" -eq 0 ]; then echo SERVICE_ENABLED; fi
+
+    if [ "{{ '1' if (_svc_manage_current_role | bool) else '0' }}" -eq 0 ]; then
+      echo SERVICE_REGISTERED_FOR_{{ _svc_role }}_ROLE
+      exit 0
+    fi
+
+    status_output="$("$ORACLE_HOME/bin/srvctl" status service -db {{ _svc_restart_db }} -service {{ _svc_name }} 2>&1)" || true
+    printf '%s\n' "$status_output"
+    if printf '%s\n' "$status_output" | grep -Eq 'is running|is already running'; then
+      echo SERVICE_ALREADY_RUNNING
+      exit 0
+    fi
+    "$ORACLE_HOME/bin/srvctl" start service -db {{ _svc_restart_db }} -service {{ _svc_name }}
+    echo SERVICE_STARTED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_start_svc
+  changed_when: >-
+    'SERVICE_ENABLED' in (_srvctl_start_svc.stdout | default('')) or
+    'SERVICE_STARTED' in (_srvctl_start_svc.stdout | default(''))
+  failed_when: _srvctl_start_svc.rc != 0
+  when: oracle_restart_available | bool

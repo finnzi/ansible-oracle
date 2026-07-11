@@ -225,7 +225,10 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "super_sby",
             "super",
             ("/super/app/oracle/db_home1", "/super/app/oracle/db_home2"),
-            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+            (
+                "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+                "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+            ),
             "PHYSICAL_STANDBY",
             "read only",
             "super_svc",
@@ -282,7 +285,13 @@ def test_restart_database_registration_details(
     assert f"Start options: {start_options}" in config.stdout
     assert f"Database role: {role}" in config.stdout
     assert "Management policy: AUTOMATIC" in config.stdout
-    assert f"Services: {service}" in config.stdout
+    services_line = next(
+        line for line in config.stdout.splitlines() if line.startswith("Services:")
+    )
+    assert service in {
+        value.strip()
+        for value in services_line.removeprefix("Services:").split(",")
+    }
     assert f"Database instance: {instance}" in config.stdout
 
 

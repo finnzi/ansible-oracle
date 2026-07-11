@@ -182,40 +182,8 @@
     - not _observer_client_marker.stat.exists
     - _observer_dgmgrl.stat.exists or (_observer_client_install is changed)
 
-- name: Ensure observer can resolve lab Data Guard host aliases
-  ansible.builtin.blockinfile:
-    path: /etc/hosts
-    marker: "# {mark} ANSIBLE-ORACLE DATAGUARD HOSTS"
-    block: |
-      {% for host in oracle_lab_guest_hosts | default([]) %}
-      {% if 'dataguard' in (host.modes | default([])) %}
-      {{ host.ip }} {{ host.names }}
-      {% endif %}
-      {% endfor %}
-    owner: root
-    group: root
-    mode: "0644"
-  when: oracle_observer_install_client | bool
-
-- name: Write observer tnsnames.ora for Data Guard broker aliases
-  ansible.builtin.template:
-    src: tnsnames.ora.j2
-    dest: "{{ observer_config_dir }}/tnsnames.ora"
-    owner: "{{ oracle_user }}"
-    group: "{{ oracle_group }}"
-    mode: "0644"
-  when: oracle_observer_install_client | bool
-
-- name: Write observer sqlnet.ora defaults
-  ansible.builtin.copy:
-    dest: "{{ observer_config_dir }}/sqlnet.ora"
-    content: |
-      # Managed by ansible-oracle / oracle_observer
-      NAMES.DIRECTORY_PATH = (TNSNAMES, EZCONNECT)
-      SQLNET.AUTHENTICATION_SERVICES = (NONE)
-    owner: "{{ oracle_user }}"
-    group: "{{ oracle_group }}"
-    mode: "0644"
+- name: Configure observer and native client network aliases
+  ansible.builtin.include_tasks: client-config.yml
   when: oracle_observer_install_client | bool
 
 - name: Validate observer DGMGRL can inspect Data Guard broker

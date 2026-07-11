@@ -1,11 +1,9 @@
 ---
 # defaults/main.yml for oracle_service_manage
 #
-# Create the dedicated client-facing service that always points at the
-# current primary. Clients connect to <instance>_svc and don't need to know
-# which node is primary. For standalone, it lives on the local listener.
-# For Data Guard, the DG switchover flow keeps the service on the current
-# primary.
+# Create role-based client services. An instance can declare `services`, each
+# with name, role, and TAF attributes. Existing inventories that only declare
+# `service_name` receive the historical PRIMARY/SELECT service contract.
 
 oracle_user: oracle
 oracle_group: oinstall
@@ -13,3 +11,5 @@ oracle_instances: []
 oracle_gi_home: /grid/19c/gi_home1
 oracle_restart_available: false
 oracle_service_apply_instance_overrides_require_dataguard: true
+oracle_service_prime_standby_role_services: true
+oracle_service_prime_marker_dir: /var/lib/ansible-oracle/services

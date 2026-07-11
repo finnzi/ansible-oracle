@@ -1,0 +1,41 @@
+---
+- name: Ensure client network configuration directory exists
+  ansible.builtin.file:
+    path: "{{ observer_config_dir }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0755"
+
+- name: Ensure client can resolve lab Data Guard host aliases
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} ANSIBLE-ORACLE DATAGUARD HOSTS"
+    block: |
+      {% for host in oracle_lab_guest_hosts | default([]) %}
+      {% if 'dataguard' in (host.modes | default([])) %}
+      {{ host.ip }} {{ host.names }}
+      {% endif %}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Write native client aliases and broker aliases
+  ansible.builtin.template:
+    src: tnsnames.ora.j2
+    dest: "{{ observer_config_dir }}/tnsnames.ora"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"
+
+- name: Write native client sqlnet defaults
+  ansible.builtin.copy:
+    dest: "{{ observer_config_dir }}/sqlnet.ora"
+    content: |
+      # Managed by ansible-oracle / oracle_observer
+      NAMES.DIRECTORY_PATH = (TNSNAMES, EZCONNECT)
+      SQLNET.AUTHENTICATION_SERVICES = (NONE)
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0644"

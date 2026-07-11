@@ -1,15 +1,26 @@
 ---
-# tasks/create-service.yml — create + start the client-facing service.
-# `inst` in scope. Uses DBMS_SERVICE so it works without Restart; also
-# registers via srvctl when Restart is available (idempotent).
+# Build the service set for one inventory instance. `services` is the preferred
+# interface; `service_name` remains supported for existing inventories.
 
-- name: Set service name
+- name: Set instance service reconciliation facts
   ansible.builtin.set_fact:
-    _svc_name: "{{ inst.service_name | default(inst.name ~ '_svc') }}"
     _svc_home_path: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _svc_restart_db: "{{ inst.db_unique_name | default(inst.name) }}"
-    _svc_manage_current_primary: false
+    _svc_definitions: >-
+      {{
+        inst.services
+        | default([
+            {
+              'name': inst.service_name | default(inst.name ~ '_svc'),
+              'role': 'PRIMARY',
+              'failover_type': 'SELECT',
+              'failover_method': 'BASIC',
+              'failover_retries': 30,
+              'failover_delay': 1
+            }
+          ], true)
+      }}
 
 - name: Read local database role before service reconciliation
   ansible.builtin.shell: |
@@ -31,117 +42,9 @@
     'ORA-' in (_svc_database_state.stdout | default('')) or
     'SP2-' in (_svc_database_state.stdout | default(''))
 
-- name: Record current-primary service ownership
-  ansible.builtin.set_fact:
-    _svc_manage_current_primary: >-
-      {{ (_svc_database_state.stdout | default('') | trim) == 'PRIMARY|READ WRITE' }}
-
-- name: Create + start the client service via DBMS_SERVICE (idempotent)
-  ansible.builtin.shell: |
-    set -o pipefail
-    export ORACLE_HOME={{ _svc_home_path }}
-    export ORACLE_SID={{ inst.name }}
-    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
-    SET SERVEROUTPUT ON
-    DECLARE
-      v_count NUMBER;
-    BEGIN
-      SELECT COUNT(*) INTO v_count FROM dba_services WHERE name = '{{ _svc_name }}';
-      IF v_count = 0 THEN
-        DBMS_SERVICE.CREATE_SERVICE(service_name => '{{ _svc_name }}', network_name => '{{ _svc_name }}');
-        DBMS_OUTPUT.PUT_LINE('CREATED');
-      ELSE
-        DBMS_OUTPUT.PUT_LINE('EXISTS');
-      END IF;
-      BEGIN
-        DBMS_SERVICE.START_SERVICE(service_name => '{{ _svc_name }}');
-        DBMS_OUTPUT.PUT_LINE('STARTED');
-      EXCEPTION
-        WHEN OTHERS THEN
-          IF SQLCODE = -44305 THEN DBMS_OUTPUT.PUT_LINE('ALREADY_RUNNING'); ELSE RAISE; END IF;
-      END;
-    END;
-    /
-    ALTER SYSTEM REGISTER;
-    EXIT;
-    SQL
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _svc_sql
-  changed_when: "'CREATED' in (_svc_sql.stdout | default('')) or 'STARTED' in (_svc_sql.stdout | default(''))"
-  failed_when: >-
-    _svc_sql.rc != 0 or
-    'ORA-' in (_svc_sql.stdout | default('')) or
-    'SP2-' in (_svc_sql.stdout | default('')) or
-    'PLS-' in (_svc_sql.stdout | default(''))
-  when: _svc_manage_current_primary | bool
-
-# Register with Restart too, when available, so it survives crashes.
-- name: Srvctl add service (when Restart owns the DB)
-  ansible.builtin.shell: |
-    set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" add service \
-      -db {{ _svc_restart_db }} \
-      -service {{ _svc_name }} \
-      -role PRIMARY \
-      -failovertype SELECT \
-      -failovermethod BASIC \
-      -notification TRUE
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _srvctl_add_svc
-  changed_when: _srvctl_add_svc.rc == 0
-  failed_when: >-
-    _srvctl_add_svc.rc != 0 and 'already exists' not in (_srvctl_add_svc.stdout | default(''))
-  when:
-    - oracle_restart_available | bool
-
-- name: Srvctl enable + start service (when Restart owns the DB)
-  ansible.builtin.shell: |
-    set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
-
-    enable_output="$("$ORACLE_HOME/bin/srvctl" enable service -db {{ _svc_restart_db }} -service {{ _svc_name }} 2>&1)"
-    enable_rc=$?
-    printf '%s\n' "$enable_output"
-    if [ "$enable_rc" -ne 0 ] &&
-       ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
-      exit "$enable_rc"
-    fi
-    if [ "$enable_rc" -eq 0 ]; then
-      echo SERVICE_ENABLED
-    fi
-
-    if [ "{{ '1' if (_svc_manage_current_primary | bool) else '0' }}" -eq 0 ]; then
-      echo SERVICE_REGISTERED_FOR_PRIMARY_ROLE
-      exit 0
-    fi
-
-    status_output="$("$ORACLE_HOME/bin/srvctl" status service -db {{ _svc_restart_db }} -service {{ _svc_name }} 2>&1)" || true
-    printf '%s\n' "$status_output"
-    if printf '%s\n' "$status_output" | grep -Eq 'is running|is already running'; then
-      echo SERVICE_ALREADY_RUNNING
-      exit 0
-    fi
-
-    start_output="$("$ORACLE_HOME/bin/srvctl" start service -db {{ _svc_restart_db }} -service {{ _svc_name }} 2>&1)"
-    start_rc=$?
-    printf '%s\n' "$start_output"
-    if [ "$start_rc" -ne 0 ] &&
-       ! printf '%s\n' "$start_output" | grep -Eiq 'already running|PRCR-1079'; then
-      exit "$start_rc"
-    fi
-    echo SERVICE_STARTED
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _srvctl_start_svc
-  changed_when: >-
-    'SERVICE_ENABLED' in (_srvctl_start_svc.stdout | default('')) or
-    'SERVICE_STARTED' in (_srvctl_start_svc.stdout | default(''))
-  failed_when: _srvctl_start_svc.rc != 0
-  when:
-    - oracle_restart_available | bool
+- name: Reconcile per-instance services
+  ansible.builtin.include_tasks: reconcile-service.yml
+  loop: "{{ _svc_definitions }}"
+  loop_control:
+    loop_var: svc
+    label: "{{ svc.name }} ({{ svc.role | default('PRIMARY') }})"

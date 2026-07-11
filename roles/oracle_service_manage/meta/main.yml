@@ -1,11 +1,10 @@
 ---
 galaxy_info:
   author: ansible-oracle
-  description: Dedicated client-facing service per instance (always points at the current primary)
+  description: Restart-managed role-based Oracle database services
   license: MIT
   min_ansible_version: "2.16"
   platforms:
     - name: EL
       versions: ["9"]
-dependencies:
-  - role: oracle_db_manage
+dependencies: []

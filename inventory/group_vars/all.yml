@@ -87,9 +87,29 @@ oracle_instances:
     # standalone listener hostname; for DG this is overridden by primary/standby
     listener_vip: superdb.domain.is
     listener_port: 1521
-    # The client-facing service that always points at the current primary.
-    # Created via srvctl in oracle_service_manage.
+    # Backward-compatible primary service used by the original test slice.
     service_name: super_svc
+    # Role-based Data Guard services. super_pri follows the writable primary;
+    # super_stb follows the Active Data Guard read-only physical standby.
+    services:
+      - name: super_svc
+        role: PRIMARY
+        failover_type: SELECT
+        failover_method: BASIC
+        failover_retries: 30
+        failover_delay: 1
+      - name: super_pri
+        role: PRIMARY
+        failover_type: SELECT
+        failover_method: BASIC
+        failover_retries: 30
+        failover_delay: 1
+      - name: super_stb
+        role: PHYSICAL_STANDBY
+        failover_type: NONE
+        failover_method: NONE
+        failover_retries: 0
+        failover_delay: 0
 
 # Default listener / DB credentials for the lab (NOT for production). The test
 # suite and the custom modules use these. Real passwords should be vaulted.

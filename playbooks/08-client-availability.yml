@@ -1,0 +1,24 @@
+---
+# Reconcile role-based Data Guard application services and native Oracle Client
+# aliases without running database creation or Data Guard topology setup.
+
+- name: Configure role-based Data Guard client services
+  hosts: oracle_db_hosts
+  become: true
+  vars:
+    oracle_restart_available: true
+    oracle_service_apply_instance_overrides_require_dataguard: false
+    oracle_network_dataguard_enabled: true
+    oracle_lab_host_map_mode: dataguard
+  roles:
+    - role: oracle_network
+    - role: oracle_service_manage
+
+- name: Configure native client aliases on the observer/client VM
+  hosts: observer
+  become: true
+  tasks:
+    - name: Reconcile native Oracle Client files only
+      ansible.builtin.include_role:
+        name: oracle_observer
+        tasks_from: client-config

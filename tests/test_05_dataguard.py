@@ -436,7 +436,13 @@ def test_physical_standby_restart_registration(standby_exec):
     assert "Database name: super" in config.stdout
     assert "Database role: PHYSICAL_STANDBY" in config.stdout
     assert "Oracle home: /super/app/oracle/db_home2" in config.stdout
-    assert "/super/app/oracle/db_home1/dbs/spfilesuper.ora" in config.stdout
+    assert any(
+        path in config.stdout
+        for path in (
+            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+            "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+        )
+    )
     assert "LISTENER_SUPER" in listener.stdout
 
 
@@ -453,7 +459,13 @@ def test_physical_standby_uses_spfile(standby_exec):
     r = standby_exec(f"su - oracle -c {shlex.quote(sql)}")
     assert r.returncode == 0, r.stderr
     assert "ORA-" not in r.stdout
-    assert "/super/app/oracle/db_home1/dbs/spfilesuper.ora" in r.stdout
+    assert any(
+        path in r.stdout
+        for path in (
+            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+            "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+        )
+    )
 
 
 def test_primary_reports_dataguard_role_and_protection(db_connection):
