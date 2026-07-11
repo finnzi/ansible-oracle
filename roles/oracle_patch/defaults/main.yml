@@ -21,6 +21,9 @@
 #   oracle_patch_zip:    path to the RU zip under stage_dir
 #   oracle_patch_opatch_zip: path to the p6880880 zip
 #   oracle_patch_dg_standbyfirst: auto | true | false  (auto = ask the module)
+#   oracle_patch_apply_component_path: optional relative path inside a combo zip
+#     to apply, for example 39062931/39034528 for an eligible DB RU component
+#     inside an otherwise ineligible OJVM+RU bundle.
 #   oracle_patch_expected_patch_ids: [] means derive DB RU IDs from README
 #   oracle_patch_expected_grid_patch_ids: [] means derive Grid IDs from OPatch inventory XML
 #   oracle_patch_discover_oratab: include DB homes discovered from /etc/oratab
@@ -52,6 +55,7 @@ oracle_patch_run_datapatch: true
 oracle_patch_expected_patch_ids: []
 oracle_patch_expected_grid_patch_ids: []
 oracle_patch_grid_apply_component_id: "{{ oracle_gi_install_apply_ru_component_id | default('') }}"
+oracle_patch_apply_component_path: ""
 oracle_patch_bundle_extract_dir: /var/tmp/ansible-oracle-patches
 
 # Brownfield support: include database homes that were installed outside this

@@ -40,17 +40,62 @@
     zip: "{{ oracle_patch_zip }}"
   register: _sf
 
+- name: Fail when selected patch component path is invalid
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_apply_component_path={{ oracle_patch_apply_component_path }}
+      is invalid. Use a relative component path reported by
+      playbooks/07-patch-standbyfirst-media.yml.
+  when:
+    - oracle_patch_apply_component_path | default('') | length > 0
+    - oracle_patch_apply_component_path.startswith('/') or
+      oracle_patch_apply_component_path is search('(^|/)\\.\\.(/|$)')
+
+- name: Resolve selected patch component
+  ansible.builtin.set_fact:
+    _patch_selected_component: >-
+      {{
+        (
+          _sf.eligible_db_components | default([])
+          | selectattr('component_path', 'equalto', oracle_patch_apply_component_path)
+          | list
+          | first
+        ) | default({})
+      }}
+  when: oracle_patch_apply_component_path | default('') | length > 0
+
+- name: Fail when selected patch component is not eligible
+  ansible.builtin.fail:
+    msg: >-
+      oracle_patch_apply_component_path={{ oracle_patch_apply_component_path }}
+      was not found as an eligible Data Guard Standby-First DB RU component in
+      {{ oracle_patch_zip | basename }}.
+  when:
+    - oracle_patch_apply_component_path | default('') | length > 0
+    - _patch_selected_component | default({}) | length == 0
+
 - name: Resolve whether to use standby-first patching
   ansible.builtin.set_fact:
     oracle_patch_use_standbyfirst: >-
-      {{ (_sf.eligible | default(false))
-         if (oracle_patch_dg_standbyfirst | default('auto') == 'auto')
-         else (oracle_patch_dg_standbyfirst | bool) }}
+      {%- if oracle_patch_dg_standbyfirst | default('auto') == 'auto' -%}
+      {{
+        ((_patch_selected_component | default({})).standby_first | default(false))
+        if (oracle_patch_apply_component_path | default('') | length > 0)
+        else (_sf.eligible | default(false))
+      }}
+      {%- else -%}
+      {{ oracle_patch_dg_standbyfirst | bool }}
+      {%- endif -%}
   when: oracle_patch_dg_standbyfirst | default('auto') in ('auto', true)
 
 - name: Resolve expected DB patch IDs
   ansible.builtin.set_fact:
     _patch_expected_ids: >-
+      {%- if oracle_patch_expected_patch_ids | length > 0 -%}
+      {{ oracle_patch_expected_patch_ids }}
+      {%- elif oracle_patch_apply_component_path | default('') | length > 0 -%}
+      {{ [_patch_selected_component.patch_number] if (_patch_selected_component | default({}) | length > 0) else [] }}
+      {%- else -%}
       {%- set ids = [] -%}
       {%- for component in _sf.components | default([]) -%}
         {%- set description = component.description | default('') -%}
@@ -58,7 +103,8 @@
           {%- set _ = ids.append(component.patch_number) -%}
         {%- endif -%}
       {%- endfor -%}
-      {{ oracle_patch_expected_patch_ids if (oracle_patch_expected_patch_ids | length > 0) else ids }}
+      {{ ids }}
+      {%- endif -%}
   when: oracle_patch_target == 'db'
 
 - name: Resolve expected Grid patch IDs
@@ -88,7 +134,9 @@
       Patch {{ oracle_patch_zip | basename }}: standby-first eligible =
       {{ _sf.eligible | default('n/a') }}. Reason:
       {{ _sf.reason | default('n/a') }}. Apply mode: {{ oracle_patch_mode }}.
-      Target: {{ oracle_patch_target }}. Expected patch IDs:
+      Target: {{ oracle_patch_target }}. Component path:
+      {{ oracle_patch_apply_component_path | default('') | default('none', true) }}.
+      Expected patch IDs:
       {{ _patch_expected_ids | join(',') }}.
 
 - name: Verify OPatch upgrade zip is staged
@@ -501,6 +549,16 @@
     bundle={{ oracle_patch_zip | basename | regex_replace('^p([0-9]+)_.*$', '\\1') | quote }}
     target={{ oracle_patch_target | quote }}
     configured={{ (oracle_patch_grid_apply_component_id | default('')) | quote }}
+    component={{ (oracle_patch_apply_component_path | default('')) | quote }}
+
+    if [ -n "$component" ]; then
+      if [ -d "$root/$component" ]; then
+        printf '%s\n' "$root/$component"
+        exit 0
+      fi
+      printf 'Configured patch component not found: %s\n' "$root/$component" >&2
+      exit 1
+    fi
 
     if [ "$target" = "grid" ] && [ -n "$configured" ]; then
       found="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$configured" -print -quit)"

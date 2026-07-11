@@ -31,6 +31,7 @@
 # RETURNS
 #   eligible:   bool                # overall verdict (AND of README components)
 #   components: list of {name, patch_number, description, standby_first, evidence}
+#   eligible_db_components: list of eligible DB RU subdirectories inside a bundle
 #   patch_inventory: list of {patch_number, description, parent_patch_number, path}
 #   reason:     str                 # human-readable summary
 #   readme_files_examined: int
@@ -258,8 +259,9 @@ def analyze_zip(zip_path: str) -> dict:
     """
     Open an Oracle patch zip and return the standby-first analysis.
 
-    Returns a dict with keys: eligible, components, patch_inventory, reason,
-    readme_files_examined. Raises FileNotFoundError / ValueError on bad input.
+    Returns a dict with keys: eligible, components, eligible_db_components,
+    patch_inventory, reason, readme_files_examined. Raises FileNotFoundError /
+    ValueError on bad input.
     """
     if not os.path.isfile(zip_path):
         raise FileNotFoundError(zip_path)
@@ -288,6 +290,7 @@ def analyze_zip(zip_path: str) -> dict:
                     "standby_first": eligible,
                     "evidence": evidence,
                     "readme": path,
+                    "component_path": os.path.dirname(path),
                 }
             )
 
@@ -314,9 +317,26 @@ def analyze_zip(zip_path: str) -> dict:
             + " are ineligible or silent (OJVM is the classic disqualifier)"
         )
 
+    eligible_db_components = [
+        {
+            "patch_number": c["patch_number"],
+            "description": c["description"],
+            "standby_first": c["standby_first"],
+            "evidence": c["evidence"],
+            "readme": c["readme"],
+            "component_path": c["component_path"],
+            "top_patch_number": c["component_path"].split("/", 1)[0],
+        }
+        for c in components
+        if c["standby_first"]
+        and c["name"] != "combo"
+        and "Database Release Update" in c["description"]
+    ]
+
     return {
         "eligible": overall,
         "components": components,
+        "eligible_db_components": eligible_db_components,
         "patch_inventory": patch_inventory,
         "reason": reason,
         "readme_files_examined": len(components),
@@ -341,6 +361,7 @@ def scan_directory(directory: str, pattern: str = "*.zip") -> dict:
                 {
                     "eligible": False,
                     "components": [],
+                    "eligible_db_components": [],
                     "patch_inventory": [],
                     "reason": f"could not read patch zip: {exc}",
                     "readme_files_examined": 0,
@@ -352,13 +373,25 @@ def scan_directory(directory: str, pattern: str = "*.zip") -> dict:
     eligible = [p for p in patches if p.get("eligible")]
     errors = [p for p in patches if p.get("error")]
     ineligible = [p for p in patches if not p.get("eligible") and not p.get("error")]
+    eligible_db_components: list[dict] = []
+    for patch in patches:
+        for component in patch.get("eligible_db_components", []):
+            eligible_db_components.append(
+                {
+                    **component,
+                    "path": patch["path"],
+                    "basename": patch["basename"],
+                }
+            )
     return {
         "patches": patches,
         "eligible_patches": eligible,
+        "eligible_db_components": eligible_db_components,
         "ineligible_patches": ineligible,
         "errors": errors,
         "zip_files_examined": len(patches),
         "eligible_count": len(eligible),
+        "eligible_db_component_count": len(eligible_db_components),
         "ineligible_count": len(ineligible),
         "error_count": len(errors),
     }

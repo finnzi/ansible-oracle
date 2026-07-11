@@ -58,7 +58,7 @@ future task explicitly changes the desired protection mode.
 | Single-home patching | Proven | Current-home DB/Grid patch inventory/apply paths converge idempotently. |
 | Dual-home DB patching and Oracle home switching | Proven for standalone | `fluff` live switch to `/fluff/app/oracle/db_home2` and switchback to `/fluff/app/oracle/db_home1`; Data Guard dual-home switches are routed to standby-first orchestration. |
 | Greenfield and brownfield patching | Proven for inventory/discovery paths | Inventory-installed homes and Restart-discovered brownfield-style targets are reported with concrete names and home paths in the live readiness run; `/etc/oratab`, `/etc/oracle/olr.loc`, and explicit extra homes are supported. Destructive brownfield execution requires explicit names/mappings. |
-| Standby-first Data Guard patching when release notes allow | External gate | Eligibility parser, media scanner, readiness path, confirmation gate, and orchestration are implemented. Current staged media reports `eligible=0`; live eligible-RU apply requires suitable standalone DB RU media. |
+| Standby-first Data Guard patching when release notes allow | External gate | Eligibility parser, media scanner, readiness path, confirmation gate, and orchestration are implemented. Current staged media reports `eligible=0` for whole zips and an eligible DB RU component at `39062931/39034528`; live eligible-RU component apply remains unproven. |
 | Automatically read standby-first support from release notes | Proven | `library/patch_standbyfirst_info.py` parses README wording and staged zip directories; tests cover eligible, ineligible, corrupt, and current staged media. |
 | Switch Oracle homes old-to-new | Proven for standalone, partial for Data Guard | Standalone switch/switchback proven live; Data Guard old-to-new path exists in standby-first playbook but live apply requires eligible media. |
 
@@ -66,14 +66,30 @@ future task explicitly changes the desired protection mode.
 
 1. Live eligible standby-first patch apply:
    `playbooks/07-patch-standbyfirst-media.yml` currently reports zero staged
-   fully eligible standby-first patch zips. A live apply requires staging a
-   standalone DB RU whose README marks every component as Data Guard
-   Standby-First Installable, then running the confirmed standby-first path with
-   `oracle_patch_standbyfirst_execute=true` and
+   fully eligible standby-first patch zips, but it identifies eligible DB RU
+   component `39062931/39034528` inside the staged combo. A live apply requires
+   either an eligible standalone DB RU zip or selecting that eligible component
+   with `oracle_patch_apply_component_path=39062931/39034528`, then running the
+   confirmed standby-first path with `oracle_patch_standbyfirst_execute=true` and
    `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 
 ## Latest Verification
 
+- Live component-aware standby-first media scan on 2026-07-10:
+  `playbooks/07-patch-standbyfirst-media.yml -e
+  oracle_patch_standbyfirst_media_require_eligible=true` reported `eligible=0`
+  for whole zips and eligible DB RU component `39062931/39034528`.
+- Live component-aware standby-first readiness on 2026-07-10:
+  `playbooks/07-patch-standbyfirst.yml -e
+  oracle_patch_apply_component_path=39062931/39034528` passed with
+  `primary=super`, `standby=super_sby`, and `protection=MaxAvailability`.
+- Live non-destructive selected-component role convergence on 2026-07-10:
+  `playbooks/07-patch.yml -e
+  oracle_patch_apply_component_path=39062931/39034528` derived expected patch
+  ID `39034528`, found current homes already patched, and completed with
+  `changed=0`.
+- Full KVM-backed pytest after component-aware standby-first media support:
+  `172 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

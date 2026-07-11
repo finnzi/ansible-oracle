@@ -83,6 +83,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_expected_grid_patch_ids: []" in defaults
     assert "oracle_patch_target: db" in defaults
     assert "oracle_patch_mode: inplace" in defaults
+    assert "oracle_patch_apply_component_path: \"\"" in defaults
     assert "oracle_patch_discover_oratab: true" in defaults
     assert "oracle_patch_extra_homes: []" in defaults
     assert "oracle_patch_discover_olr: true" in defaults
@@ -97,6 +98,10 @@ def test_patch_role_db_apply_contract():
     assert "Fail when patch mode is invalid" in tasks
     assert "Fail when dual-home mode is requested for Grid homes" in tasks
     assert "Resolve expected DB patch IDs" in tasks
+    assert "Resolve selected patch component" in tasks
+    assert "Fail when selected patch component is not eligible" in tasks
+    assert "oracle_patch_apply_component_path" in tasks
+    assert "Configured patch component not found" in tasks
     assert "Resolve expected Grid patch IDs" in tasks
     assert "'Database Release Update' in description" in tasks
     assert "selectattr('standby_first'" not in tasks
@@ -252,6 +257,9 @@ def test_patch_role_db_apply_contract():
     assert "Validate Restart uses original home again" in dual_switchback_playbook
     assert "item.actual_original_home_path" in dual_switchback_playbook
     assert "Validate standby-first patch eligibility" in standbyfirst_playbook
+    assert "oracle_patch_apply_component_path: \"\"" in standbyfirst_playbook
+    assert "Resolve selected standby-first patch component" in standbyfirst_playbook
+    assert "Fail when selected patch component is not standby-first eligible" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
     assert "oracle_patch_standbyfirst_execute: false" in standbyfirst_playbook
     assert 'oracle_patch_standbyfirst_confirm: ""' in standbyfirst_playbook
@@ -344,8 +352,10 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_standbyfirst_media_require_eligible: false" in standbyfirst_media_playbook
     assert "Report standby-first media scan" in standbyfirst_media_playbook
     assert "Report eligible standby-first command handoff" in standbyfirst_media_playbook
+    assert "Report eligible standby-first DB RU component handoff" in standbyfirst_media_playbook
     assert "oracle_patch_zip={{ oracle_stage_dir }}/{{ item.basename }}" in standbyfirst_media_playbook
-    assert "No staged patch zip is fully Data Guard Standby-First Installable" in standbyfirst_media_playbook
+    assert "oracle_patch_apply_component_path={{ item.component_path }}" in standbyfirst_media_playbook
+    assert "No staged patch zip or DB RU component is Data Guard Standby-First" in standbyfirst_media_playbook
 
 
 def test_patch_applied_to_db_home(lab_exec):
@@ -851,7 +861,10 @@ def test_standbyfirst_media_scan_reports_current_staged_zips():
     assert r.returncode == 0, output
     assert "Standby-first media scan examined" in r.stdout
     assert "eligible=0" in r.stdout
+    assert "eligible_db_components=" in r.stdout
     assert "Eligible zip(s): none" in r.stdout
+    assert "Eligible standby-first DB RU component 39034528" in r.stdout
+    assert "oracle_patch_apply_component_path=39062931/39034528" in r.stdout
     assert "p39062931_190000_Linux-x86-64.zip" in r.stdout
     assert "p39062956_190000_Linux-x86-64.zip" in r.stdout
     assert "changed=0" in r.stdout
@@ -877,15 +890,10 @@ def test_standbyfirst_media_scan_can_require_eligible_zip():
         timeout=300,
     )
     output = r.stdout + r.stderr
-    if (
-        r.returncode != 0
-        and "No staged patch zip is fully Data Guard Standby-First Installable"
-        not in output
-        and ("unreachable=1" in output or "UNREACHABLE!" in output)
-    ):
+    if r.returncode != 0 and ("unreachable=1" in output or "UNREACHABLE!" in output):
         pytest.skip("KVM lab host unreachable; standby-first media gate not run")
 
-    assert r.returncode != 0, output
+    assert r.returncode == 0, output
     assert "eligible=0" in r.stdout
-    assert "No staged patch zip is fully Data Guard Standby-First Installable" in output
-    assert "oracle_patch_standbyfirst_media_require_eligible=false" in output
+    assert "eligible_db_components=" in r.stdout
+    assert "Eligible standby-first DB RU component 39034528" in r.stdout

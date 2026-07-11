@@ -114,9 +114,40 @@ class TestAnalyzeZip:
         descriptions = {c["patch_number"]: c["description"] for c in result["components"]}
         assert descriptions["39034528"] == ""
         assert result["patch_inventory"] == []
+        assert result["eligible_db_components"] == []
         # OJVM should be named in the reason.
         assert "38906621" in result["reason"] or "OJVM" in result["reason"].upper() \
             or "ineligible" in result["reason"].lower()
+
+    def test_ineligible_combo_reports_eligible_db_ru_component(self, tmp_path):
+        z = self._build_zip(tmp_path, {
+            "39062931/README.html": "<html>Combo patch overview.</html>",
+            "39062931/39034528/README.html": (
+                "<title>Oracle Database Patch 39034528 - Database Release "
+                "Update 19.31.0.0.0</title>"
+                "<p>This patch is Data Guard Standby First Installable.</p>"
+            ),
+            "39062931/38906621/README.html": (
+                "<title>Oracle Database Patch 38906621 - OJVM Release Update</title>"
+                "<p>This patch is non-Data Guard Standby-First Installable.</p>"
+            ),
+        })
+
+        result = analyze_zip(z)
+
+        assert result["eligible"] is False
+        assert result["eligible_db_components"] == [
+            {
+                "patch_number": "39034528",
+                "description": "Database Release Update 19.31.0.0.0",
+                "standby_first": True,
+                "evidence": result["eligible_db_components"][0]["evidence"],
+                "readme": "39062931/39034528/README.html",
+                "component_path": "39062931/39034528",
+                "top_patch_number": "39062931",
+            }
+        ]
+        assert "ELIGIBLE" in result["eligible_db_components"][0]["evidence"]
 
     def test_bundle_all_eligible_is_overall_eligible(self, tmp_path):
         z = self._build_zip(tmp_path, {
@@ -167,6 +198,7 @@ class TestScanDirectory:
 
         assert result["zip_files_examined"] == 2
         assert result["eligible_count"] == 1
+        assert result["eligible_db_component_count"] == 0
         assert result["ineligible_count"] == 1
         assert result["error_count"] == 0
         assert [p["basename"] for p in result["eligible_patches"]] == ["eligible.zip"]
@@ -181,6 +213,7 @@ class TestScanDirectory:
 
         assert result["zip_files_examined"] == 1
         assert result["eligible_count"] == 0
+        assert result["eligible_db_component_count"] == 0
         assert result["ineligible_count"] == 0
         assert result["error_count"] == 1
         assert result["errors"][0]["basename"] == "bad.zip"
@@ -217,6 +250,8 @@ def test_real_db_ru_19_31_standbyfirst_verdict():
         f"DB RU component should be standby-first installable. Components: {components}"
     )
     assert descriptions["39034528"].startswith("Database Release Update")
+    assert result["eligible_db_components"][0]["patch_number"] == "39034528"
+    assert result["eligible_db_components"][0]["component_path"] == "39062931/39034528"
 
 
 @pytest.mark.slice

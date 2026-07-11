@@ -11,6 +11,7 @@
     oracle_patch_target: db
     oracle_patch_db_zip: "{{ oracle_stage_dir }}/{{ oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip') }}"
     oracle_patch_zip: "{{ oracle_patch_db_zip }}"
+    oracle_patch_apply_component_path: ""
     oracle_patch_standbyfirst_require_eligible: true
     oracle_patch_standbyfirst_execute: false
     oracle_patch_standbyfirst_confirm: ""
@@ -20,6 +21,40 @@
         zip: "{{ oracle_patch_zip }}"
       register: _patch_standbyfirst
 
+    - name: Fail when selected standby-first component path is invalid
+      ansible.builtin.fail:
+        msg: >-
+          oracle_patch_apply_component_path={{ oracle_patch_apply_component_path }}
+          is invalid. Use a relative component path reported by
+          playbooks/07-patch-standbyfirst-media.yml.
+      when:
+        - oracle_patch_apply_component_path | default('') | length > 0
+        - oracle_patch_apply_component_path.startswith('/') or
+          oracle_patch_apply_component_path is search('(^|/)\\.\\.(/|$)')
+
+    - name: Resolve selected standby-first patch component
+      ansible.builtin.set_fact:
+        _patch_standbyfirst_selected_component: >-
+          {{
+            (
+              _patch_standbyfirst.eligible_db_components | default([])
+              | selectattr('component_path', 'equalto', oracle_patch_apply_component_path)
+              | list
+              | first
+            ) | default({})
+          }}
+      when: oracle_patch_apply_component_path | default('') | length > 0
+
+    - name: Fail when selected patch component is not standby-first eligible
+      ansible.builtin.fail:
+        msg: >-
+          oracle_patch_apply_component_path={{ oracle_patch_apply_component_path }}
+          was not found as an eligible Data Guard Standby-First DB RU component
+          in {{ oracle_patch_zip | basename }}.
+      when:
+        - oracle_patch_apply_component_path | default('') | length > 0
+        - _patch_standbyfirst_selected_component | default({}) | length == 0
+
     - name: Fail when patch is not standby-first eligible
       ansible.builtin.fail:
         msg: >-
@@ -28,6 +63,7 @@
           special procedure instead of playbooks/07-patch-standbyfirst.yml.
       when:
         - oracle_patch_standbyfirst_require_eligible | default(true) | bool
+        - oracle_patch_apply_component_path | default('') | length == 0
         - not _patch_standbyfirst.eligible | default(false) | bool
 
     - name: Fail when standby-first execution is not explicitly confirmed

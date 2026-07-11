@@ -230,9 +230,11 @@ The supported lab path is now KVM/libvirt:
     supports optional target-home staging on the current standby, patch/switch
     that standby home, switchover through broker, then optional target-home
     staging and patch/switch on the old primary as the new standby. The current
-    staged OJVM+RU bundle is not standby-first eligible and is rejected before
-    broker role discovery, target-home installation, DB-home patching,
-    switchover, or datapatch; an eligible live RU apply remains not yet proven.
+    staged OJVM+RU bundle is not standby-first eligible as a whole and is
+    rejected before broker role discovery, target-home installation, DB-home
+    patching, switchover, or datapatch unless an eligible DB RU component is
+    selected with `oracle_patch_apply_component_path`; an eligible live RU apply
+    remains not yet proven.
     The readiness-only path has also been run live with the eligibility failure
     disabled and execution still false: it resolved `primary=super` and
     `standby=super_sby`, verified broker protection `MaxAvailability`,
@@ -241,8 +243,8 @@ The supported lab path is now KVM/libvirt:
   - `playbooks/07-patch-standbyfirst-media.yml` scans staged patch zip media
     with the same README parser before an operator attempts an eligible-RU
     apply. A live scan of the current `/u01/stage` media examined the staged
-    zip files and reported `eligible=0`; the OJVM+DB RU and GI RU bundles are
-    present, but no fully standby-first-eligible standalone DB RU is staged.
+    zip files and reported `eligible=0` for whole zips plus eligible DB RU
+    component `39062931/39034528` inside the OJVM+DB RU combo.
   - Brownfield DB homes can be discovered from `/etc/oratab` or supplied via
     `oracle_patch_extra_homes`; brownfield Grid homes can be discovered from
     `/etc/oracle/olr.loc` or supplied via `oracle_patch_extra_grid_homes`.
@@ -281,14 +283,22 @@ The supported lab path is now KVM/libvirt:
   2026-07-10: `144 passed, 8 skipped`.
 - Full pytest verification after adding the no-Docker lab artifact guard on
   2026-07-10: `145 passed, 8 skipped`.
+- Live component-aware standby-first verification on 2026-07-10:
+  `07-patch-standbyfirst-media.yml` reported eligible DB RU component
+  `39062931/39034528`; `07-patch-standbyfirst.yml` accepted that component in
+  readiness-only mode with `MaxAvailability`; and `07-patch.yml` derived patch
+  ID `39034528` from the selected component with `changed=0` because current
+  homes were already patched.
+- Full KVM-backed pytest after component-aware standby-first media support on
+  2026-07-10: `172 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 
 - Live standby-first patch apply with an actually eligible DB RU.
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
-  readiness path is proven, and the staged-media scanner currently reports no
-  eligible candidate. The eligible-RU apply still requires suitable media plus
-  explicit execution confirmation.
+  readiness path is proven, and the staged-media scanner reports eligible DB RU
+  component `39062931/39034528` inside the staged combo. The eligible-RU apply
+  still requires explicit component selection and execution confirmation.
 
 ## Host Findings From This Run
 
