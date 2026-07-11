@@ -351,6 +351,13 @@ The supported lab path is now KVM/libvirt:
   and `super_sby` standby; no destructive confirmation variables were passed.
 - Full KVM-backed pytest after defaulting the aggregate remaining-gates role
   guard on 2026-07-11: `180 passed, 9 skipped`.
+- Live standby-first readiness after adding phase-specific OPatch inventory
+  assertions on 2026-07-11: selected-component readiness still completed with
+  no install, patch, switchover, or datapatch work, and the new post-patch
+  inventory validation plays were skipped in readiness mode because execution
+  groups were not created.
+- Full KVM-backed pytest after adding phase-specific standby-first OPatch
+  inventory assertions on 2026-07-11: `180 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 

@@ -157,6 +157,13 @@ future task explicitly changes the desired protection mode.
   `standby=super_sby`; no destructive confirmation variables were passed.
 - Full KVM-backed pytest after defaulting the aggregate remaining-gates role
   guard: `180 passed, 9 skipped`.
+- Live standby-first readiness after adding phase-specific OPatch inventory
+  assertions: selected-component readiness still completed with no install,
+  patch, switchover, or datapatch work, and the new post-patch inventory
+  validation plays were skipped in readiness mode because execution groups were
+  not created.
+- Full KVM-backed pytest after adding phase-specific standby-first OPatch
+  inventory assertions: `180 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

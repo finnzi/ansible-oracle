@@ -289,6 +289,30 @@
         oracle_patch_dg_standbyfirst: false
         oracle_patch_allow_dataguard_dual_home_switch: true
 
+- name: Validate current Data Guard standby DB target home patch inventory
+  hosts: patch_current_standby
+  become: true
+  tasks:
+    - name: Validate current standby target home contains expected patch IDs
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        output="$("$ORACLE_HOME/OPatch/opatch" lspatches)"
+        printf '%s\n' "$output"
+        {% for patch_id in _patch_expected_ids | default([]) %}
+        printf '%s\n' "$output" | grep -E '^{{ patch_id }};' >/dev/null
+        {% endfor %}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_current_standby_lspatches
+      changed_when: false
+      failed_when: >-
+        _patch_sf_current_standby_lspatches.rc != 0 or
+        'OPatch succeeded' not in (_patch_sf_current_standby_lspatches.stdout | default('')) or
+        (_patch_expected_ids | default([]) | length) == 0
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
 - name: Validate current Data Guard standby before standby-first switchover
   hosts: primary
   become: true
@@ -405,6 +429,30 @@
         oracle_patch_run_datapatch: false
         oracle_patch_dg_standbyfirst: false
         oracle_patch_allow_dataguard_dual_home_switch: true
+
+- name: Validate new Data Guard standby DB target home patch inventory
+  hosts: patch_current_primary
+  become: true
+  tasks:
+    - name: Validate new standby target home contains expected patch IDs
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        output="$("$ORACLE_HOME/OPatch/opatch" lspatches)"
+        printf '%s\n' "$output"
+        {% for patch_id in _patch_expected_ids | default([]) %}
+        printf '%s\n' "$output" | grep -E '^{{ patch_id }};' >/dev/null
+        {% endfor %}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_new_standby_lspatches
+      changed_when: false
+      failed_when: >-
+        _patch_sf_new_standby_lspatches.rc != 0 or
+        'OPatch succeeded' not in (_patch_sf_new_standby_lspatches.stdout | default('')) or
+        (_patch_expected_ids | default([]) | length) == 0
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
 
 - name: Validate Data Guard broker after standby-first patching
   hosts: primary

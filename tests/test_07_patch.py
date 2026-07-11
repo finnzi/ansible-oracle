@@ -337,8 +337,20 @@ def test_patch_role_db_apply_contract():
     assert "oracle_db_install_home_paths" in standbyfirst_playbook
     assert "Patch current Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_standby" in standbyfirst_playbook
+    assert "Validate current Data Guard standby DB target home patch inventory" in standbyfirst_playbook
+    assert "Validate current standby target home contains expected patch IDs" in standbyfirst_playbook
     assert "Validate current Data Guard standby before standby-first switchover" in standbyfirst_playbook
     assert "Validate current standby is read-only with apply before switchover" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Patch current Data Guard standby DB homes"
+    ) < standbyfirst_playbook.index(
+        "Validate current Data Guard standby DB target home patch inventory"
+    )
+    assert standbyfirst_playbook.index(
+        "Validate current Data Guard standby DB target home patch inventory"
+    ) < standbyfirst_playbook.index(
+        "Validate current Data Guard standby before standby-first switchover"
+    )
     assert "Switchover Data Guard primary for standby-first patch" in standbyfirst_playbook
     assert "oracle_dataguard_run_switchover: true" in standbyfirst_playbook
     assert 'oracle_dataguard_switchover_target: "{{ _patch_sf_current_standby }}"' in standbyfirst_playbook
@@ -355,6 +367,8 @@ def test_patch_role_db_apply_contract():
     ) < standbyfirst_playbook.index("Install new Data Guard standby DB target homes")
     assert "Patch new Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_primary" in standbyfirst_playbook
+    assert "Validate new Data Guard standby DB target home patch inventory" in standbyfirst_playbook
+    assert "Validate new standby target home contains expected patch IDs" in standbyfirst_playbook
     assert "oracle_patch_mode: >-" in standbyfirst_playbook
     assert "oracle_patch_apply_enabled: true" in standbyfirst_playbook
     assert "oracle_patch_dg_standbyfirst: false" in standbyfirst_playbook
@@ -369,6 +383,16 @@ def test_patch_role_db_apply_contract():
         in standbyfirst_playbook
     )
     assert "Validate Data Guard broker after standby-first patching" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Patch new Data Guard standby DB homes"
+    ) < standbyfirst_playbook.index(
+        "Validate new Data Guard standby DB target home patch inventory"
+    )
+    assert standbyfirst_playbook.index(
+        "Validate new Data Guard standby DB target home patch inventory"
+    ) < standbyfirst_playbook.index(
+        "Validate Data Guard broker after standby-first patching"
+    )
     assert "Validate Maximum Availability after standby-first patching" in standbyfirst_playbook
     assert "Restore original Data Guard primary after standby-first patching" in standbyfirst_playbook
     assert 'oracle_dataguard_switchover_target: "{{ _patch_sf_current_primary }}"' in standbyfirst_playbook
