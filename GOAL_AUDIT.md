@@ -122,6 +122,10 @@ future task explicitly changes the desired protection mode.
   confirmation variables.
 - Full KVM-backed pytest after extending the safe remaining-gates wrapper:
   `174 passed, 9 skipped`.
+- Repeat confirmed destructive FSFO rehearsal after the safe wrapper extension:
+  destroyed the current primary VM, promoted `super_sby`, restarted and
+  reinstated `super`, switched back to `super`, and validated the standby as
+  `READ ONLY WITH APPLY` with `failed=0`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

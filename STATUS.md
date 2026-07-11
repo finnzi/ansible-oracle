@@ -317,6 +317,10 @@ The supported lab path is now KVM/libvirt:
   no destructive confirmation variables.
 - Full KVM-backed pytest after extending the safe remaining-gates wrapper on
   2026-07-11: `174 passed, 9 skipped`.
+- Repeat confirmed destructive FSFO rehearsal on 2026-07-11: destroyed the
+  current primary VM, promoted `super_sby`, restarted and reinstated `super`,
+  switched back to `super`, and validated the standby as `READ ONLY WITH APPLY`
+  with `failed=0`.
 
 ## Not Yet Proven End To End
 
