@@ -164,6 +164,15 @@ future task explicitly changes the desired protection mode.
   not created.
 - Full KVM-backed pytest after adding phase-specific standby-first OPatch
   inventory assertions: `180 passed, 9 skipped`.
+- Live standby-first readiness after adding the promoted-primary SQL patch
+  registry assertion: media scan still reported eligible DB RU components,
+  selected-component readiness still reported `current_primary=super`,
+  `current_standby=super_sby`, and `protection=MaxAvailability`, the new SQL
+  registry validation play was skipped in readiness mode because execution
+  groups were not created, and the missing-confirmation proof still refused
+  before install, patch, switchover, datapatch, or restore.
+- Full KVM-backed pytest after adding the promoted-primary SQL patch registry
+  assertion: `180 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

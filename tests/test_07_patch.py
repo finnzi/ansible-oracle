@@ -359,11 +359,18 @@ def test_patch_role_db_apply_contract():
     assert "Run datapatch on promoted Data Guard primary" in standbyfirst_playbook
     assert "Run datapatch after standby-first switchover" in standbyfirst_playbook
     assert "SQL Patching tool complete" in standbyfirst_playbook
+    assert "Validate promoted Data Guard primary SQL patch registry" in standbyfirst_playbook
+    assert "Validate promoted primary SQL patch registry contains expected patch IDs" in standbyfirst_playbook
+    assert "dba_registry_sqlpatch" in standbyfirst_playbook
+    assert "SQL_PATCH_SUCCESS=" in standbyfirst_playbook
     assert standbyfirst_playbook.index(
         "Switchover Data Guard primary for standby-first patch"
     ) < standbyfirst_playbook.index("Run datapatch on promoted Data Guard primary")
     assert standbyfirst_playbook.index(
         "Run datapatch on promoted Data Guard primary"
+    ) < standbyfirst_playbook.index("Validate promoted Data Guard primary SQL patch registry")
+    assert standbyfirst_playbook.index(
+        "Validate promoted Data Guard primary SQL patch registry"
     ) < standbyfirst_playbook.index("Install new Data Guard standby DB target homes")
     assert "Patch new Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_primary" in standbyfirst_playbook

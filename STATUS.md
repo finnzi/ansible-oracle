@@ -358,6 +358,15 @@ The supported lab path is now KVM/libvirt:
   groups were not created.
 - Full KVM-backed pytest after adding phase-specific standby-first OPatch
   inventory assertions on 2026-07-11: `180 passed, 9 skipped`.
+- Live standby-first readiness after adding the promoted-primary SQL patch
+  registry assertion on 2026-07-11: media scan still reported eligible DB RU
+  components, selected-component readiness still reported `super` primary,
+  `super_sby` standby, and `MaxAvailability`, the new SQL registry validation
+  play was skipped in readiness mode because execution groups were not created,
+  and the missing-confirmation proof still refused before install, patch,
+  switchover, datapatch, or restore.
+- Full KVM-backed pytest after adding the promoted-primary SQL patch registry
+  assertion on 2026-07-11: `180 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 

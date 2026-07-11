@@ -384,6 +384,38 @@
         )
       when: oracle_patch_standbyfirst_execute | default(false) | bool
 
+- name: Validate promoted Data Guard primary SQL patch registry
+  hosts: patch_current_standby
+  become: true
+  tasks:
+    - name: Validate promoted primary SQL patch registry contains expected patch IDs
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        export ORACLE_SID={{ _patch_sf_instance.name | quote }}
+        output="$("$ORACLE_HOME/bin/sqlplus" -L -S "/ as sysdba" <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT 'SQL_PATCH_SUCCESS=' || patch_id
+        FROM dba_registry_sqlpatch
+        WHERE action = 'APPLY'
+          AND status = 'SUCCESS';
+        EXIT;
+        SQL
+        )"
+        printf '%s\n' "$output"
+        {% for patch_id in _patch_expected_ids | default([]) %}
+        printf '%s\n' "$output" | grep -E '^[[:space:]]*SQL_PATCH_SUCCESS={{ patch_id }}[[:space:]]*$' >/dev/null
+        {% endfor %}
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_promoted_sqlpatch
+      changed_when: false
+      failed_when: >-
+        _patch_sf_promoted_sqlpatch.rc != 0 or
+        (_patch_expected_ids | default([]) | length) == 0
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
 - name: Install new Data Guard standby DB target homes
   hosts: patch_current_primary
   become: true
