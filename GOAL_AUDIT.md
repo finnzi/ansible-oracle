@@ -137,6 +137,12 @@ future task explicitly changes the desired protection mode.
   non-destructive with `changed=0`.
 - Full KVM-backed pytest after adding the guarded standby-first apply helper:
   `177 passed, 9 skipped`.
+- Live no-restore standby-first missing-confirmation proof after mirroring the
+  helper preflight: `scripts/check-remaining-gates.sh --skip-fsfo
+  --prove-confirmation-gate --no-standbyfirst-restore-primary` reported
+  `restore_original_primary=false`, retained `primary=super`,
+  `standby=super_sby`, and `protection=MaxAvailability`, and refused at the
+  confirmation gate before install, patch, switchover, datapatch, or restore.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

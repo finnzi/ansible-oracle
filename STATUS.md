@@ -329,6 +329,12 @@ The supported lab path is now KVM/libvirt:
   `changed=0`.
 - Full KVM-backed pytest after adding the guarded standby-first apply helper on
   2026-07-11: `177 passed, 9 skipped`.
+- Live no-restore standby-first missing-confirmation proof on 2026-07-11:
+  `scripts/check-remaining-gates.sh --skip-fsfo --prove-confirmation-gate
+  --no-standbyfirst-restore-primary` reported `restore_original_primary=false`,
+  retained `super` primary, `super_sby` standby, and `MaxAvailability`, then
+  refused at the confirmation gate before install, patch, switchover,
+  datapatch, or restore.
 
 ## Not Yet Proven End To End
 
