@@ -231,7 +231,8 @@ if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
     "${base_cmd[@]}" \
     playbooks/07-patch-standbyfirst.yml \
     -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
-    -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}"
+    -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}" \
+    -e "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}"
   )
   if [ -n "${STANDBYFIRST_EXPECTED_PRIMARY}" ]; then
     readiness_cmd+=(-e "oracle_patch_standbyfirst_expected_primary=${STANDBYFIRST_EXPECTED_PRIMARY}")

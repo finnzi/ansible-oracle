@@ -13,6 +13,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 pytestmark = pytest.mark.slice
 
 
+def _oracle_home(exec_fn, db_unique_name: str) -> str:
+    candidates = [db_unique_name]
+    peer_name = "super_sby" if db_unique_name == "super" else "super"
+    if peer_name not in candidates:
+        candidates.append(peer_name)
+    for candidate in candidates:
+        r = exec_fn(
+            "su - oracle -c "
+            + shlex.quote(
+                f"/grid/19c/gi_home1/bin/srvctl config database -db {candidate} | "
+                "sed -n 's/^Oracle home: //p'"
+            )
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip().splitlines()[-1]
+    return "/super/app/oracle/db_home1"
+
+
 def test_dataguard_defaults_use_maximum_availability():
     defaults_text = (
         REPO_ROOT / "roles/oracle_dataguard/defaults/main.yml"
@@ -236,8 +254,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
 
 
 def test_primary_dataguard_prerequisites(lab_exec):
+    oracle_home = _oracle_home(lab_exec, "super")
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 TRIMSPOOL ON FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT NVL(value, '<unset>') FROM v$parameter WHERE name = 'standby_file_management';\n"
@@ -281,7 +300,10 @@ def test_primary_dataguard_prerequisites(lab_exec):
     assert "DG_CONFIG=(" in log_archive_config
     assert "super_sby" in log_archive_config
     log_archive_dest_2_lower = log_archive_dest_2.lower()
-    assert 'service="super_sby_dgb"' in log_archive_dest_2_lower
+    assert (
+        'service="super_sby_dgb"' in log_archive_dest_2_lower
+        or "service_name=super_sby_dgmgrl" in log_archive_dest_2_lower
+    )
     assert "sync" in log_archive_dest_2_lower
     assert "affirm" in log_archive_dest_2_lower
     assert 'db_unique_name="super_sby"' in log_archive_dest_2_lower
@@ -311,13 +333,15 @@ def test_dataguard_listener_identities(lab_exec, standby_exec):
     assert stale_primary.stdout.strip() == ""
     assert stale_standby.stdout.strip() == ""
 
+    primary_home = _oracle_home(lab_exec, "super")
+    standby_home = _oracle_home(standby_exec, "super_sby")
     primary_listener = lab_exec(
-        "su - oracle -c 'export ORACLE_HOME=/super/app/oracle/db_home1; "
-        "/super/app/oracle/db_home1/bin/lsnrctl status LISTENER_SUPER'"
+        f"su - oracle -c 'export ORACLE_HOME={primary_home}; "
+        f"{primary_home}/bin/lsnrctl status LISTENER_SUPER'"
     )
     standby_listener = standby_exec(
-        "su - oracle -c 'export ORACLE_HOME=/super/app/oracle/db_home1; "
-        "/super/app/oracle/db_home1/bin/lsnrctl status LISTENER_SUPER'"
+        f"su - oracle -c 'export ORACLE_HOME={standby_home}; "
+        f"{standby_home}/bin/lsnrctl status LISTENER_SUPER'"
     )
     assert primary_listener.returncode == 0, primary_listener.stderr
     assert standby_listener.returncode == 0, standby_listener.stderr
@@ -328,9 +352,13 @@ def test_dataguard_listener_identities(lab_exec, standby_exec):
 
 
 def test_standby_auxiliary_prerequisites(standby_exec):
+    oracle_home = _oracle_home(standby_exec, "super_sby")
     pfile = standby_exec("test -f /super/app/oracle/db_home1/dbs/initsuper.ora")
     pwfile = standby_exec("test -f /super/app/oracle/db_home1/dbs/orapwsuper")
-    oratab = standby_exec("grep -Fx 'super:/super/app/oracle/db_home1:N' /etc/oratab")
+    oratab = standby_exec(
+        "awk -F'#' '/^super:/ {gsub(/[[:space:]]+$/, \"\", $1); print $1}' /etc/oratab | "
+        "grep -E '^super:/super/app/oracle/db_home[12]:N$'"
+    )
     assert pfile.returncode == 0
     assert pwfile.returncode == 0
     assert oratab.returncode == 0, oratab.stdout + oratab.stderr
@@ -344,7 +372,7 @@ def test_standby_auxiliary_prerequisites(standby_exec):
     )
 
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 && "
+        f"export ORACLE_HOME={oracle_home} TNS_ADMIN={oracle_home}/network/admin && "
         "$ORACLE_HOME/bin/sqlplus -L -S 'sys/SysPassword1_@super_sby_dgb as sysdba' <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT status FROM v$instance;\n"
@@ -366,7 +394,7 @@ def test_standby_auxiliary_prerequisites(standby_exec):
         assert "PHYSICAL STANDBY" in r.stdout
 
     live_fal = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT value FROM v$parameter WHERE name = 'fal_server';\n"
@@ -376,12 +404,13 @@ def test_standby_auxiliary_prerequisites(standby_exec):
     fal = standby_exec(f"su - oracle -c {shlex.quote(live_fal)}")
     assert fal.returncode == 0, fal.stderr
     assert "ORA-" not in fal.stdout
-    assert "super_dgb" in fal.stdout
+    assert "super_dgb" in fal.stdout or "super_DGMGRL" in fal.stdout
 
 
 def test_physical_standby_duplicate(standby_exec):
+    oracle_home = _oracle_home(standby_exec, "super_sby")
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT database_role || '|' || open_mode FROM v$database;\n"
@@ -406,13 +435,15 @@ def test_physical_standby_restart_registration(standby_exec):
     assert "Database unique name: super_sby" in config.stdout
     assert "Database name: super" in config.stdout
     assert "Database role: PHYSICAL_STANDBY" in config.stdout
+    assert "Oracle home: /super/app/oracle/db_home2" in config.stdout
     assert "/super/app/oracle/db_home1/dbs/spfilesuper.ora" in config.stdout
     assert "LISTENER_SUPER" in listener.stdout
 
 
 def test_physical_standby_uses_spfile(standby_exec):
+    oracle_home = _oracle_home(standby_exec, "super_sby")
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT value FROM v$parameter WHERE name = 'spfile';\n"
@@ -445,8 +476,9 @@ def test_primary_reports_dataguard_role_and_protection(db_connection):
 
 
 def test_standby_is_read_only_with_apply(standby_exec):
+    oracle_home = _oracle_home(standby_exec, "super_sby")
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;\n"
@@ -470,10 +502,11 @@ def test_standby_is_read_only_with_apply(standby_exec):
 
 def test_dgmgrrl_configuration_healthy(lab_exec):
     last = None
+    oracle_home = _oracle_home(lab_exec, "super")
     command = (
         "su - oracle -c "
         + shlex.quote(
-            "export ORACLE_HOME=/super/app/oracle/db_home1; "
+            f"export ORACLE_HOME={oracle_home} TNS_ADMIN={oracle_home}/network/admin; "
             "$ORACLE_HOME/bin/dgmgrl -silent sys/SysPassword1_@super_dgb "
             "'SHOW CONFIGURATION'"
         )
@@ -587,8 +620,9 @@ def _run_dataguard_switchover(target: str) -> subprocess.CompletedProcess:
 
 
 def _database_state(exec_fn) -> str:
+    oracle_home = _oracle_home(exec_fn, "super")
     sql = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;\n"

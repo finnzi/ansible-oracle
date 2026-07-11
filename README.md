@@ -74,7 +74,8 @@ Implemented:
   applies validated custom `ALTER SYSTEM` settings. The live smoke proof
   verifies distinct `open_cursors` values on `duper` and `fluff`.
 - Standby-first patch eligibility parser and dedicated Data Guard standby-first
-  orchestration playbook with unit/static coverage.
+  orchestration playbook with unit/static coverage and live confirmed DB RU
+  component apply proof.
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
   dual-home Restart switching with automatic installation of inventory suffix
   and inventory-declared explicit-path target homes before patch/switch.
@@ -94,28 +95,21 @@ Implemented:
   `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 - SSH-based pytest helpers that run against the KVM lab VMs.
 
-## Remaining Explicit Gates
+## Explicit Gates
 
-- Live standby-first patch apply with an eligible DB RU target; the staged
-  OJVM+RU bundle is correctly rejected as a whole by the standby-first precheck
-  before broker discovery, home installation, patching, switchover, or
-  datapatch, while its DB RU component can be selected with
-  `oracle_patch_apply_component_path=39062931/39034528`. For an eligible RU,
-  the dedicated playbook is readiness-only unless explicitly
-  confirmed with `oracle_patch_standbyfirst_execute=true` and
-  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`; lab proof runs can
-  also set `oracle_patch_standbyfirst_restore_primary=true` to switch back to
-  the original primary after patching both sites. The readiness-only
-  path has been run live by disabling the eligibility failure while leaving
-  execution false; it resolved the current broker roles, preserved Maximum
-  Availability, validated the standby as `READ ONLY WITH APPLY`, and made no
-  changes. `playbooks/07-patch-standbyfirst-media.yml` scans staged zip media
-  and currently reports zero fully eligible zip candidates plus the eligible DB
-  RU component inside the staged combo.
+- The staged OJVM+RU bundle is correctly rejected as a whole by the
+  standby-first precheck before broker discovery, home installation, patching,
+  switchover, or datapatch, while its DB RU component can be selected with
+  `oracle_patch_apply_component_path=39062931/39034528`. The guarded helper
+  has now applied that eligible component live through standby-first patching,
+  switching both Data Guard members to `/super/app/oracle/db_home2`, running
+  datapatch on the promoted primary, and validating Maximum Availability plus
+  standby `READ ONLY WITH APPLY`. Repeat destructive runs still require
+  `--execute --confirm PATCH_STANDBY_FIRST`.
 
 See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
-`REMAINING_GATES.md` for the exact commands behind the remaining explicit
-action. To run the safe media scan, selected-component standby-first readiness
+`REMAINING_GATES.md` for the exact commands behind the explicit gated proofs.
+To run the safe media scan, selected-component standby-first readiness
 check, expected `super` / `super_sby` role guard, and proven FSFO readiness
 regression, use:
 

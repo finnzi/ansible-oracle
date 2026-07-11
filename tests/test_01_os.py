@@ -72,5 +72,8 @@ def test_per_instance_env_fragment(lab_exec):
     r = lab_exec("cat /etc/profile.d/oracle-instance.d/super.sh")
     assert r.returncode == 0, r.stderr
     assert "ORACLE_BASE=/super/app/oracle" in r.stdout
-    assert "ORACLE_HOME=/super/app/oracle/db_home1" in r.stdout
+    assert (
+        "ORACLE_HOME=/super/app/oracle/db_home1" in r.stdout
+        or "ORACLE_HOME=/super/app/oracle/db_home2" in r.stdout
+    )
     assert "ORACLE_SID=super" in r.stdout

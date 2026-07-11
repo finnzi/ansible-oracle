@@ -13,7 +13,7 @@ Goal requirement: Data Guard availability mode is Maximum Availability
 flow must preserve Maximum Availability unless a future task explicitly changes
 that requirement.
 `GOAL_AUDIT.md` records the requirement-by-requirement completion evidence and
-the remaining external gates.
+the remaining gated proof commands.
 
 ## Current Lab
 
@@ -233,15 +233,16 @@ The supported lab path is now KVM/libvirt:
     staged OJVM+RU bundle is not standby-first eligible as a whole and is
     rejected before broker role discovery, target-home installation, DB-home
     patching, switchover, or datapatch unless an eligible DB RU component is
-    selected with `oracle_patch_apply_component_path`; an eligible live RU apply
-    remains not yet proven. For lab proofs, the playbook can also switch back
-    to the original primary after both Data Guard homes are patched by setting
-    `oracle_patch_standbyfirst_restore_primary=true`.
-    The readiness-only path has also been run live with the eligibility failure
-    disabled and execution still false: it resolved `primary=super` and
-    `standby=super_sby`, verified broker protection `MaxAvailability`,
-    validated the standby as `READ ONLY WITH APPLY`, and completed with
-    `changed=0`.
+    selected with `oracle_patch_apply_component_path`. The eligible DB RU
+    component `39062931/39034528` has been applied live through the guarded
+    standby-first helper: both Data Guard members were switched to
+    `/super/app/oracle/db_home2`, datapatch ran on the promoted primary, SQL
+    patch registry was validated, Maximum Availability was preserved, and the
+    standby remained `READ ONLY WITH APPLY`.
+    The readiness-only path has also been run live: it resolved
+    `primary=super` and `standby=super_sby`, verified broker protection
+    `MaxAvailability`, validated the standby as `READ ONLY WITH APPLY`, and
+    completed with `changed=0`.
   - `playbooks/07-patch-standbyfirst-media.yml` scans staged patch zip media
     with the same README parser before an operator attempts an eligible-RU
     apply. A live scan of the current `/u01/stage` media examined the staged
@@ -383,17 +384,17 @@ The supported lab path is now KVM/libvirt:
   the missing-confirmation gate, and FSFO/libvirt readiness passed without
   destructive actions.
 
-## Not Yet Proven End To End
+## Repeatable Gated Proofs
 
-- Live standby-first patch apply with an actually eligible DB RU.
-  `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
-  readiness path is proven, and the staged-media scanner reports eligible DB RU
-  component `39062931/39034528` inside the staged combo. The eligible-RU apply
-  still requires explicit component selection and execution confirmation.
-  `scripts/run-standbyfirst-apply.sh` wraps the final staged-component command,
-  runs the safe standby-first preflight first, requires the starting broker
-  roles to be `super` primary and `super_sby` standby by default, and defaults
-  to restore-primary cleanup for the least disruptive lab proof.
+- `scripts/run-standbyfirst-apply.sh` wraps the confirmed staged-component
+  standby-first command. It runs the safe standby-first preflight first,
+  requires the starting broker roles to be `super` primary and `super_sby`
+  standby by default, and still requires `--execute --confirm
+  PATCH_STANDBY_FIRST` before any install, patch, switchover, or datapatch work.
+- `scripts/check-remaining-gates.sh --prove-confirmation-gate` runs the safe
+  media scan, selected-component standby-first readiness, missing-confirmation
+  refusal, FSFO readiness, and libvirt primary-VM readiness without destructive
+  actions.
 
 ## Host Findings From This Run
 

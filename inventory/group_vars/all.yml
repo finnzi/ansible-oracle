@@ -63,9 +63,9 @@ oracle_instances:
     oracle_base: /super/app/oracle
     db_homes:
       - suffix: db_home1
-        current: true
-      - suffix: db_home2
         current: false
+      - suffix: db_home2
+        current: true
     gi_base: /grid
     gi_homes:
       - suffix: 19c/gi_home1

@@ -85,6 +85,7 @@ def test_remaining_gates_safe_check_script_dry_run():
     assert "playbooks/07-patch-standbyfirst-media.yml" in result.stdout
     assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
     assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
+    assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
     assert "oracle_patch_standbyfirst_expected_primary=super" in result.stdout
     assert "oracle_patch_standbyfirst_expected_standby=super_sby" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" not in result.stdout

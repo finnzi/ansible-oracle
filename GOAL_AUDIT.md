@@ -3,9 +3,9 @@
 Source requirement: `/home/finnur/.codex/attachments/abed9c0e-80d5-475e-8b53-b82c69966e3f/pasted-text-1.txt`.
 
 This audit records what is proven in the current repository and lab, and what
-still needs outside input or a deliberately destructive run. It does not replace
-`STATUS.md`; it is the requirement-by-requirement completion check.
-`REMAINING_GATES.md` has the exact commands for the remaining explicit actions.
+still depends on outside product support. It does not replace `STATUS.md`; it
+is the requirement-by-requirement completion check. `REMAINING_GATES.md` keeps
+the repeatable commands for the explicit destructive/safety-gated actions.
 
 Goal update: Data Guard configurations must use Maximum Availability unless a
 future task explicitly changes the desired protection mode.
@@ -58,28 +58,35 @@ future task explicitly changes the desired protection mode.
 | Single-home patching | Proven | Current-home DB/Grid patch inventory/apply paths converge idempotently. |
 | Dual-home DB patching and Oracle home switching | Proven for standalone | `fluff` live switch to `/fluff/app/oracle/db_home2` and switchback to `/fluff/app/oracle/db_home1`; Data Guard dual-home switches are routed to standby-first orchestration. |
 | Greenfield and brownfield patching | Proven for inventory/discovery paths | Inventory-installed homes and Restart-discovered brownfield-style targets are reported with concrete names and home paths in the live readiness run; `/etc/oratab`, `/etc/oracle/olr.loc`, and explicit extra homes are supported. Destructive brownfield execution requires explicit names/mappings. |
-| Standby-first Data Guard patching when release notes allow | External gate | Eligibility parser, media scanner, readiness path, confirmation gate, and orchestration are implemented. Current staged media reports `eligible=0` for whole zips and an eligible DB RU component at `39062931/39034528`; live eligible-RU component apply remains unproven. |
+| Standby-first Data Guard patching when release notes allow | Proven | The staged combo is correctly rejected as a whole because of OJVM, while eligible DB RU component `39062931/39034528` was applied live through the confirmed standby-first flow: current standby target home patched/switched, broker switchover, datapatch on promoted primary, old primary patched/switched as new standby, Maximum Availability validated, and post-apply readiness passed. |
 | Automatically read standby-first support from release notes | Proven | `library/patch_standbyfirst_info.py` parses README wording and staged zip directories; tests cover eligible, ineligible, corrupt, and current staged media. |
-| Switch Oracle homes old-to-new | Proven for standalone, partial for Data Guard | Standalone switch/switchback proven live; Data Guard old-to-new path exists in standby-first playbook but live apply requires eligible media. |
+| Switch Oracle homes old-to-new | Proven | Standalone switch/switchback proven live; Data Guard old-to-new switching proven live through confirmed standby-first apply with both `super` and `super_sby` running from `/super/app/oracle/db_home2`. |
 
 ## Remaining Completion Gate
 
-1. Live eligible standby-first patch apply:
-   `playbooks/07-patch-standbyfirst-media.yml` currently reports zero staged
-   fully eligible standby-first patch zips, but it identifies eligible DB RU
-   component `39062931/39034528` inside the staged combo. A live apply requires
-   either an eligible standalone DB RU zip or selecting that eligible component
-   with `oracle_patch_apply_component_path=39062931/39034528`, then running the
-   confirmed standby-first path directly or through
-   `scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST`,
-   which sets `oracle_patch_standbyfirst_execute=true`, expects `super` primary
-   and `super_sby` standby by default before role changes, uses
-   `oracle_patch_standbyfirst_restore_primary=true` by default for lab proof
-   cleanup, and passes
-   `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
+No current lab completion gate remains for the requested Oracle 19c / OL9
+scope. Oracle Linux 10 remains partial only to the extent that Oracle 19c
+certification/support for OL10 is an external product-support boundary.
 
 ## Latest Verification
 
+- Confirmed destructive standby-first DB RU component apply on 2026-07-11:
+  `scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST
+  --expected-primary super_sby --expected-standby super --no-restore-primary`
+  completed with `failed=0` after resuming the intentionally interrupted lab
+  state. The play installed/patched/switched `super` to `db_home2`, switched
+  over to `super`, ran datapatch and validated `DBA_REGISTRY_SQLPATCH`, verified
+  `super_sby` target-home patch inventory, reconciled listeners/broker members,
+  validated `MaxAvailability`, and the helper postcheck passed with
+  `primary=super`, `standby=super_sby`, and standby `READ ONLY WITH APPLY`.
+- FSFO was restored after the manual recovery window: `oracle-fsfo-observer`
+  was restarted, broker returned `Configuration Status: SUCCESS`, FSFO is
+  enabled in Zero Data Loss Mode, active target is `super_sby`, and observer is
+  `ansible_observer`.
+- Full safe remaining-gates wrapper after the confirmed standby-first apply:
+  `scripts/check-remaining-gates.sh --prove-confirmation-gate` passed the media
+  scan, selected-component readiness, missing-confirmation refusal, FSFO
+  readiness, and libvirt primary-VM readiness without destructive actions.
 - Live component-aware standby-first media scan on 2026-07-10:
   `playbooks/07-patch-standbyfirst-media.yml -e
   oracle_patch_standbyfirst_media_require_eligible=true` reported `eligible=0`

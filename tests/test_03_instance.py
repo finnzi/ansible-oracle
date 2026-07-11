@@ -16,16 +16,30 @@ pytestmark = pytest.mark.slice
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _current_super_home(lab_exec) -> str:
+    r = lab_exec(
+        "su - oracle -c "
+        + shlex.quote(
+            "/grid/19c/gi_home1/bin/srvctl config database -db super | "
+            "sed -n 's/^Oracle home: //p'"
+        )
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip().splitlines()[-1]
+    return "/super/app/oracle/db_home1"
+
+
 def _run_super_sql(lab_exec, sql: str, timeout: int = 60):
+    oracle_home = _current_super_home(lab_exec)
     probe = lab_exec(
-        "stat -c '%s' /super/app/oracle/db_home1/bin/sqlplus 2>/dev/null || echo 0"
+        f"stat -c '%s' {oracle_home}/bin/sqlplus 2>/dev/null || echo 0"
     )
     size = int((probe.stdout or "0").strip().splitlines()[-1] or "0")
     if size == 0:
         pytest.skip("sqlplus not linked (OL8+ install gap); DB instance not created.")
 
     cmd = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         f"{sql}\n"

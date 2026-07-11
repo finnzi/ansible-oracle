@@ -1,9 +1,10 @@
-# Remaining Gates Runbook
+# Gated Proofs Runbook
 
 The normal KVM lab, Data Guard, observer, patch inventory, standalone dual-home
-switchback, FSFO VM-crash rehearsal, standby-first readiness, and staged-media
-scans are already proven. One end-to-end gate remains: the confirmed
-standby-first apply has not yet been run against an eligible target.
+switchback, FSFO VM-crash rehearsal, standby-first readiness, staged-media
+scans, and confirmed standby-first DB RU component apply are proven. This file
+keeps the exact safe checks and opt-in destructive commands for repeating those
+proofs.
 
 Run the safe aggregate check at any time:
 
@@ -52,7 +53,8 @@ Current state: `/u01/stage` contains no fully Data Guard Standby-First
 Installable patch zip. The staged 19.31 OJVM+DB RU bundle is intentionally
 rejected as a whole because OJVM is not standby-first installable, but its DB RU
 component `39062931/39034528` is reported as an eligible standby-first DB RU
-component.
+component. That eligible component has been applied live through the guarded
+standby-first helper.
 
 Run the media scan:
 
@@ -109,6 +111,13 @@ scripts/run-standbyfirst-apply.sh \
   --execute \
   --confirm PATCH_STANDBY_FIRST
 ```
+
+Proven destructive run: on 2026-07-11 the helper completed a resumed
+standby-first apply with `--expected-primary super_sby --expected-standby super
+--no-restore-primary`, leaving the intended final lab state as `super` primary
+and `super_sby` standby, both on `/super/app/oracle/db_home2`, with
+`MaxAvailability`, standby `READ ONLY WITH APPLY`, SQL patch registry proof,
+and a successful safe post-apply readiness check.
 
 Expected safety behavior:
 

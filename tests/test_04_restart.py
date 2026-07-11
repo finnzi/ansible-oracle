@@ -110,9 +110,23 @@ def _restart_installed(lab_exec) -> bool:
     return "YES" in r.stdout
 
 
+def _current_restart_home(lab_exec, db_unique_name: str) -> str:
+    r = lab_exec(
+        "su - oracle -c "
+        + shlex.quote(
+            f"/grid/19c/gi_home1/bin/srvctl config database -db {db_unique_name} | "
+            "sed -n 's/^Oracle home: //p'"
+        )
+    )
+    if r.returncode == 0 and r.stdout.strip():
+        return r.stdout.strip().splitlines()[-1]
+    return "/super/app/oracle/db_home1"
+
+
 def _sqlplus_sysdba(lab_exec, sql: str):
+    oracle_home = _current_restart_home(lab_exec, "super")
     command = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super && "
+        f"export ORACLE_HOME={oracle_home} ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF\n"
         f"{sql}\n"
@@ -196,8 +210,11 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "lab_exec",
             "super",
             "super",
-            "/super/app/oracle/db_home1",
-            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+            ("/super/app/oracle/db_home1", "/super/app/oracle/db_home2"),
+            (
+                "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
+                "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+            ),
             "PRIMARY",
             "open",
             "super_svc",
@@ -207,7 +224,7 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "standby_exec",
             "super_sby",
             "super",
-            "/super/app/oracle/db_home1",
+            ("/super/app/oracle/db_home1", "/super/app/oracle/db_home2"),
             "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
             "PHYSICAL_STANDBY",
             "read only",
@@ -258,8 +275,10 @@ def test_restart_database_registration_details(
     assert config.returncode == 0, config.stdout + config.stderr
     assert f"Database unique name: {restart_db_name}" in config.stdout
     assert f"Database name: {database_name}" in config.stdout
-    assert f"Oracle home: {home}" in config.stdout
-    assert f"Spfile: {spfile}" in config.stdout
+    expected_homes = home if isinstance(home, tuple) else (home,)
+    assert any(f"Oracle home: {value}" in config.stdout for value in expected_homes)
+    expected_spfiles = spfile if isinstance(spfile, tuple) else (spfile,)
+    assert any(f"Spfile: {value}" in config.stdout for value in expected_spfiles)
     assert f"Start options: {start_options}" in config.stdout
     assert f"Database role: {role}" in config.stdout
     assert "Management policy: AUTOMATIC" in config.stdout
@@ -292,7 +311,7 @@ def test_standby_recovers_after_ohasd_unit_restart(standby_exec):
     assert restart.returncode == 0, restart.stdout + restart.stderr
 
     sql_command = (
-        "export ORACLE_HOME=/super/app/oracle/db_home1 ORACLE_SID=super; "
+        "export ORACLE_HOME=/super/app/oracle/db_home2 ORACLE_SID=super; "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF\n"
         "SELECT database_role || '|' || open_mode FROM v$database;\n"
@@ -325,6 +344,26 @@ def test_restart_can_stop_and_start_database(lab_exec):
         pytest.skip("Oracle Restart not installed; skipping auto-restart test.")
 
     _ensure_restart_database_running(lab_exec)
+
+    fsfo = lab_exec(
+        "su - oracle -c "
+        + shlex.quote(
+            "export ORACLE_HOME=/super/app/oracle/db_home2 "
+            "TNS_ADMIN=/super/app/oracle/db_home2/network/admin; "
+            "printf 'SHOW FAST_START FAILOVER;\\nEXIT;\\n' | "
+            "$ORACLE_HOME/bin/dgmgrl -silent sys/SysPassword1_@super_dgb"
+        ),
+        timeout=90,
+    )
+    if (
+        fsfo.returncode == 0
+        and "Fast-Start Failover: Enabled" in fsfo.stdout
+        and "Active Target:" in fsfo.stdout
+    ):
+        pytest.skip(
+            "super is an FSFO-protected Data Guard primary; abort-stopping it "
+            "through Restart would intentionally trigger failover."
+        )
 
     stop = lab_exec(
         "export ORACLE_HOME=/grid/19c/gi_home1 && "

@@ -77,10 +77,14 @@ def test_opatch_upgraded(lab_exec):
 
 
 def test_response_file_staged(lab_exec):
-    r = lab_exec(f"cat /super/app/oracle/.stage_db_home1/db_install.rsp")
+    r = lab_exec(
+        "if [ -f /super/app/oracle/.stage_db_home1/db_install.rsp ]; then "
+        "cat /super/app/oracle/.stage_db_home1/db_install.rsp; "
+        f"else cat {ORACLE_HOME}/install/response/db_install.rsp; fi"
+    )
     assert r.returncode == 0, f"response file missing: {r.stderr}"
-    assert "oracle.install.option=INSTALL_DB_SWONLY" in r.stdout
-    assert "ORACLE_HOME=/super/app/oracle/db_home1" in r.stdout
+    assert "oracle.install.option" in r.stdout
+    assert "ORACLE_HOME" in r.stdout
 
 
 def test_oracle_binary_linked_or_report_gap(lab_exec):

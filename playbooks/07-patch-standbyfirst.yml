@@ -110,6 +110,8 @@
     - name: Record local Data Guard unique name and home
       ansible.builtin.set_fact:
         _patch_sf_local_unique_name: "{{ _patch_sf_instance.db_unique_name | default(_patch_sf_instance.name) }}"
+        _patch_sf_local_dgconnect_identifier: >-
+          (DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={{ _patch_sf_instance.listener_vip }})(PORT={{ _patch_sf_instance.listener_port | default(1521) }}))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME={{ _patch_sf_instance.db_unique_name | default(_patch_sf_instance.name) }}_DGMGRL)))
         _patch_sf_home_path: >-
           {{ _patch_sf_instance.oracle_base }}/{{ ((_patch_sf_instance.db_homes | selectattr('current', 'equalto', true) | list | first) | default(_patch_sf_instance.db_homes[0])).suffix }}
         _patch_sf_patch_home_path: >-
@@ -176,6 +178,47 @@
           standby-first patching.
       when:
         - _patch_sf_current_primary | length == 0 or _patch_sf_current_standby | length == 0
+      run_once: true
+
+    - name: Record standby-first broker connect descriptors  # noqa: run-once[task]
+      ansible.builtin.set_fact:
+        _patch_sf_current_primary_dgconnect_identifier: >-
+          {%- set out = [] -%}
+          {%- for host in groups.oracle_db_hosts | default([]) -%}
+            {%- if hostvars[host]._patch_sf_local_unique_name | default('') == _patch_sf_current_primary -%}
+              {%- set _ = out.append(hostvars[host]._patch_sf_local_dgconnect_identifier | default('')) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out | first | default('') }}
+        _patch_sf_current_standby_dgconnect_identifier: >-
+          {%- set out = [] -%}
+          {%- for host in groups.oracle_db_hosts | default([]) -%}
+            {%- if hostvars[host]._patch_sf_local_unique_name | default('') == _patch_sf_current_standby -%}
+              {%- set _ = out.append(hostvars[host]._patch_sf_local_dgconnect_identifier | default('')) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out | first | default('') }}
+      run_once: true
+
+    - name: Normalize broker connect descriptors for standby-first patching  # noqa: run-once[task]
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_home_path }}
+        "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_primary }}_dgb" <<'DGMGRL'
+        EDIT DATABASE '{{ _patch_sf_current_primary }}' SET PROPERTY DGConnectIdentifier='{{ _patch_sf_current_primary_dgconnect_identifier }}';
+        EDIT DATABASE '{{ _patch_sf_current_standby }}' SET PROPERTY DGConnectIdentifier='{{ _patch_sf_current_standby_dgconnect_identifier }}';
+        EXIT;
+        DGMGRL
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_dgconnect_identifiers
+      changed_when: false
+      failed_when: >-
+        _patch_sf_dgconnect_identifiers.rc != 0 or
+        'Error:' in (_patch_sf_dgconnect_identifiers.stdout | default(''))
+      no_log: true
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
       run_once: true
 
     - name: Fail when current primary does not match expected standby-first primary  # noqa: run-once[task]
@@ -267,6 +310,56 @@
             else []
           }}
 
+- name: Prepare current Data Guard standby target home network config
+  hosts: patch_current_standby
+  become: true
+  tasks:
+    - name: Sync current standby target home network config
+      ansible.builtin.shell: |
+        set -o pipefail
+        src_home={{ _patch_sf_home_path | trim | quote }}
+        dst_home={{ _patch_sf_patch_home_path | trim | quote }}
+        src_admin="$src_home/network/admin"
+        dst_admin="$dst_home/network/admin"
+        listener_name=LISTENER_{{ _patch_sf_instance.name | upper }}
+        changed=0
+
+        mkdir -p "$dst_admin"
+        for file in listener.ora sqlnet.ora tnsnames.ora; do
+          if [ -f "$src_admin/$file" ]; then
+            sed "s#${src_home}#${dst_home}#g" "$src_admin/$file" > "$dst_admin/$file.tmp"
+            if [ ! -f "$dst_admin/$file" ] || ! cmp -s "$dst_admin/$file.tmp" "$dst_admin/$file"; then
+              mv "$dst_admin/$file.tmp" "$dst_admin/$file"
+              changed=1
+            else
+              rm -f "$dst_admin/$file.tmp"
+            fi
+          fi
+        done
+        chown -R {{ oracle_user | quote }}:{{ oracle_group | quote }} "$dst_admin"
+        chmod 0775 "$dst_admin"
+        find "$dst_admin" -maxdepth 1 -type f -exec chmod 0644 {} +
+
+        current_listener_home="$(
+          {{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}/bin/srvctl config listener -listener "$listener_name" 2>/dev/null |
+          awk -F': ' '$1 == "Home" {print $2; exit}'
+        )"
+        {{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}/bin/srvctl setenv database \
+          -db {{ _patch_sf_local_unique_name | quote }} -env "TNS_ADMIN=$dst_admin" >/dev/null
+        if [ "$current_listener_home" = "$dst_home" ]; then
+          "$dst_home/bin/lsnrctl" stop "$listener_name" >/dev/null 2>&1 || true
+          "$dst_home/bin/lsnrctl" start "$listener_name" >/dev/null
+          changed=1
+        fi
+
+        if [ "$changed" -eq 1 ]; then
+          echo CHANGED
+        fi
+      args: { executable: /bin/bash }
+      register: _patch_sf_current_standby_network
+      changed_when: "'CHANGED' in (_patch_sf_current_standby_network.stdout | default(''))"
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
 - name: Patch current Data Guard standby DB homes
   hosts: patch_current_standby
   become: true
@@ -287,6 +380,7 @@
         oracle_patch_apply_enabled: true
         oracle_patch_run_datapatch: false
         oracle_patch_dg_standbyfirst: false
+        oracle_patch_discover_oratab: false
         oracle_patch_allow_dataguard_dual_home_switch: true
 
 - name: Validate current Data Guard standby DB target home patch inventory
@@ -311,6 +405,73 @@
         _patch_sf_current_standby_lspatches.rc != 0 or
         'OPatch succeeded' not in (_patch_sf_current_standby_lspatches.stdout | default('')) or
         (_patch_expected_ids | default([]) | length) == 0
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+- name: Reconcile current Data Guard standby after target-home switch
+  hosts: patch_current_standby
+  become: true
+  tasks:
+    - name: Restart current standby listener from target home
+      ansible.builtin.shell: |
+        set -o pipefail
+        listener_name=LISTENER_{{ _patch_sf_instance.name | upper }}
+        gi_home={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+        "$gi_home/bin/srvctl" stop listener -listener "$listener_name" >/dev/null 2>&1 || true
+        "$gi_home/bin/srvctl" start listener -listener "$listener_name"
+      args: { executable: /bin/bash }
+      changed_when: true
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+    - name: Register current standby with restarted target-home listener
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        export ORACLE_SID={{ _patch_sf_instance.name | quote }}
+        printf '%s\n' "ALTER SYSTEM REGISTER;" "EXIT;" |
+          "$ORACLE_HOME/bin/sqlplus" -L -S "/ as sysdba"
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      changed_when: false
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+    - name: Ensure current standby broker member is enabled before switchover
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        export ORACLE_SID={{ _patch_sf_instance.name | quote }}
+        gi_home={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+
+        enable_member() {
+          printf '%s\n' \
+            "ENABLE DATABASE {{ _patch_sf_current_standby }};" \
+            "EXIT;" |
+            "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_primary }}_dgb"
+        }
+
+        output="$(enable_member 2>&1)" || rc=$?
+        if printf '%s\n' "$output" | grep -F 'ORA-16631' >/dev/null; then
+          "$gi_home/bin/srvctl" stop database -db {{ _patch_sf_local_unique_name | quote }} -stopoption IMMEDIATE >/dev/null 2>&1 || true
+          output="$(enable_member 2>&1)" || rc=$?
+          "$gi_home/bin/srvctl" start database -db {{ _patch_sf_local_unique_name | quote }} -startoption "read only"
+          printf '%s\n' \
+            "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;" \
+            "ALTER DATABASE OPEN READ ONLY;" \
+            "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION;" \
+            "EXIT;" |
+            "$ORACLE_HOME/bin/sqlplus" -L -S "/ as sysdba"
+        fi
+        printf '%s\n' "$output"
+        exit "${rc:-0}"
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_enable_current_standby
+      changed_when: false
+      failed_when: >-
+        _patch_sf_enable_current_standby.rc != 0 or
+        'Error:' in (_patch_sf_enable_current_standby.stdout | default(''))
+      no_log: true
       when: oracle_patch_standbyfirst_execute | default(false) | bool
 
 - name: Validate current Data Guard standby before standby-first switchover
@@ -440,6 +601,56 @@
             else []
           }}
 
+- name: Prepare new Data Guard standby target home network config
+  hosts: patch_current_primary
+  become: true
+  tasks:
+    - name: Sync new standby target home network config
+      ansible.builtin.shell: |
+        set -o pipefail
+        src_home={{ _patch_sf_home_path | trim | quote }}
+        dst_home={{ _patch_sf_patch_home_path | trim | quote }}
+        src_admin="$src_home/network/admin"
+        dst_admin="$dst_home/network/admin"
+        listener_name=LISTENER_{{ _patch_sf_instance.name | upper }}
+        changed=0
+
+        mkdir -p "$dst_admin"
+        for file in listener.ora sqlnet.ora tnsnames.ora; do
+          if [ -f "$src_admin/$file" ]; then
+            sed "s#${src_home}#${dst_home}#g" "$src_admin/$file" > "$dst_admin/$file.tmp"
+            if [ ! -f "$dst_admin/$file" ] || ! cmp -s "$dst_admin/$file.tmp" "$dst_admin/$file"; then
+              mv "$dst_admin/$file.tmp" "$dst_admin/$file"
+              changed=1
+            else
+              rm -f "$dst_admin/$file.tmp"
+            fi
+          fi
+        done
+        chown -R {{ oracle_user | quote }}:{{ oracle_group | quote }} "$dst_admin"
+        chmod 0775 "$dst_admin"
+        find "$dst_admin" -maxdepth 1 -type f -exec chmod 0644 {} +
+
+        current_listener_home="$(
+          {{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}/bin/srvctl config listener -listener "$listener_name" 2>/dev/null |
+          awk -F': ' '$1 == "Home" {print $2; exit}'
+        )"
+        {{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}/bin/srvctl setenv database \
+          -db {{ _patch_sf_local_unique_name | quote }} -env "TNS_ADMIN=$dst_admin" >/dev/null
+        if [ "$current_listener_home" = "$dst_home" ]; then
+          "$dst_home/bin/lsnrctl" stop "$listener_name" >/dev/null 2>&1 || true
+          "$dst_home/bin/lsnrctl" start "$listener_name" >/dev/null
+          changed=1
+        fi
+
+        if [ "$changed" -eq 1 ]; then
+          echo CHANGED
+        fi
+      args: { executable: /bin/bash }
+      register: _patch_sf_new_standby_network
+      changed_when: "'CHANGED' in (_patch_sf_new_standby_network.stdout | default(''))"
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
 - name: Patch new Data Guard standby DB homes
   hosts: patch_current_primary
   become: true
@@ -460,6 +671,7 @@
         oracle_patch_apply_enabled: true
         oracle_patch_run_datapatch: false
         oracle_patch_dg_standbyfirst: false
+        oracle_patch_discover_oratab: false
         oracle_patch_allow_dataguard_dual_home_switch: true
 
 - name: Validate new Data Guard standby DB target home patch inventory
@@ -484,6 +696,73 @@
         _patch_sf_new_standby_lspatches.rc != 0 or
         'OPatch succeeded' not in (_patch_sf_new_standby_lspatches.stdout | default('')) or
         (_patch_expected_ids | default([]) | length) == 0
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+- name: Reconcile new Data Guard standby after target-home switch
+  hosts: patch_current_primary
+  become: true
+  tasks:
+    - name: Restart new standby listener from target home
+      ansible.builtin.shell: |
+        set -o pipefail
+        listener_name=LISTENER_{{ _patch_sf_instance.name | upper }}
+        gi_home={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+        "$gi_home/bin/srvctl" stop listener -listener "$listener_name" >/dev/null 2>&1 || true
+        "$gi_home/bin/srvctl" start listener -listener "$listener_name"
+      args: { executable: /bin/bash }
+      changed_when: true
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+    - name: Register new standby with restarted target-home listener
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        export ORACLE_SID={{ _patch_sf_instance.name | quote }}
+        printf '%s\n' "ALTER SYSTEM REGISTER;" "EXIT;" |
+          "$ORACLE_HOME/bin/sqlplus" -L -S "/ as sysdba"
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      changed_when: false
+      when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+    - name: Ensure new standby broker member is enabled after patching
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_patch_home_path | trim | quote }}
+        export ORACLE_SID={{ _patch_sf_instance.name | quote }}
+        gi_home={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+
+        enable_member() {
+          printf '%s\n' \
+            "ENABLE DATABASE {{ _patch_sf_current_primary }};" \
+            "EXIT;" |
+            "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_standby }}_dgb"
+        }
+
+        output="$(enable_member 2>&1)" || rc=$?
+        if printf '%s\n' "$output" | grep -F 'ORA-16631' >/dev/null; then
+          "$gi_home/bin/srvctl" stop database -db {{ _patch_sf_local_unique_name | quote }} -stopoption IMMEDIATE >/dev/null 2>&1 || true
+          output="$(enable_member 2>&1)" || rc=$?
+          "$gi_home/bin/srvctl" start database -db {{ _patch_sf_local_unique_name | quote }} -startoption "read only"
+          printf '%s\n' \
+            "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL;" \
+            "ALTER DATABASE OPEN READ ONLY;" \
+            "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION;" \
+            "EXIT;" |
+            "$ORACLE_HOME/bin/sqlplus" -L -S "/ as sysdba"
+        fi
+        printf '%s\n' "$output"
+        exit "${rc:-0}"
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_enable_new_standby
+      changed_when: false
+      failed_when: >-
+        _patch_sf_enable_new_standby.rc != 0 or
+        'Error:' in (_patch_sf_enable_new_standby.stdout | default(''))
+      no_log: true
       when: oracle_patch_standbyfirst_execute | default(false) | bool
 
 - name: Validate Data Guard broker after standby-first patching

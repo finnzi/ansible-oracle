@@ -165,7 +165,7 @@ def test_operator_docs_describe_kvm_migration_as_current_path():
     assert "KVM/libvirt is the supported lab path" in readme
     assert "The test environment has moved from Docker containers to KVM VMs" in status
     assert "## Current Lab" in status
-    assert "## Remaining Explicit Gates" in readme
+    assert "## Explicit Gates" in readme
     assert "being moved" not in combined
     assert "migration began" not in combined
     assert "role scaffolding" not in combined

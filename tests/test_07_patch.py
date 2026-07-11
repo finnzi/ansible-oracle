@@ -12,7 +12,7 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/db_home1")
+ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/db_home2")
 GRID_HOME = os.environ.get("ORACLE_TEST_GRID_HOME", "/grid/19c/gi_home1")
 DATAGUARD_SID = os.environ.get("ORACLE_TEST_DATAGUARD_SID", "super")
 SWITCHBACK_DB = os.environ.get("ORACLE_TEST_SWITCHBACK_DB", "fluff")
@@ -335,11 +335,40 @@ def test_patch_role_db_apply_contract():
     assert "oracle_db_install_home_selection: selected" in standbyfirst_playbook
     assert "oracle_db_install_home_suffixes" in standbyfirst_playbook
     assert "oracle_db_install_home_paths" in standbyfirst_playbook
+    assert "_patch_sf_local_dgconnect_identifier" in standbyfirst_playbook
+    assert "Normalize broker connect descriptors for standby-first patching" in standbyfirst_playbook
+    assert "DGConnectIdentifier" in standbyfirst_playbook
+    assert "Prepare current Data Guard standby target home network config" in standbyfirst_playbook
+    assert "Sync current standby target home network config" in standbyfirst_playbook
+    assert 'srvctl setenv database \\' in standbyfirst_playbook
+    assert '-env "TNS_ADMIN=$dst_admin"' in standbyfirst_playbook
     assert "Patch current Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_standby" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Install current Data Guard standby DB target homes"
+    ) < standbyfirst_playbook.index(
+        "Prepare current Data Guard standby target home network config"
+    )
+    assert standbyfirst_playbook.index(
+        "Prepare current Data Guard standby target home network config"
+    ) < standbyfirst_playbook.index(
+        "Patch current Data Guard standby DB homes"
+    )
     assert "Validate current Data Guard standby DB target home patch inventory" in standbyfirst_playbook
     assert "Validate current standby target home contains expected patch IDs" in standbyfirst_playbook
     assert "Validate current Data Guard standby before standby-first switchover" in standbyfirst_playbook
+    assert "Register current standby with restarted target-home listener" in standbyfirst_playbook
+    assert "Ensure current standby broker member is enabled before switchover" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Restart current standby listener from target home"
+    ) < standbyfirst_playbook.index(
+        "Register current standby with restarted target-home listener"
+    )
+    assert standbyfirst_playbook.index(
+        "Register current standby with restarted target-home listener"
+    ) < standbyfirst_playbook.index(
+        "Ensure current standby broker member is enabled before switchover"
+    )
     assert "Validate current standby is read-only with apply before switchover" in standbyfirst_playbook
     assert standbyfirst_playbook.index(
         "Patch current Data Guard standby DB homes"
@@ -374,11 +403,24 @@ def test_patch_role_db_apply_contract():
     ) < standbyfirst_playbook.index("Install new Data Guard standby DB target homes")
     assert "Patch new Data Guard standby DB homes" in standbyfirst_playbook
     assert "hosts: patch_current_primary" in standbyfirst_playbook
+    assert "Prepare new Data Guard standby target home network config" in standbyfirst_playbook
+    assert "Sync new standby target home network config" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Install new Data Guard standby DB target homes"
+    ) < standbyfirst_playbook.index(
+        "Prepare new Data Guard standby target home network config"
+    )
+    assert standbyfirst_playbook.index(
+        "Prepare new Data Guard standby target home network config"
+    ) < standbyfirst_playbook.index(
+        "Patch new Data Guard standby DB homes"
+    )
     assert "Validate new Data Guard standby DB target home patch inventory" in standbyfirst_playbook
     assert "Validate new standby target home contains expected patch IDs" in standbyfirst_playbook
     assert "oracle_patch_mode: >-" in standbyfirst_playbook
     assert "oracle_patch_apply_enabled: true" in standbyfirst_playbook
     assert "oracle_patch_dg_standbyfirst: false" in standbyfirst_playbook
+    assert standbyfirst_playbook.count("oracle_patch_discover_oratab: false") >= 2
     assert "oracle_patch_allow_dataguard_dual_home_switch: true" in standbyfirst_playbook
     assert "READ ONLY WITH APPLY" in standbyfirst_playbook
     assert (
@@ -390,6 +432,18 @@ def test_patch_role_db_apply_contract():
         in standbyfirst_playbook
     )
     assert "Validate Data Guard broker after standby-first patching" in standbyfirst_playbook
+    assert "Register new standby with restarted target-home listener" in standbyfirst_playbook
+    assert "Ensure new standby broker member is enabled after patching" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Restart new standby listener from target home"
+    ) < standbyfirst_playbook.index(
+        "Register new standby with restarted target-home listener"
+    )
+    assert standbyfirst_playbook.index(
+        "Register new standby with restarted target-home listener"
+    ) < standbyfirst_playbook.index(
+        "Ensure new standby broker member is enabled after patching"
+    )
     assert standbyfirst_playbook.index(
         "Patch new Data Guard standby DB homes"
     ) < standbyfirst_playbook.index(
@@ -544,7 +598,7 @@ def test_patch_playbook_converges_when_ru_already_present():
     assert '"name": "fluff"' in r.stdout
     assert '"source": "inventory"' in r.stdout
     assert '"source": "oratab"' in r.stdout
-    assert '"home_path": "/super/app/oracle/db_home1"' in r.stdout
+    assert '"home_path": "/super/app/oracle/db_home2"' in r.stdout
     assert '"home_path": "/duper/app/oracle/db_home1"' in r.stdout
     assert '"home_path": "/fluff/app/oracle/db_home1"' in r.stdout
 
@@ -644,7 +698,7 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     assert '"restart_db_name": "fluff"' in r.stdout
     assert '"source": "inventory"' in r.stdout
     assert '"source": "restart"' in r.stdout
-    assert '"original_home_path": "/super/app/oracle/db_home1"' in r.stdout
+    assert '"original_home_path": "/super/app/oracle/db_home2"' in r.stdout
     assert '"original_home_path": "/duper/app/oracle/db_home1"' in r.stdout
     assert '"original_home_path": "/fluff/app/oracle/db_home1"' in r.stdout
     assert '"target_home_path": "/super/app/oracle/db_home2"' in r.stdout
