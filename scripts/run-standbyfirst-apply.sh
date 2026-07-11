@@ -20,6 +20,7 @@ DRY_RUN=0
 EXECUTE=0
 CONFIRM=""
 RUN_PREFLIGHT=1
+RUN_POSTCHECK=1
 RESTORE_PRIMARY=1
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
@@ -50,10 +51,13 @@ Options:
   --expected-standby NAME    Required current standby before apply (default: super_sby).
   --no-restore-primary       Do not switch back to the original primary.
   --skip-preflight           Do not run the safe remaining-gates preflight first.
+  --skip-postcheck           Do not run the safe post-apply readiness check.
   -h, --help                 Show this help.
 
 This script runs scripts/check-remaining-gates.sh --prove-confirmation-gate
-first unless --skip-preflight is set. The underlying playbook still enforces
+first unless --skip-preflight is set. After the confirmed apply succeeds, it
+runs a safe standby-first readiness check unless --skip-postcheck is set. The
+underlying playbook still enforces
 oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST.
 EOF
 }
@@ -106,6 +110,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-preflight)
       RUN_PREFLIGHT=0
+      ;;
+    --skip-postcheck)
+      RUN_POSTCHECK=0
       ;;
     -h|--help)
       usage
@@ -209,3 +216,27 @@ if [ "${RESTORE_PRIMARY}" -eq 1 ]; then
 fi
 
 run_command "confirmed standby-first apply" "${apply_cmd[@]}"
+
+if [ "${RUN_POSTCHECK}" -eq 1 ]; then
+  postcheck_expected_primary="${STANDBYFIRST_EXPECTED_PRIMARY}"
+  postcheck_expected_standby="${STANDBYFIRST_EXPECTED_STANDBY}"
+  if [ "${RESTORE_PRIMARY}" -eq 0 ]; then
+    postcheck_expected_primary="${STANDBYFIRST_EXPECTED_STANDBY}"
+    postcheck_expected_standby="${STANDBYFIRST_EXPECTED_PRIMARY}"
+  fi
+
+  postcheck_cmd=(
+    scripts/check-remaining-gates.sh \
+    --skip-media \
+    --skip-fsfo \
+    --standbyfirst-zip "${STANDBYFIRST_ZIP}" \
+    --standbyfirst-component "${STANDBYFIRST_COMPONENT_PATH}" \
+    --standbyfirst-dual-home-suffix "${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
+    --standbyfirst-expected-primary "${postcheck_expected_primary}" \
+    --standbyfirst-expected-standby "${postcheck_expected_standby}" \
+    --inventory "${INVENTORY}"
+  )
+  run_command \
+    "safe post-apply readiness" \
+    "${postcheck_cmd[@]}"
+fi

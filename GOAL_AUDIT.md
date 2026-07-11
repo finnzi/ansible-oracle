@@ -173,6 +173,10 @@ future task explicitly changes the desired protection mode.
   before install, patch, switchover, datapatch, or restore.
 - Full KVM-backed pytest after adding the promoted-primary SQL patch registry
   assertion: `180 passed, 9 skipped`.
+- Dry-run proof after adding the standby-first helper post-apply readiness
+  check: the helper prints safe preflight, confirmed apply, and safe post-apply
+  readiness commands; with `--no-restore-primary`, the postcheck expects
+  `super_sby` primary and `super` standby.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

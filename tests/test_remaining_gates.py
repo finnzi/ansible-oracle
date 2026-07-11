@@ -217,6 +217,8 @@ def test_standbyfirst_apply_helper_dry_run_prints_preflight_and_final_apply():
     assert "scripts/check-remaining-gates.sh" in result.stdout
     assert "--skip-fsfo" in result.stdout
     assert "--prove-confirmation-gate" in result.stdout
+    assert "safe post-apply readiness" in result.stdout
+    assert "--skip-media" in result.stdout
     assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
     assert "oracle_patch_zip=/u01/stage/p39062931_190000_Linux-x86-64.zip" in result.stdout
     assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
@@ -250,6 +252,32 @@ def test_standbyfirst_apply_helper_no_restore_preflight_matches_final_shape():
     assert "--no-standbyfirst-restore-primary" in result.stdout
     assert "oracle_patch_standbyfirst_expected_primary=super" in result.stdout
     assert "oracle_patch_standbyfirst_expected_standby=super_sby" in result.stdout
+    assert "safe post-apply readiness" in result.stdout
+    assert "--standbyfirst-expected-primary super_sby" in result.stdout
+    assert "--standbyfirst-expected-standby super" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" in result.stdout
     assert "oracle_patch_standbyfirst_restore_primary=true" not in result.stdout
     assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in result.stdout
+
+
+def test_standbyfirst_apply_helper_can_skip_postcheck():
+    script = REPO_ROOT / "scripts/run-standbyfirst-apply.sh"
+    result = subprocess.run(
+        [
+            str(script),
+            "--dry-run",
+            "--execute",
+            "--confirm",
+            "PATCH_STANDBY_FIRST",
+            "--skip-postcheck",
+        ],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "confirmed standby-first apply" in result.stdout
+    assert "safe post-apply readiness" not in result.stdout

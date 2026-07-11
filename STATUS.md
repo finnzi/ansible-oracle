@@ -367,6 +367,10 @@ The supported lab path is now KVM/libvirt:
   switchover, datapatch, or restore.
 - Full KVM-backed pytest after adding the promoted-primary SQL patch registry
   assertion on 2026-07-11: `180 passed, 9 skipped`.
+- Dry-run proof after adding the standby-first helper post-apply readiness
+  check on 2026-07-11: the helper prints safe preflight, confirmed apply, and
+  safe post-apply readiness commands; with `--no-restore-primary`, the
+  postcheck expects `super_sby` primary and `super` standby.
 
 ## Not Yet Proven End To End
 

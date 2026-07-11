@@ -41,7 +41,10 @@ broker roles to be `super` primary and `super_sby` standby by default; override
 that only for a deliberate different lab state with `--expected-primary` and
 `--expected-standby`. Pass `--no-restore-primary` only when leaving the Data
 Guard roles swapped is the intended outcome; the helper mirrors that choice in
-the safe preflight proof.
+the safe preflight proof. After the confirmed apply succeeds, the helper runs
+the safe readiness path again as a post-apply check; with `--no-restore-primary`,
+that postcheck expects the original standby to be primary. Use
+`--skip-postcheck` only if you need to run that final readiness check manually.
 
 ## 1. Eligible Standby-First Patch Apply
 
