@@ -304,6 +304,12 @@ The supported lab path is now KVM/libvirt:
   homes, and `changed=0`.
 - Full KVM-backed pytest after adding the standby-first execution-plan report on
   2026-07-11: `172 passed, 9 skipped`.
+- Live safety proof on 2026-07-11: the final staged-component standby-first
+  command shape with `execute=true`, `restore_primary=true`, and no
+  `PATCH_STANDBY_FIRST` token refused before broker discovery or any
+  install/patch/switchover/datapatch work.
+- Full KVM-backed pytest after adding the final-command missing-confirmation
+  safety proof on 2026-07-11: `173 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 

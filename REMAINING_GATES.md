@@ -92,7 +92,10 @@ Expected safety behavior:
   patch apply when
   `oracle_patch_standbyfirst_media_require_eligible=true`.
 - Without `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`,
-  `07-patch-standbyfirst.yml` refuses execution.
+  `07-patch-standbyfirst.yml` refuses execution before broker discovery,
+  target-home installation, patching, switchover, datapatch, or restore-primary
+  cleanup. The exact staged-component command shape is covered by pytest with
+  the confirmation token omitted.
 - The playbook requires Data Guard broker `MaxAvailability` before role changes.
 - With `oracle_patch_standbyfirst_restore_primary=true`, the playbook switches
   back to the original primary after both Data Guard homes are patched and

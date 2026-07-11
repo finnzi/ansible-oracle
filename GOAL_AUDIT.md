@@ -106,6 +106,15 @@ future task explicitly changes the desired protection mode.
   `changed=0`.
 - Full KVM-backed pytest after adding the standby-first execution-plan report:
   `172 passed, 9 skipped`.
+- Live safety proof for the final standby-first command shape without
+  `PATCH_STANDBY_FIRST`: pytest verified the staged-component command with
+  `oracle_patch_dual_home_suffix=db_home2`,
+  `oracle_patch_standbyfirst_execute=true`, and
+  `oracle_patch_standbyfirst_restore_primary=true` refuses before broker
+  discovery, target-home installation, patching, switchover, datapatch, or
+  restore-primary cleanup.
+- Full KVM-backed pytest after adding the final-command missing-confirmation
+  safety proof: `173 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

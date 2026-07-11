@@ -813,6 +813,57 @@ def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
         assert skipped_task not in r.stdout
 
 
+def test_standbyfirst_final_command_without_confirmation_refuses_before_patching():
+    ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
+    cmd = [
+        str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
+        "-i",
+        "inventory/hosts.yml",
+        "playbooks/07-patch-standbyfirst.yml",
+        "-e",
+        "oracle_patch_zip=/u01/stage/p39062931_190000_Linux-x86-64.zip",
+        "-e",
+        "oracle_patch_apply_component_path=39062931/39034528",
+        "-e",
+        "oracle_patch_dual_home_suffix=db_home2",
+        "-e",
+        "oracle_patch_standbyfirst_execute=true",
+        "-e",
+        "oracle_patch_standbyfirst_restore_primary=true",
+    ]
+    r = subprocess.run(
+        cmd,
+        cwd=REPO_ROOT,
+        env=_ansible_subprocess_env(),
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    output = r.stdout + r.stderr
+    if (
+        r.returncode != 0
+        and "Standby-first patch execution installs/patches" not in output
+        and ("unreachable=1" in output or "UNREACHABLE!" in output)
+    ):
+        pytest.skip("KVM lab host unreachable; standby-first confirmation gate not run")
+
+    assert r.returncode != 0, output
+    assert "Standby-first patch execution installs/patches" in output
+    assert "PATCH_STANDBY_FIRST" in output
+    for skipped_task in [
+        "Discover current Data Guard roles for standby-first patching",
+        "Report standby-first execution plan",
+        "Install current Data Guard standby DB target homes",
+        "Patch current Data Guard standby DB homes",
+        "Switchover Data Guard primary for standby-first patch",
+        "Run datapatch on promoted Data Guard primary",
+        "Install new Data Guard standby DB target homes",
+        "Patch new Data Guard standby DB homes",
+        "Restore original Data Guard primary after standby-first patching",
+    ]:
+        assert skipped_task not in r.stdout
+
+
 def test_standbyfirst_readiness_only_validates_dataguard_without_execution():
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [

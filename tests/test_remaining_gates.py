@@ -23,7 +23,8 @@ def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in runbook
     assert "MaxAvailability" in runbook
     assert "READ ONLY WITH APPLY" in runbook
-    assert "refuses execution" in runbook
+    assert "refuses execution before broker discovery" in runbook
+    assert "confirmation token omitted" in runbook
 
 
 def test_remaining_gates_documents_proven_fsfo_rehearsal_command():
