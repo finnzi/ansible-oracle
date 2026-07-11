@@ -35,7 +35,9 @@ That helper runs the safe standby-first media/readiness/missing-confirmation
 preflight first, then passes the final confirmation token to
 `playbooks/07-patch-standbyfirst.yml`. Its staged-component defaults are
 `oracle_patch_dual_home_suffix=db_home2` and
-`oracle_patch_standbyfirst_restore_primary=true`.
+`oracle_patch_standbyfirst_restore_primary=true`. Pass
+`--no-restore-primary` only when leaving the Data Guard roles swapped is the
+intended outcome; the helper mirrors that choice in the safe preflight proof.
 
 ## 1. Eligible Standby-First Patch Apply
 

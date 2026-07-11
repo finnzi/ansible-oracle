@@ -146,8 +146,7 @@ run_command() {
 }
 
 if [ "${RUN_PREFLIGHT}" -eq 1 ]; then
-  run_command \
-    "safe preflight" \
+  preflight_cmd=(
     scripts/check-remaining-gates.sh \
     --skip-fsfo \
     --standbyfirst-zip "${STANDBYFIRST_ZIP}" \
@@ -155,6 +154,13 @@ if [ "${RUN_PREFLIGHT}" -eq 1 ]; then
     --standbyfirst-dual-home-suffix "${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
     --prove-confirmation-gate \
     --inventory "${INVENTORY}"
+  )
+  if [ "${RESTORE_PRIMARY}" -eq 0 ]; then
+    preflight_cmd+=(--no-standbyfirst-restore-primary)
+  fi
+  run_command \
+    "safe preflight" \
+    "${preflight_cmd[@]}"
 fi
 
 apply_cmd=(

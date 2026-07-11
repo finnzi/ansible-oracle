@@ -125,6 +125,29 @@ def test_remaining_gates_safe_check_script_can_prove_confirmation_gate():
     assert "DESTROY_PRIMARY_AND_REINSTATE" not in result.stdout
 
 
+def test_remaining_gates_confirmation_gate_can_match_no_restore_shape():
+    script = REPO_ROOT / "scripts/check-remaining-gates.sh"
+    result = subprocess.run(
+        [
+            str(script),
+            "--dry-run",
+            "--prove-confirmation-gate",
+            "--no-standbyfirst-restore-primary",
+        ],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Standby-first missing-confirmation refusal" in result.stdout
+    assert "oracle_patch_standbyfirst_execute=true" in result.stdout
+    assert "oracle_patch_standbyfirst_restore_primary=true" not in result.stdout
+    assert "PATCH_STANDBY_FIRST" not in result.stdout
+
+
 def test_standbyfirst_apply_helper_refuses_without_execute():
     script = REPO_ROOT / "scripts/run-standbyfirst-apply.sh"
     assert os.access(script, os.X_OK)
@@ -179,4 +202,29 @@ def test_standbyfirst_apply_helper_dry_run_prints_preflight_and_final_apply():
     assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" in result.stdout
     assert "oracle_patch_standbyfirst_restore_primary=true" in result.stdout
+    assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in result.stdout
+
+
+def test_standbyfirst_apply_helper_no_restore_preflight_matches_final_shape():
+    script = REPO_ROOT / "scripts/run-standbyfirst-apply.sh"
+    result = subprocess.run(
+        [
+            str(script),
+            "--dry-run",
+            "--execute",
+            "--confirm",
+            "PATCH_STANDBY_FIRST",
+            "--no-restore-primary",
+        ],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--no-standbyfirst-restore-primary" in result.stdout
+    assert "oracle_patch_standbyfirst_execute=true" in result.stdout
+    assert "oracle_patch_standbyfirst_restore_primary=true" not in result.stdout
     assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in result.stdout

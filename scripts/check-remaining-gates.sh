@@ -22,6 +22,7 @@ RUN_STANDBYFIRST_READINESS=1
 RUN_FSFO=1
 REQUIRE_ELIGIBLE_MEDIA=0
 PROVE_CONFIRMATION_GATE=0
+STANDBYFIRST_RESTORE_PRIMARY=1
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
 STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
@@ -45,6 +46,8 @@ Options:
   --standbyfirst-dual-home-suffix SUFFIX
                              Target home suffix for the optional confirmation-gate proof.
   --prove-confirmation-gate  Prove execute=true still refuses without the confirmation token.
+  --no-standbyfirst-restore-primary
+                             Omit restore-primary from the confirmation-gate proof.
   --skip-media               Do not run the standby-first media scan.
   --skip-standbyfirst        Do not run selected-component standby-first checks.
   --skip-fsfo                Do not run the FSFO readiness check.
@@ -85,6 +88,9 @@ while [ "$#" -gt 0 ]; do
       ;;
     --prove-confirmation-gate)
       PROVE_CONFIRMATION_GATE=1
+      ;;
+    --no-standbyfirst-restore-primary)
+      STANDBYFIRST_RESTORE_PRIMARY=0
       ;;
     --skip-media)
       RUN_MEDIA=0
@@ -207,15 +213,20 @@ if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
     -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}"
 
   if [ "${PROVE_CONFIRMATION_GATE}" -eq 1 ]; then
-    run_expected_refusal \
-      "Standby-first missing-confirmation refusal" \
+    confirmation_cmd=(
       "${base_cmd[@]}" \
       playbooks/07-patch-standbyfirst.yml \
       -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
       -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}" \
       -e "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
-      -e oracle_patch_standbyfirst_execute=true \
-      -e oracle_patch_standbyfirst_restore_primary=true
+      -e oracle_patch_standbyfirst_execute=true
+    )
+    if [ "${STANDBYFIRST_RESTORE_PRIMARY}" -eq 1 ]; then
+      confirmation_cmd+=(-e oracle_patch_standbyfirst_restore_primary=true)
+    fi
+    run_expected_refusal \
+      "Standby-first missing-confirmation refusal" \
+      "${confirmation_cmd[@]}"
   fi
 fi
 
