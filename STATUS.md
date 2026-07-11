@@ -349,6 +349,8 @@ The supported lab path is now KVM/libvirt:
   2026-07-11: media scan, selected-component readiness, missing-confirmation
   refusal, and FSFO readiness all passed with default expected `super` primary
   and `super_sby` standby; no destructive confirmation variables were passed.
+- Full KVM-backed pytest after defaulting the aggregate remaining-gates role
+  guard on 2026-07-11: `180 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 

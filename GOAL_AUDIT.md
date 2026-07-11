@@ -155,6 +155,8 @@ future task explicitly changes the desired protection mode.
   media scan, selected-component readiness, missing-confirmation refusal, and
   FSFO readiness all passed with default expected `primary=super` and
   `standby=super_sby`; no destructive confirmation variables were passed.
+- Full KVM-backed pytest after defaulting the aggregate remaining-gates role
+  guard: `180 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:
