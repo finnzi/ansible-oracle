@@ -26,6 +26,9 @@ def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     assert "READ ONLY WITH APPLY" in runbook
     assert "refuses execution before broker discovery" in runbook
     assert "confirmation token omitted" in runbook
+    assert "phase-specific OPatch inventory" in runbook
+    assert "DBA_REGISTRY_SQLPATCH" in runbook
+    assert "SQL patch registry" in runbook
 
 
 def test_remaining_gates_documents_proven_fsfo_rehearsal_command():

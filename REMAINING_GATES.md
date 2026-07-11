@@ -121,6 +121,10 @@ Expected safety behavior:
 - The playbook requires Data Guard broker `MaxAvailability` before role changes.
 - The guarded helper also passes expected starting roles, so the apply refuses
   before role changes if broker roles do not match the intended lab state.
+- A successful confirmed run must prove phase-specific OPatch inventory on the
+  current standby and new standby target homes. SQL patch registry proof must
+  also show the promoted primary has every expected DB RU patch ID recorded as
+  `SUCCESS` in `DBA_REGISTRY_SQLPATCH` after datapatch.
 - With `oracle_patch_standbyfirst_restore_primary=true`, the playbook switches
   back to the original primary after both Data Guard homes are patched and
   validates the original primary plus `READ ONLY WITH APPLY` standby state.

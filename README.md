@@ -133,7 +133,10 @@ scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST
 That helper runs the safe preflight first, requires the starting broker roles
 to be `super` primary and `super_sby` standby by default, then asks the
 standby-first playbook to restore the original primary after both homes are
-patched.
+patched. A successful confirmed run must also prove phase-specific OPatch
+inventory on both patched Data Guard homes, `DBA_REGISTRY_SQLPATCH` success on
+the promoted primary after datapatch, and Maximum Availability with a
+`READ ONLY WITH APPLY` standby after the final role state is restored.
 
 ## Quickstart
 
