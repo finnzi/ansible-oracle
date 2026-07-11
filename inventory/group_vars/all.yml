@@ -110,6 +110,17 @@ oracle_instances:
         failover_method: NONE
         failover_retries: 0
         failover_delay: 0
+      - name: super_tac
+        role: PRIMARY
+        failover_type: AUTO
+        failover_method: BASIC
+        failover_retries: 60
+        failover_delay: 1
+        notification: true
+        commit_outcome: true
+        retention: 86400
+        replay_init_time: 300
+        failover_restore: LEVEL1
 
 # Default listener / DB credentials for the lab (NOT for production). The test
 # suite and the custom modules use these. Real passwords should be vaulted.

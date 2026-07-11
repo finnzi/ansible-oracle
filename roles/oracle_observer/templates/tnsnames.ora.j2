@@ -64,3 +64,22 @@
       (SERVICE_NAME = {{ observer_client_standby_service }})
     )
   )
+
+# Primary-role service for Transparent Application Continuity clients.
+{{ observer_client_tac_alias }} =
+  (DESCRIPTION =
+    (CONNECT_TIMEOUT = 5)
+    (TRANSPORT_CONNECT_TIMEOUT = 3)
+    (RETRY_COUNT = {{ observer_client_failover_retries }})
+    (RETRY_DELAY = {{ observer_client_failover_delay }})
+    (ADDRESS_LIST =
+      (LOAD_BALANCE = OFF)
+      (FAILOVER = ON)
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_primary.host | default('superdc1.domain.is') }})(PORT = {{ dg_primary.port | default(1521) }}))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ dg_standby.host | default('superdc2.domain.is') }})(PORT = {{ dg_standby.port | default(1521) }}))
+    )
+    (CONNECT_DATA =
+      (SERVER = DEDICATED)
+      (SERVICE_NAME = {{ observer_client_tac_service }})
+    )
+  )

@@ -1,0 +1,35 @@
+---
+- name: Ensure TAC and FCF PoC directory exists
+  ansible.builtin.file:
+    path: "{{ oracle_tac_fcf_poc_dir }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: oinstall
+    mode: "0755"
+
+- name: Deploy TAC and FCF PoC source
+  ansible.builtin.copy:
+    src: TacFcfPoc.java
+    dest: "{{ oracle_tac_fcf_poc_dir }}/TacFcfPoc.java"
+    owner: "{{ oracle_user }}"
+    group: oinstall
+    mode: "0644"
+  register: _tac_fcf_source
+
+- name: Check compiled TAC and FCF PoC client
+  ansible.builtin.stat:
+    path: "{{ oracle_tac_fcf_poc_dir }}/TacFcfPoc.class"
+  register: _tac_fcf_class
+
+- name: Compile TAC and FCF PoC client
+  ansible.builtin.shell: |
+    set -o pipefail
+    home={{ observer_client_home }}
+    cp="$home/jdbc/lib/ojdbc8.jar:$home/ucp/lib/ucp.jar:$home/jdbc/lib/simplefan.jar:$home/opmn/lib/ons.jar"
+    "$home/jdk/bin/javac" -cp "$cp" TacFcfPoc.java
+  args:
+    executable: /bin/bash
+    chdir: "{{ oracle_tac_fcf_poc_dir }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: _tac_fcf_source is changed or not _tac_fcf_class.stat.exists

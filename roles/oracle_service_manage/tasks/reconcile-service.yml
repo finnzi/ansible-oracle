@@ -9,6 +9,7 @@
       - (svc.role | default('PRIMARY')) in ['PRIMARY', 'PHYSICAL_STANDBY', 'LOGICAL_STANDBY', 'SNAPSHOT_STANDBY']
       - (svc.failover_type | default('NONE')) in ['NONE', 'SESSION', 'SELECT', 'TRANSACTION', 'AUTO']
       - (svc.failover_method | default('NONE')) in ['NONE', 'BASIC']
+      - (svc.failover_restore | default('NONE')) in ['NONE', 'LEVEL1']
     fail_msg: "Invalid Oracle service definition for {{ inst.name }}: {{ svc }}"
 
 - name: Set service facts
@@ -87,28 +88,29 @@
 
 - name: Add role-based service to Oracle Restart
   ansible.builtin.command:
-    argv:
-      - "{{ oracle_gi_home }}/bin/srvctl"
-      - add
-      - service
-      - -db
-      - "{{ _svc_restart_db }}"
-      - -service
-      - "{{ _svc_name }}"
-      - -role
-      - "{{ _svc_role }}"
-      - -policy
-      - AUTOMATIC
-      - -failovertype
-      - "{{ _svc_failover_type }}"
-      - -failovermethod
-      - "{{ _svc_failover_method }}"
-      - -failoverretry
-      - "{{ svc.failover_retries | default(30) | string }}"
-      - -failoverdelay
-      - "{{ svc.failover_delay | default(1) | string }}"
-      - -notification
-      - "{{ svc.notification | default(true) | ternary('TRUE', 'FALSE') }}"
+    argv: >-
+      {{
+        [
+          oracle_gi_home ~ '/bin/srvctl', 'add', 'service',
+          '-db', _svc_restart_db,
+          '-service', _svc_name,
+          '-role', _svc_role,
+          '-policy', 'AUTOMATIC',
+          '-failovertype', _svc_failover_type,
+          '-failovermethod', _svc_failover_method,
+          '-failoverretry', svc.failover_retries | default(30) | string,
+          '-failoverdelay', svc.failover_delay | default(1) | string,
+          '-notification', svc.notification | default(true) | ternary('TRUE', 'FALSE')
+        ]
+        + (['-commit_outcome', svc.commit_outcome | ternary('TRUE', 'FALSE')]
+           if svc.commit_outcome is defined else [])
+        + (['-retention', svc.retention | string]
+           if svc.retention is defined else [])
+        + (['-replay_init_time', svc.replay_init_time | string]
+           if svc.replay_init_time is defined else [])
+        + (['-failover_restore', svc.failover_restore]
+           if svc.failover_restore is defined else [])
+      }}
   become: true
   become_user: "{{ oracle_user }}"
   register: _srvctl_add_svc
@@ -123,6 +125,12 @@
       - "('Service role: ' ~ _svc_role) in _srvctl_config_svc.stdout"
       - "('Failover type: ' ~ _svc_failover_type) in _srvctl_config_svc.stdout"
       - "('Failover method: ' ~ _svc_failover_method) in _srvctl_config_svc.stdout"
+      - >-
+        svc.commit_outcome is not defined or
+        ('Commit Outcome: ' ~ (svc.commit_outcome | ternary('true', 'false'))) in _srvctl_config_svc.stdout
+      - >-
+        svc.failover_restore is not defined or
+        ('Failover restore: ' ~ svc.failover_restore) in _srvctl_config_svc.stdout
     fail_msg: >-
       Existing service {{ _svc_name }} on {{ _svc_restart_db }} does not match
       the requested role/failover contract. Remove it explicitly or reconcile

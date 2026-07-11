@@ -31,6 +31,7 @@ The lab declares these services on both Restart databases:
 | --- | --- | --- |
 | `super_pri` | `PRIMARY` | Writable client endpoint with TAF `SELECT/BASIC` |
 | `super_stb` | `PHYSICAL_STANDBY` | Active Data Guard read-only endpoint |
+| `super_tac` | `PRIMARY` | TAC replay endpoint for UCP/JDBC clients |
 | `super_svc` | `PRIMARY` | Backward-compatible existing lab endpoint |
 
 The observer VM also acts as the native Oracle Client test machine. Its
@@ -142,3 +143,38 @@ application-specific work. It is not a `tnsnames.ora`-only retrofit.
 
 See Oracle's [Data Guard introduction](https://docs.oracle.com/en/database/oracle/oracle-database/19/sbydb/introduction-to-oracle-data-guard-concepts.html)
 and [Database Licensing Information](https://docs.oracle.com/en/database/oracle/oracle-database/19/dblic/Licensing-Information.html).
+
+### TAC, FAN, and FCF proof
+
+The lab now includes a reproducible Java/UCP prototype using the Oracle 19c
+client already installed on the observer. It uses the replay data source,
+enables UCP Fast Connection Failover, and subscribes directly to ONS on both
+single-instance Oracle Restart nodes. No RAC installation is required. This
+use depends on the existing Active Data Guard licenses for both members.
+
+Safe convergence and preflight:
+
+```bash
+scripts/run-tac-fcf-poc.sh
+```
+
+Confirmation-gated switchover proof:
+
+```bash
+scripts/run-tac-fcf-poc.sh --execute --confirm TAC_FCF_SWITCHOVER
+```
+
+The script creates a disposable stored call, interrupts it with a broker
+switchover, and requires all three outcomes: a FAN service-down event, TAC
+returning from the in-flight call on the new primary with exactly one committed
+row, and a subsequent UCP borrow on that primary. It cleans up the test user and
+restores the original primary even when validation fails.
+
+The 2026-07-11 live proof switched from `super` to `super_sby`. ONS delivered
+the `super_tac` down event for `super`; TAC completed the call on `super_sby`
+with one row after 103,242 ms; and UCP's next connection also used `super_sby`.
+The script then switched back successfully, leaving `super` primary. This is a
+positive feasibility result for this driver and workload, not a claim that all
+application calls are replayable. Production adoption still requires workload
+qualification for mutable session state, external side effects, and calls that
+Application Continuity excludes from replay.

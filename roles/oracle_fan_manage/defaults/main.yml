@@ -1,0 +1,5 @@
+---
+oracle_gi_home: /grid/19c/gi_home1
+oracle_user: oracle
+oracle_fan_remote_port: 6200
+oracle_fan_open_firewall: true

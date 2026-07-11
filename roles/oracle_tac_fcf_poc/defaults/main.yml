@@ -1,0 +1,4 @@
+---
+oracle_user: oracle
+observer_client_home: /observer/app/oracle/client_home1
+oracle_tac_fcf_poc_dir: /observer/app/oracle/tac-fcf-poc

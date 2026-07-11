@@ -13,6 +13,7 @@
   roles:
     - role: oracle_network
     - role: oracle_service_manage
+    - role: oracle_fan_manage
 
 - name: Configure native client aliases on the observer/client VM
   hosts: observer
@@ -22,3 +23,6 @@
       ansible.builtin.include_role:
         name: oracle_observer
         tasks_from: client-config
+    - name: Deploy reproducible TAC and FCF PoC client
+      ansible.builtin.include_role:
+        name: oracle_tac_fcf_poc

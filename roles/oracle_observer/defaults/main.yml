@@ -26,8 +26,10 @@ observer_dg_primary_unique_name: super
 observer_dg_standby_unique_name: super_sby
 observer_client_primary_alias: super_primary
 observer_client_standby_alias: super_standby
+observer_client_tac_alias: super_tac
 observer_client_primary_service: super_pri
 observer_client_standby_service: super_stb
+observer_client_tac_service: super_tac
 observer_client_failover_retries: 30
 observer_client_failover_delay: 1
 observer_sysdg_user: dgmonitor
