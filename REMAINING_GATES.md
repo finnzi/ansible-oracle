@@ -75,7 +75,9 @@ env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   playbooks/07-patch-standbyfirst.yml \
   -e oracle_patch_zip=/u01/stage/p39062931_190000_Linux-x86-64.zip \
   -e oracle_patch_apply_component_path=39062931/39034528 \
+  -e oracle_patch_dual_home_suffix=db_home2 \
   -e oracle_patch_standbyfirst_execute=true \
+  -e oracle_patch_standbyfirst_restore_primary=true \
   -e oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST
 ```
 
@@ -88,6 +90,9 @@ Expected safety behavior:
 - Without `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`,
   `07-patch-standbyfirst.yml` refuses execution.
 - The playbook requires Data Guard broker `MaxAvailability` before role changes.
+- With `oracle_patch_standbyfirst_restore_primary=true`, the playbook switches
+  back to the original primary after both Data Guard homes are patched and
+  validates the original primary plus `READ ONLY WITH APPLY` standby state.
 
 ## Proven: Destructive FSFO Failover/Reinstate Rehearsal
 

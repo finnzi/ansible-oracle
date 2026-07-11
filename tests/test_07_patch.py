@@ -262,6 +262,7 @@ def test_patch_role_db_apply_contract():
     assert "Fail when selected patch component is not standby-first eligible" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
     assert "oracle_patch_standbyfirst_execute: false" in standbyfirst_playbook
+    assert "oracle_patch_standbyfirst_restore_primary: false" in standbyfirst_playbook
     assert 'oracle_patch_standbyfirst_confirm: ""' in standbyfirst_playbook
     assert "PATCH_STANDBY_FIRST" in standbyfirst_playbook
     assert "Fail when standby-first execution is not explicitly confirmed" in standbyfirst_playbook
@@ -293,6 +294,8 @@ def test_patch_role_db_apply_contract():
         "Install new Data Guard standby DB target homes",
         "Patch new Data Guard standby DB homes",
         "Validate Data Guard broker after standby-first patching",
+        "Restore original Data Guard primary after standby-first patching",
+        "Validate original primary after standby-first restore",
     ]
     for destructive_action in guarded_destructive_actions:
         action_pos = standbyfirst_playbook.index(destructive_action)
@@ -346,6 +349,11 @@ def test_patch_role_db_apply_contract():
     )
     assert "Validate Data Guard broker after standby-first patching" in standbyfirst_playbook
     assert "Validate Maximum Availability after standby-first patching" in standbyfirst_playbook
+    assert "Restore original Data Guard primary after standby-first patching" in standbyfirst_playbook
+    assert 'oracle_dataguard_switchover_target: "{{ _patch_sf_current_primary }}"' in standbyfirst_playbook
+    assert "oracle_patch_standbyfirst_restore_primary | default(false) | bool" in standbyfirst_playbook
+    assert "Validate original primary after standby-first restore" in standbyfirst_playbook
+    assert "Validate original primary and standby after standby-first restore" in standbyfirst_playbook
     assert "Report Data Guard standby-first patch media" in standbyfirst_media_playbook
     assert "Scan staged patch zips for standby-first eligibility" in standbyfirst_media_playbook
     assert "directory: \"{{ oracle_stage_dir }}\"" in standbyfirst_media_playbook

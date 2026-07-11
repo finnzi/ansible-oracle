@@ -70,8 +70,9 @@ future task explicitly changes the desired protection mode.
    component `39062931/39034528` inside the staged combo. A live apply requires
    either an eligible standalone DB RU zip or selecting that eligible component
    with `oracle_patch_apply_component_path=39062931/39034528`, then running the
-   confirmed standby-first path with `oracle_patch_standbyfirst_execute=true` and
-   `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
+   confirmed standby-first path with `oracle_patch_standbyfirst_execute=true`,
+   optional `oracle_patch_standbyfirst_restore_primary=true` for lab proof
+   cleanup, and `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
 
 ## Latest Verification
 
@@ -89,6 +90,13 @@ future task explicitly changes the desired protection mode.
   ID `39034528`, found current homes already patched, and completed with
   `changed=0`.
 - Full KVM-backed pytest after component-aware standby-first media support:
+  `172 passed, 9 skipped`.
+- Live standby-first readiness after adding restore-primary cleanup:
+  `playbooks/07-patch-standbyfirst.yml -e
+  oracle_patch_apply_component_path=39062931/39034528` completed with
+  `changed=0`; the restore phase remained gated because
+  `oracle_patch_standbyfirst_execute=false`.
+- Full KVM-backed pytest after adding restore-primary cleanup:
   `172 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.

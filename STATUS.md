@@ -234,7 +234,9 @@ The supported lab path is now KVM/libvirt:
     rejected before broker role discovery, target-home installation, DB-home
     patching, switchover, or datapatch unless an eligible DB RU component is
     selected with `oracle_patch_apply_component_path`; an eligible live RU apply
-    remains not yet proven.
+    remains not yet proven. For lab proofs, the playbook can also switch back
+    to the original primary after both Data Guard homes are patched by setting
+    `oracle_patch_standbyfirst_restore_primary=true`.
     The readiness-only path has also been run live with the eligibility failure
     disabled and execution still false: it resolved `primary=super` and
     `standby=super_sby`, verified broker protection `MaxAvailability`,
@@ -291,6 +293,11 @@ The supported lab path is now KVM/libvirt:
   homes were already patched.
 - Full KVM-backed pytest after component-aware standby-first media support on
   2026-07-10: `172 passed, 9 skipped`.
+- Live standby-first readiness after adding restore-primary cleanup on
+  2026-07-11: selected component `39062931/39034528` completed with
+  `changed=0`; the restore phase remained gated because execution was false.
+- Full KVM-backed pytest after adding restore-primary cleanup on 2026-07-11:
+  `172 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -298,7 +305,8 @@ The supported lab path is now KVM/libvirt:
   `playbooks/07-patch-standbyfirst.yml` is readiness-only by default; the live
   readiness path is proven, and the staged-media scanner reports eligible DB RU
   component `39062931/39034528` inside the staged combo. The eligible-RU apply
-  still requires explicit component selection and execution confirmation.
+  still requires explicit component selection, execution confirmation, and the
+  optional restore-primary cleanup for the least disruptive lab proof.
 
 ## Host Findings From This Run
 

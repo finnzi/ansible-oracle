@@ -14,6 +14,7 @@
     oracle_patch_apply_component_path: ""
     oracle_patch_standbyfirst_require_eligible: true
     oracle_patch_standbyfirst_execute: false
+    oracle_patch_standbyfirst_restore_primary: false
     oracle_patch_standbyfirst_confirm: ""
   tasks:
     - name: Read standby-first eligibility from the patch README
@@ -394,3 +395,58 @@
         'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_broker_after.stdout | default(''))
       no_log: true
       when: oracle_patch_standbyfirst_execute | default(false) | bool
+
+- name: Restore original Data Guard primary after standby-first patching
+  hosts: primary
+  become: true
+  roles:
+    - role: oracle_dataguard
+      when:
+        - oracle_patch_standbyfirst_execute | default(false) | bool
+        - oracle_patch_standbyfirst_restore_primary | default(false) | bool
+      vars:
+        oracle_dataguard_run_switchover: true
+        oracle_dataguard_switchover_target: "{{ _patch_sf_current_primary }}"
+        oracle_dataguard_configure_broker: false
+        oracle_dataguard_prepare_primary: false
+        oracle_dataguard_prepare_standby: false
+        oracle_dataguard_duplicate_standby: false
+
+- name: Validate original primary after standby-first restore
+  hosts: primary
+  become: true
+  tasks:
+    - name: Validate original primary and standby after standby-first restore
+      ansible.builtin.shell: |
+        set -o pipefail
+        export ORACLE_HOME={{ _patch_sf_home_path }}
+        "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_primary }}_dgb" <<'DGMGRL'
+        SHOW CONFIGURATION;
+        EXIT;
+        DGMGRL
+        "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_primary }}_dgb as sysdba" <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+        EXIT;
+        SQL
+        "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _patch_sf_current_standby }}_dgb as sysdba" <<'SQL'
+        SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
+        EXIT;
+        SQL
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _patch_sf_restore_after
+      changed_when: false
+      failed_when: >-
+        _patch_sf_restore_after.rc != 0 or
+        'Protection Mode: MaxAvailability' not in (_patch_sf_restore_after.stdout | default('')) or
+        'Configuration Status:' not in (_patch_sf_restore_after.stdout | default('')) or
+        'SUCCESS' not in (_patch_sf_restore_after.stdout | default('')) or
+        'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_restore_after.stdout | default('')) or
+        'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_patch_sf_restore_after.stdout | default(''))
+      no_log: true
+      when:
+        - oracle_patch_standbyfirst_execute | default(false) | bool
+        - oracle_patch_standbyfirst_restore_primary | default(false) | bool

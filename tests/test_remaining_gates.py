@@ -17,7 +17,9 @@ def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     assert "playbooks/07-patch-standbyfirst.yml" in runbook
     assert "-e oracle_patch_zip=/u01/stage/<eligible-standby-first-db-ru.zip>" in runbook
     assert "-e oracle_patch_apply_component_path=39062931/39034528" in runbook
+    assert "oracle_patch_dual_home_suffix=db_home2" in runbook
     assert "oracle_patch_standbyfirst_execute=true" in runbook
+    assert "oracle_patch_standbyfirst_restore_primary=true" in runbook
     assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in runbook
     assert "MaxAvailability" in runbook
     assert "READ ONLY WITH APPLY" in runbook

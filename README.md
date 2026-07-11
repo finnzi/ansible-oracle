@@ -103,7 +103,9 @@ Implemented:
   `oracle_patch_apply_component_path=39062931/39034528`. For an eligible RU,
   the dedicated playbook is readiness-only unless explicitly
   confirmed with `oracle_patch_standbyfirst_execute=true` and
-  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`. The readiness-only
+  `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`; lab proof runs can
+  also set `oracle_patch_standbyfirst_restore_primary=true` to switch back to
+  the original primary after patching both sites. The readiness-only
   path has been run live by disabling the eligibility failure while leaving
   execution false; it resolved the current broker roles, preserved Maximum
   Availability, validated the standby as `READ ONLY WITH APPLY`, and made no
@@ -236,7 +238,7 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Multiple instances per host | `oracle_instances` list; `inventory/examples/multi-instance.yml`; `inventory/examples/multi-instance-smoke.yml`; `tests/test_instance_overrides.py`; `tests/test_09_multi_instance.py` |
 | Tunable memory/settings | `oracle_instances[*].memory`; `oracle_instances[*].parameters`; `oracle_db_manage` |
 | Dedicated client service | `oracle_service_manage` |
-| Standby-first patching | Detection and staged-media scan in `library/patch_standbyfirst_info.py`; readiness-first target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml` with explicit execution confirmation; selectable eligible DB RU components use `oracle_patch_apply_component_path`; live eligible-RU apply still pending |
+| Standby-first patching | Detection and staged-media scan in `library/patch_standbyfirst_info.py`; readiness-first target-home staging and role-change orchestration in `playbooks/07-patch-standbyfirst.yml` with explicit execution confirmation; selectable eligible DB RU components use `oracle_patch_apply_component_path`; optional restore-primary cleanup uses `oracle_patch_standbyfirst_restore_primary`; live eligible-RU apply still pending |
 | KVM lab with fixed IPs and no DNS | `lab/scripts/lab-up.sh`; `lab/scripts/update-hosts.sh` |
 | Oracle Linux 9 or 10 lab base | `LAB_OS_VERSION` and Oracle Linux cloud images |
 | No ASM for database files | DBCA uses `storageType=FS`; `oracle_db_manage` reconciles data/archive/FRA/redo paths; live tests assert no database file path starts with `+` |
