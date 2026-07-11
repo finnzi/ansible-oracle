@@ -83,6 +83,8 @@
   become: true
   vars:
     oracle_patch_standbyfirst_instance: ""
+    oracle_patch_standbyfirst_expected_primary: ""
+    oracle_patch_standbyfirst_expected_standby: ""
   tasks:
     - name: Resolve local Data Guard patch instance
       ansible.builtin.set_fact:
@@ -174,6 +176,28 @@
           standby-first patching.
       when:
         - _patch_sf_current_primary | length == 0 or _patch_sf_current_standby | length == 0
+      run_once: true
+
+    - name: Fail when current primary does not match expected standby-first primary  # noqa: run-once[task]
+      ansible.builtin.fail:
+        msg: >-
+          Standby-first patching expected current primary
+          {{ oracle_patch_standbyfirst_expected_primary }}, got
+          {{ _patch_sf_current_primary }}.
+      when:
+        - oracle_patch_standbyfirst_expected_primary | default('') | length > 0
+        - _patch_sf_current_primary != oracle_patch_standbyfirst_expected_primary
+      run_once: true
+
+    - name: Fail when current standby does not match expected standby-first standby  # noqa: run-once[task]
+      ansible.builtin.fail:
+        msg: >-
+          Standby-first patching expected current standby
+          {{ oracle_patch_standbyfirst_expected_standby }}, got
+          {{ _patch_sf_current_standby }}.
+      when:
+        - oracle_patch_standbyfirst_expected_standby | default('') | length > 0
+        - _patch_sf_current_standby != oracle_patch_standbyfirst_expected_standby
       run_once: true
 
     - name: Report standby-first execution plan  # noqa: run-once[task]

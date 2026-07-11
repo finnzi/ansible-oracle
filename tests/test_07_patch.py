@@ -263,6 +263,8 @@ def test_patch_role_db_apply_contract():
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
     assert "oracle_patch_standbyfirst_execute: false" in standbyfirst_playbook
     assert "oracle_patch_standbyfirst_restore_primary: false" in standbyfirst_playbook
+    assert 'oracle_patch_standbyfirst_expected_primary: ""' in standbyfirst_playbook
+    assert 'oracle_patch_standbyfirst_expected_standby: ""' in standbyfirst_playbook
     assert 'oracle_patch_standbyfirst_confirm: ""' in standbyfirst_playbook
     assert "PATCH_STANDBY_FIRST" in standbyfirst_playbook
     assert "Fail when standby-first execution is not explicitly confirmed" in standbyfirst_playbook
@@ -280,6 +282,16 @@ def test_patch_role_db_apply_contract():
     )
     assert standbyfirst_playbook.index(
         "Fail when broker roles could not be resolved"
+    ) < standbyfirst_playbook.index("Report standby-first execution plan")
+    assert "Fail when current primary does not match expected standby-first primary" in standbyfirst_playbook
+    assert "Fail when current standby does not match expected standby-first standby" in standbyfirst_playbook
+    assert standbyfirst_playbook.index(
+        "Fail when broker roles could not be resolved"
+    ) < standbyfirst_playbook.index(
+        "Fail when current primary does not match expected standby-first primary"
+    )
+    assert standbyfirst_playbook.index(
+        "Fail when current standby does not match expected standby-first standby"
     ) < standbyfirst_playbook.index("Report standby-first execution plan")
     assert standbyfirst_playbook.index(
         "Report standby-first execution plan"

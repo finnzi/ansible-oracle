@@ -24,6 +24,8 @@ RESTORE_PRIMARY=1
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
 STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
+STANDBYFIRST_EXPECTED_PRIMARY="${STANDBYFIRST_EXPECTED_PRIMARY:-super}"
+STANDBYFIRST_EXPECTED_STANDBY="${STANDBYFIRST_EXPECTED_STANDBY:-super_sby}"
 
 usage() {
   cat <<'EOF'
@@ -44,6 +46,8 @@ Options:
                              Relative eligible DB RU component path in the zip.
   --standbyfirst-dual-home-suffix SUFFIX
                              Target home suffix (default: db_home2).
+  --expected-primary NAME    Required current primary before apply (default: super).
+  --expected-standby NAME    Required current standby before apply (default: super_sby).
   --no-restore-primary       Do not switch back to the original primary.
   --skip-preflight           Do not run the safe remaining-gates preflight first.
   -h, --help                 Show this help.
@@ -85,6 +89,16 @@ while [ "$#" -gt 0 ]; do
     --standbyfirst-dual-home-suffix)
       [ "$#" -ge 2 ] || { echo "error: --standbyfirst-dual-home-suffix requires a suffix" >&2; exit 1; }
       STANDBYFIRST_DUAL_HOME_SUFFIX="$2"
+      shift
+      ;;
+    --expected-primary)
+      [ "$#" -ge 2 ] || { echo "error: --expected-primary requires a name" >&2; exit 1; }
+      STANDBYFIRST_EXPECTED_PRIMARY="$2"
+      shift
+      ;;
+    --expected-standby)
+      [ "$#" -ge 2 ] || { echo "error: --expected-standby requires a name" >&2; exit 1; }
+      STANDBYFIRST_EXPECTED_STANDBY="$2"
       shift
       ;;
     --no-restore-primary)
@@ -152,6 +166,8 @@ if [ "${RUN_PREFLIGHT}" -eq 1 ]; then
     --standbyfirst-zip "${STANDBYFIRST_ZIP}" \
     --standbyfirst-component "${STANDBYFIRST_COMPONENT_PATH}" \
     --standbyfirst-dual-home-suffix "${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
+    --standbyfirst-expected-primary "${STANDBYFIRST_EXPECTED_PRIMARY}" \
+    --standbyfirst-expected-standby "${STANDBYFIRST_EXPECTED_STANDBY}" \
     --prove-confirmation-gate \
     --inventory "${INVENTORY}"
   )
@@ -178,6 +194,10 @@ apply_cmd=(
   "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}"
   -e
   "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}"
+  -e
+  "oracle_patch_standbyfirst_expected_primary=${STANDBYFIRST_EXPECTED_PRIMARY}"
+  -e
+  "oracle_patch_standbyfirst_expected_standby=${STANDBYFIRST_EXPECTED_STANDBY}"
   -e
   oracle_patch_standbyfirst_execute=true
   -e

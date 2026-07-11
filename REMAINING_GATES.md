@@ -35,9 +35,12 @@ That helper runs the safe standby-first media/readiness/missing-confirmation
 preflight first, then passes the final confirmation token to
 `playbooks/07-patch-standbyfirst.yml`. Its staged-component defaults are
 `oracle_patch_dual_home_suffix=db_home2` and
-`oracle_patch_standbyfirst_restore_primary=true`. Pass
-`--no-restore-primary` only when leaving the Data Guard roles swapped is the
-intended outcome; the helper mirrors that choice in the safe preflight proof.
+`oracle_patch_standbyfirst_restore_primary=true`. It also requires the starting
+broker roles to be `super` primary and `super_sby` standby by default; override
+that only for a deliberate different lab state with `--expected-primary` and
+`--expected-standby`. Pass `--no-restore-primary` only when leaving the Data
+Guard roles swapped is the intended outcome; the helper mirrors that choice in
+the safe preflight proof.
 
 ## 1. Eligible Standby-First Patch Apply
 
@@ -115,6 +118,8 @@ Expected safety behavior:
   cleanup. The exact staged-component command shape is covered by pytest with
   the confirmation token omitted.
 - The playbook requires Data Guard broker `MaxAvailability` before role changes.
+- The guarded helper also passes expected starting roles, so the apply refuses
+  before role changes if broker roles do not match the intended lab state.
 - With `oracle_patch_standbyfirst_restore_primary=true`, the playbook switches
   back to the original primary after both Data Guard homes are patched and
   validates the original primary plus `READ ONLY WITH APPLY` standby state.

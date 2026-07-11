@@ -335,6 +335,13 @@ The supported lab path is now KVM/libvirt:
   retained `super` primary, `super_sby` standby, and `MaxAvailability`, then
   refused at the confirmation gate before install, patch, switchover,
   datapatch, or restore.
+- Live expected-role standby-first preflight proof on 2026-07-11: with expected
+  `super` primary and `super_sby` standby, readiness passed and the final
+  execute-shaped command still refused without confirmation; with expected
+  `not_super` primary, readiness failed at the expected-primary guard before
+  install, patch, switchover, or datapatch.
+- Full KVM-backed pytest after adding standby-first expected-role guards on
+  2026-07-11: `179 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 
@@ -344,8 +351,9 @@ The supported lab path is now KVM/libvirt:
   component `39062931/39034528` inside the staged combo. The eligible-RU apply
   still requires explicit component selection and execution confirmation.
   `scripts/run-standbyfirst-apply.sh` wraps the final staged-component command,
-  runs the safe standby-first preflight first, and defaults to restore-primary
-  cleanup for the least disruptive lab proof.
+  runs the safe standby-first preflight first, requires the starting broker
+  roles to be `super` primary and `super_sby` standby by default, and defaults
+  to restore-primary cleanup for the least disruptive lab proof.
 
 ## Host Findings From This Run
 

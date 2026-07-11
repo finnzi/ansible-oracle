@@ -26,6 +26,8 @@ STANDBYFIRST_RESTORE_PRIMARY=1
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
 STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
+STANDBYFIRST_EXPECTED_PRIMARY="${STANDBYFIRST_EXPECTED_PRIMARY:-}"
+STANDBYFIRST_EXPECTED_STANDBY="${STANDBYFIRST_EXPECTED_STANDBY:-}"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +47,10 @@ Options:
                              Relative eligible DB RU component path in the zip.
   --standbyfirst-dual-home-suffix SUFFIX
                              Target home suffix for the optional confirmation-gate proof.
+  --standbyfirst-expected-primary NAME
+                             Require this current primary during readiness.
+  --standbyfirst-expected-standby NAME
+                             Require this current standby during readiness.
   --prove-confirmation-gate  Prove execute=true still refuses without the confirmation token.
   --no-standbyfirst-restore-primary
                              Omit restore-primary from the confirmation-gate proof.
@@ -84,6 +90,16 @@ while [ "$#" -gt 0 ]; do
     --standbyfirst-dual-home-suffix)
       [ "$#" -ge 2 ] || { echo "error: --standbyfirst-dual-home-suffix requires a suffix" >&2; exit 1; }
       STANDBYFIRST_DUAL_HOME_SUFFIX="$2"
+      shift
+      ;;
+    --standbyfirst-expected-primary)
+      [ "$#" -ge 2 ] || { echo "error: --standbyfirst-expected-primary requires a name" >&2; exit 1; }
+      STANDBYFIRST_EXPECTED_PRIMARY="$2"
+      shift
+      ;;
+    --standbyfirst-expected-standby)
+      [ "$#" -ge 2 ] || { echo "error: --standbyfirst-expected-standby requires a name" >&2; exit 1; }
+      STANDBYFIRST_EXPECTED_STANDBY="$2"
       shift
       ;;
     --prove-confirmation-gate)
@@ -205,12 +221,21 @@ if [ "${RUN_MEDIA}" -eq 1 ]; then
 fi
 
 if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
-  run_command \
-    "Standby-first selected-component readiness" \
+  readiness_cmd=(
     "${base_cmd[@]}" \
     playbooks/07-patch-standbyfirst.yml \
     -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
     -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}"
+  )
+  if [ -n "${STANDBYFIRST_EXPECTED_PRIMARY}" ]; then
+    readiness_cmd+=(-e "oracle_patch_standbyfirst_expected_primary=${STANDBYFIRST_EXPECTED_PRIMARY}")
+  fi
+  if [ -n "${STANDBYFIRST_EXPECTED_STANDBY}" ]; then
+    readiness_cmd+=(-e "oracle_patch_standbyfirst_expected_standby=${STANDBYFIRST_EXPECTED_STANDBY}")
+  fi
+  run_command \
+    "Standby-first selected-component readiness" \
+    "${readiness_cmd[@]}"
 
   if [ "${PROVE_CONFIRMATION_GATE}" -eq 1 ]; then
     confirmation_cmd=(
@@ -221,6 +246,12 @@ if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
       -e "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
       -e oracle_patch_standbyfirst_execute=true
     )
+    if [ -n "${STANDBYFIRST_EXPECTED_PRIMARY}" ]; then
+      confirmation_cmd+=(-e "oracle_patch_standbyfirst_expected_primary=${STANDBYFIRST_EXPECTED_PRIMARY}")
+    fi
+    if [ -n "${STANDBYFIRST_EXPECTED_STANDBY}" ]; then
+      confirmation_cmd+=(-e "oracle_patch_standbyfirst_expected_standby=${STANDBYFIRST_EXPECTED_STANDBY}")
+    fi
     if [ "${STANDBYFIRST_RESTORE_PRIMARY}" -eq 1 ]; then
       confirmation_cmd+=(-e oracle_patch_standbyfirst_restore_primary=true)
     fi

@@ -72,7 +72,8 @@ future task explicitly changes the desired protection mode.
    with `oracle_patch_apply_component_path=39062931/39034528`, then running the
    confirmed standby-first path directly or through
    `scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST`,
-   which sets `oracle_patch_standbyfirst_execute=true`, uses
+   which sets `oracle_patch_standbyfirst_execute=true`, expects `super` primary
+   and `super_sby` standby by default before role changes, uses
    `oracle_patch_standbyfirst_restore_primary=true` by default for lab proof
    cleanup, and passes
    `oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST`.
@@ -143,6 +144,13 @@ future task explicitly changes the desired protection mode.
   `restore_original_primary=false`, retained `primary=super`,
   `standby=super_sby`, and `protection=MaxAvailability`, and refused at the
   confirmation gate before install, patch, switchover, datapatch, or restore.
+- Live expected-role standby-first preflight proof: with expected
+  `primary=super` and `standby=super_sby`, readiness passed and the final
+  execute-shaped command still refused without confirmation; with expected
+  `primary=not_super`, readiness failed at the expected-primary guard before
+  install, patch, switchover, or datapatch.
+- Full KVM-backed pytest after adding standby-first expected-role guards:
+  `179 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:
