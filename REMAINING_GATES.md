@@ -56,7 +56,11 @@ env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
 
 Only after the media scan reports an eligible zip or DB RU component and the
 readiness path still validates Maximum Availability and `READ ONLY WITH APPLY`,
-run the confirmed apply. For a whole eligible zip:
+run the confirmed apply. The readiness path prints a standby-first execution
+plan showing the current primary, current standby, selected media/component,
+target homes, and restore-primary setting before any confirmed apply is run.
+
+For a whole eligible zip:
 
 ```bash
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \

@@ -298,6 +298,12 @@ The supported lab path is now KVM/libvirt:
   `changed=0`; the restore phase remained gated because execution was false.
 - Full KVM-backed pytest after adding restore-primary cleanup on 2026-07-11:
   `172 passed, 9 skipped`.
+- Live standby-first readiness after adding the execution-plan report on
+  2026-07-11: selected component `39062931/39034528` reported
+  `primary=super`, `standby=super_sby`, `MaxAvailability`, per-host target
+  homes, and `changed=0`.
+- Full KVM-backed pytest after adding the standby-first execution-plan report on
+  2026-07-11: `172 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 

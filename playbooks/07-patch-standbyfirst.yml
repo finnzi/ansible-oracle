@@ -176,6 +176,29 @@
         - _patch_sf_current_primary | length == 0 or _patch_sf_current_standby | length == 0
       run_once: true
 
+    - name: Report standby-first execution plan  # noqa: run-once[task]
+      ansible.builtin.debug:
+        msg:
+          patch_zip: "{{ oracle_patch_zip | default(oracle_stage_dir ~ '/' ~ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip'))) }}"
+          component_path: "{{ oracle_patch_apply_component_path | default('') | default('whole zip', true) }}"
+          current_primary: "{{ _patch_sf_current_primary }}"
+          current_standby: "{{ _patch_sf_current_standby }}"
+          protection: "{{ _patch_sf_protection_mode }}"
+          execute: "{{ oracle_patch_standbyfirst_execute | default(false) | bool }}"
+          restore_original_primary: "{{ oracle_patch_standbyfirst_restore_primary | default(false) | bool }}"
+          target_homes: >-
+            {%- set out = [] -%}
+            {%- for host in groups.oracle_db_hosts | default([]) -%}
+              {%- set _ = out.append({
+                'host': host,
+                'db_unique_name': hostvars[host]._patch_sf_local_unique_name | default(''),
+                'current_home': hostvars[host]._patch_sf_home_path | default('') | trim,
+                'patch_home': hostvars[host]._patch_sf_patch_home_path | default('') | trim
+              }) -%}
+            {%- endfor -%}
+            {{ out }}
+      run_once: true
+
     - name: Add host to current standby patch group  # noqa: run-once[task]
       ansible.builtin.add_host:
         name: "{{ item }}"

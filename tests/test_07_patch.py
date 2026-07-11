@@ -278,6 +278,12 @@ def test_patch_role_db_apply_contract():
     assert standbyfirst_confirm_gate < standbyfirst_playbook.index(
         "Discover current Data Guard roles for standby-first patching"
     )
+    assert standbyfirst_playbook.index(
+        "Fail when broker roles could not be resolved"
+    ) < standbyfirst_playbook.index("Report standby-first execution plan")
+    assert standbyfirst_playbook.index(
+        "Report standby-first execution plan"
+    ) < standbyfirst_playbook.index("Add host to current standby patch group")
     for destructive_task in [
         "Discover current Data Guard roles for standby-first patching",
         "Install current Data Guard standby DB target homes",
@@ -307,6 +313,9 @@ def test_patch_role_db_apply_contract():
     assert "Read Data Guard broker roles and protection mode" in standbyfirst_playbook
     assert "Publish standby-first broker facts to static primary hosts" in standbyfirst_playbook
     assert "Fail when broker is not in Maximum Availability" in standbyfirst_playbook
+    assert "Report standby-first execution plan" in standbyfirst_playbook
+    assert "target_homes" in standbyfirst_playbook
+    assert "restore_original_primary" in standbyfirst_playbook
     assert "patch_current_standby" in standbyfirst_playbook
     assert "patch_current_primary" in standbyfirst_playbook
     assert "Install current Data Guard standby DB target homes" in standbyfirst_playbook
@@ -834,6 +843,9 @@ def test_standbyfirst_readiness_only_validates_dataguard_without_execution():
         "Standby-first readiness passed for primary=super, standby=super_sby"
         in r.stdout
     )
+    assert "Report standby-first execution plan" in r.stdout
+    assert "restore_original_primary" in r.stdout
+    assert "target_homes" in r.stdout
     assert "protection=MaxAvailability" in r.stdout
     assert "No DB homes were installed or patched" in r.stdout
     assert "no broker switchover was run" in r.stdout

@@ -98,6 +98,14 @@ future task explicitly changes the desired protection mode.
   `oracle_patch_standbyfirst_execute=false`.
 - Full KVM-backed pytest after adding restore-primary cleanup:
   `172 passed, 9 skipped`.
+- Live standby-first readiness after adding the execution-plan report:
+  `playbooks/07-patch-standbyfirst.yml -e
+  oracle_patch_apply_component_path=39062931/39034528` reported
+  `current_primary=super`, `current_standby=super_sby`, `protection=MaxAvailability`,
+  selected component `39062931/39034528`, and per-host target homes with
+  `changed=0`.
+- Full KVM-backed pytest after adding the standby-first execution-plan report:
+  `172 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:
