@@ -82,7 +82,8 @@ def test_remaining_gates_safe_check_script_dry_run():
     assert "playbooks/07-patch-standbyfirst-media.yml" in result.stdout
     assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
     assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
-    assert "oracle_patch_standbyfirst_expected_primary=super" not in result.stdout
+    assert "oracle_patch_standbyfirst_expected_primary=super" in result.stdout
+    assert "oracle_patch_standbyfirst_expected_standby=super_sby" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
     assert "playbooks/08-failover-reinstate.yml" in result.stdout
     assert "oracle_patch_standbyfirst_media_require_eligible=true" not in result.stdout
@@ -104,6 +105,22 @@ def test_remaining_gates_safe_check_script_can_require_eligible_media():
     assert "oracle_patch_standbyfirst_media_require_eligible=true" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
     assert "oracle_failover_reinstate_execute=true" not in result.stdout
+
+
+def test_remaining_gates_safe_check_script_can_disable_expected_roles():
+    script = REPO_ROOT / "scripts/check-remaining-gates.sh"
+    result = subprocess.run(
+        [str(script), "--dry-run", "--no-standbyfirst-expected-roles"],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "oracle_patch_standbyfirst_expected_primary=super" not in result.stdout
+    assert "oracle_patch_standbyfirst_expected_standby=super_sby" not in result.stdout
 
 
 def test_remaining_gates_safe_check_script_can_prove_confirmation_gate():

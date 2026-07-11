@@ -342,6 +342,13 @@ The supported lab path is now KVM/libvirt:
   install, patch, switchover, or datapatch.
 - Full KVM-backed pytest after adding standby-first expected-role guards on
   2026-07-11: `179 passed, 9 skipped`.
+- The aggregate safe remaining-gates wrapper now enforces the intended
+  `super` primary and `super_sby` standby start state by default; operators can
+  opt out only with `--no-standbyfirst-expected-roles`.
+- Live safe remaining-gates wrapper check after defaulting expected roles on
+  2026-07-11: media scan, selected-component readiness, missing-confirmation
+  refusal, and FSFO readiness all passed with default expected `super` primary
+  and `super_sby` standby; no destructive confirmation variables were passed.
 
 ## Not Yet Proven End To End
 

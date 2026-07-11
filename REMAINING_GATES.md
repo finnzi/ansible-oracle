@@ -13,8 +13,9 @@ scripts/check-remaining-gates.sh
 
 That command runs the read-only standby-first media scan, the selected-component
 standby-first readiness path with execution-plan output, and the proven
-non-destructive FSFO readiness/libvirt regression check. It does not pass any
-destructive execution confirmation variables.
+non-destructive FSFO readiness/libvirt regression check. It also requires the
+starting broker roles to be `super` primary and `super_sby` standby by default.
+It does not pass any destructive execution confirmation variables.
 
 To also prove the final standby-first command shape refuses without the
 confirmation token, run:

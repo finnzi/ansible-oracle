@@ -26,8 +26,8 @@ STANDBYFIRST_RESTORE_PRIMARY=1
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
 STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
-STANDBYFIRST_EXPECTED_PRIMARY="${STANDBYFIRST_EXPECTED_PRIMARY:-}"
-STANDBYFIRST_EXPECTED_STANDBY="${STANDBYFIRST_EXPECTED_STANDBY:-}"
+STANDBYFIRST_EXPECTED_PRIMARY="${STANDBYFIRST_EXPECTED_PRIMARY:-super}"
+STANDBYFIRST_EXPECTED_STANDBY="${STANDBYFIRST_EXPECTED_STANDBY:-super_sby}"
 
 usage() {
   cat <<'EOF'
@@ -51,6 +51,8 @@ Options:
                              Require this current primary during readiness.
   --standbyfirst-expected-standby NAME
                              Require this current standby during readiness.
+  --no-standbyfirst-expected-roles
+                             Do not enforce expected primary/standby roles.
   --prove-confirmation-gate  Prove execute=true still refuses without the confirmation token.
   --no-standbyfirst-restore-primary
                              Omit restore-primary from the confirmation-gate proof.
@@ -101,6 +103,10 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo "error: --standbyfirst-expected-standby requires a name" >&2; exit 1; }
       STANDBYFIRST_EXPECTED_STANDBY="$2"
       shift
+      ;;
+    --no-standbyfirst-expected-roles)
+      STANDBYFIRST_EXPECTED_PRIMARY=""
+      STANDBYFIRST_EXPECTED_STANDBY=""
       ;;
     --prove-confirmation-gate)
       PROVE_CONFIRMATION_GATE=1
