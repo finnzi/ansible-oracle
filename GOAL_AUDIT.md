@@ -70,6 +70,9 @@ certification/support for OL10 is an external product-support boundary.
 
 ## Latest Verification
 
+- Final full KVM-backed pytest through `scripts/run-tests.sh` after aligning the
+  live post-standby-first inventory and FSFO-safe Restart tests:
+  `180 passed, 10 skipped`.
 - Confirmed destructive standby-first DB RU component apply on 2026-07-11:
   `scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST
   --expected-primary super_sby --expected-standby super --no-restore-primary`

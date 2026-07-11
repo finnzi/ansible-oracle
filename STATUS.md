@@ -265,6 +265,9 @@ The supported lab path is now KVM/libvirt:
   inventory, current-home dual-home validation, and embedded pytest
   (`118 passed, 7 skipped`; the seventh skip is the separately verified,
   opt-in standby OHASD restart test).
+- Final full KVM-backed pytest through `scripts/run-tests.sh` after aligning the
+  live post-standby-first inventory and FSFO-safe Restart tests on 2026-07-11:
+  `180 passed, 10 skipped`.
 - Full pytest verification after the live standalone dual-home switchback proof
   on 2026-07-10: `130 passed, 7 skipped`.
 - Full pytest verification after the standby-first readiness-first execution
