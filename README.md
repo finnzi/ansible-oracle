@@ -115,8 +115,8 @@ Implemented:
 
 See `GOAL_AUDIT.md` for the requirement-by-requirement completion audit and
 `REMAINING_GATES.md` for the exact commands behind the remaining explicit
-action. To run the safe read-only checks for that gate and the proven FSFO
-readiness regression, use:
+action. To run the safe media scan, selected-component standby-first readiness
+check, and proven FSFO readiness regression, use:
 
 ```bash
 scripts/check-remaining-gates.sh

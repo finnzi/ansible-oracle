@@ -60,8 +60,8 @@ def test_remaining_gates_safe_check_script_dry_run():
 
     assert script.is_file()
     assert "playbooks/07-patch-standbyfirst-media.yml" in text
+    assert "playbooks/07-patch-standbyfirst.yml" in text
     assert "playbooks/08-failover-reinstate.yml" in text
-    assert "oracle_patch_standbyfirst_execute=true" not in text
     assert "oracle_failover_reinstate_execute=true" not in text
     assert "PATCH_STANDBY_FIRST" not in text
     assert "DESTROY_PRIMARY_AND_REINSTATE" not in text
@@ -77,9 +77,11 @@ def test_remaining_gates_safe_check_script_dry_run():
 
     assert result.returncode == 0, result.stderr
     assert "playbooks/07-patch-standbyfirst-media.yml" in result.stdout
+    assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
+    assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
+    assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
     assert "playbooks/08-failover-reinstate.yml" in result.stdout
     assert "oracle_patch_standbyfirst_media_require_eligible=true" not in result.stdout
-    assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
     assert "oracle_failover_reinstate_execute=true" not in result.stdout
 
 
@@ -98,3 +100,23 @@ def test_remaining_gates_safe_check_script_can_require_eligible_media():
     assert "oracle_patch_standbyfirst_media_require_eligible=true" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
     assert "oracle_failover_reinstate_execute=true" not in result.stdout
+
+
+def test_remaining_gates_safe_check_script_can_prove_confirmation_gate():
+    script = REPO_ROOT / "scripts/check-remaining-gates.sh"
+    result = subprocess.run(
+        [str(script), "--dry-run", "--prove-confirmation-gate"],
+        cwd=REPO_ROOT,
+        env=os.environ.copy(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "Standby-first missing-confirmation refusal" in result.stdout
+    assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
+    assert "oracle_patch_standbyfirst_execute=true" in result.stdout
+    assert "oracle_patch_standbyfirst_restore_primary=true" in result.stdout
+    assert "PATCH_STANDBY_FIRST" not in result.stdout
+    assert "DESTROY_PRIMARY_AND_REINSTATE" not in result.stdout

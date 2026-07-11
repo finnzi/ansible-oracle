@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # scripts/check-remaining-gates.sh
 #
-# Run the non-destructive checks for the remaining eligible-media gate and the
-# proven FSFO readiness regression. This script never passes destructive
+# Run the non-destructive checks for the remaining standby-first apply gate and
+# the proven FSFO readiness regression. This script never passes destructive
 # execution confirmation variables.
 
 set -euo pipefail
@@ -18,8 +18,13 @@ ANSIBLE_PLAYBOOK="${ANSIBLE_PLAYBOOK:-}"
 
 DRY_RUN=0
 RUN_MEDIA=1
+RUN_STANDBYFIRST_READINESS=1
 RUN_FSFO=1
 REQUIRE_ELIGIBLE_MEDIA=0
+PROVE_CONFIRMATION_GATE=0
+STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
+STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
+STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
 
 usage() {
   cat <<'EOF'
@@ -27,15 +32,23 @@ Usage: scripts/check-remaining-gates.sh [options]
 
 Run only safe, non-destructive checks:
   1. Standby-first media scan for the remaining eligible-media gate.
-  2. FSFO/readiness and primary-VM libvirt reachability regression.
+  2. Standby-first selected-component readiness and execution-plan report.
+  3. FSFO/readiness and primary-VM libvirt reachability regression.
 
 Options:
-  --dry-run                 Print commands without running them.
-  --inventory PATH          Inventory path (default: inventory/hosts.yml).
-  --require-eligible-media  Make the media scan fail unless an eligible zip exists.
-  --skip-media              Do not run the standby-first media scan.
-  --skip-fsfo               Do not run the FSFO readiness check.
-  -h, --help                Show this help.
+  --dry-run                  Print commands without running them.
+  --inventory PATH           Inventory path (default: inventory/hosts.yml).
+  --require-eligible-media   Make the media scan fail unless eligible media exists.
+  --standbyfirst-zip PATH    Patch zip for selected-component readiness.
+  --standbyfirst-component PATH
+                             Relative eligible DB RU component path in the zip.
+  --standbyfirst-dual-home-suffix SUFFIX
+                             Target home suffix for the optional confirmation-gate proof.
+  --prove-confirmation-gate  Prove execute=true still refuses without the confirmation token.
+  --skip-media               Do not run the standby-first media scan.
+  --skip-standbyfirst        Do not run selected-component standby-first checks.
+  --skip-fsfo                Do not run the FSFO readiness check.
+  -h, --help                 Show this help.
 
 This script intentionally does not set any destructive execution confirmation
 variables. Use REMAINING_GATES.md for the final confirmed commands.
@@ -55,8 +68,29 @@ while [ "$#" -gt 0 ]; do
     --require-eligible-media)
       REQUIRE_ELIGIBLE_MEDIA=1
       ;;
+    --standbyfirst-zip)
+      [ "$#" -ge 2 ] || { echo "error: --standbyfirst-zip requires a path" >&2; exit 1; }
+      STANDBYFIRST_ZIP="$2"
+      shift
+      ;;
+    --standbyfirst-component)
+      [ "$#" -ge 2 ] || { echo "error: --standbyfirst-component requires a path" >&2; exit 1; }
+      STANDBYFIRST_COMPONENT_PATH="$2"
+      shift
+      ;;
+    --standbyfirst-dual-home-suffix)
+      [ "$#" -ge 2 ] || { echo "error: --standbyfirst-dual-home-suffix requires a suffix" >&2; exit 1; }
+      STANDBYFIRST_DUAL_HOME_SUFFIX="$2"
+      shift
+      ;;
+    --prove-confirmation-gate)
+      PROVE_CONFIRMATION_GATE=1
+      ;;
     --skip-media)
       RUN_MEDIA=0
+      ;;
+    --skip-standbyfirst)
+      RUN_STANDBYFIRST_READINESS=0
       ;;
     --skip-fsfo)
       RUN_FSFO=0
@@ -74,8 +108,13 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-if [ "${RUN_MEDIA}" -eq 0 ] && [ "${RUN_FSFO}" -eq 0 ]; then
-  echo "error: both checks are disabled" >&2
+if [ "${RUN_MEDIA}" -eq 0 ] && [ "${RUN_STANDBYFIRST_READINESS}" -eq 0 ] && [ "${RUN_FSFO}" -eq 0 ]; then
+  echo "error: all checks are disabled" >&2
+  exit 1
+fi
+
+if [ "${PROVE_CONFIRMATION_GATE}" -eq 1 ] && [ "${RUN_STANDBYFIRST_READINESS}" -eq 0 ]; then
+  echo "error: --prove-confirmation-gate requires standby-first checks; remove --skip-standbyfirst" >&2
   exit 1
 fi
 
@@ -107,6 +146,37 @@ run_command() {
   fi
 }
 
+run_expected_refusal() {
+  local label="$1"
+  shift
+  local output_file
+  local rc
+
+  echo "[remaining-gates] ${label}"
+  if [ "${DRY_RUN}" -eq 1 ]; then
+    print_command "$@"
+    return 0
+  fi
+
+  output_file="$(mktemp)"
+  set +e
+  "$@" >"${output_file}" 2>&1
+  rc=$?
+  set -e
+  cat "${output_file}"
+  if [ "${rc}" -eq 0 ]; then
+    rm -f "${output_file}"
+    echo "error: expected standby-first command to refuse without confirmation" >&2
+    exit 1
+  fi
+  if ! grep -F "Standby-first patch execution installs/patches" "${output_file}" >/dev/null; then
+    rm -f "${output_file}"
+    echo "error: standby-first command failed, but not at the confirmation gate" >&2
+    exit 1
+  fi
+  rm -f "${output_file}"
+}
+
 base_cmd=(
   env
   "ANSIBLE_LOCAL_TEMP=${ANSIBLE_LOCAL_TEMP}"
@@ -126,6 +196,27 @@ if [ "${RUN_MEDIA}" -eq 1 ]; then
     media_cmd+=(-e oracle_patch_standbyfirst_media_require_eligible=true)
   fi
   run_command "Standby-first media scan" "${media_cmd[@]}"
+fi
+
+if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
+  run_command \
+    "Standby-first selected-component readiness" \
+    "${base_cmd[@]}" \
+    playbooks/07-patch-standbyfirst.yml \
+    -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
+    -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}"
+
+  if [ "${PROVE_CONFIRMATION_GATE}" -eq 1 ]; then
+    run_expected_refusal \
+      "Standby-first missing-confirmation refusal" \
+      "${base_cmd[@]}" \
+      playbooks/07-patch-standbyfirst.yml \
+      -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
+      -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}" \
+      -e "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
+      -e oracle_patch_standbyfirst_execute=true \
+      -e oracle_patch_standbyfirst_restore_primary=true
+  fi
 fi
 
 if [ "${RUN_FSFO}" -eq 1 ]; then

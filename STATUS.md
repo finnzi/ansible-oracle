@@ -310,6 +310,13 @@ The supported lab path is now KVM/libvirt:
   install/patch/switchover/datapatch work.
 - Full KVM-backed pytest after adding the final-command missing-confirmation
   safety proof on 2026-07-11: `173 passed, 9 skipped`.
+- Live safe remaining-gates wrapper check after extending
+  `scripts/check-remaining-gates.sh` on 2026-07-11: with
+  `--prove-confirmation-gate`, it ran the media scan, selected-component
+  readiness, final-command missing-confirmation refusal, and FSFO readiness with
+  no destructive confirmation variables.
+- Full KVM-backed pytest after extending the safe remaining-gates wrapper on
+  2026-07-11: `174 passed, 9 skipped`.
 
 ## Not Yet Proven End To End
 

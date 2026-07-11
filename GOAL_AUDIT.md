@@ -115,6 +115,13 @@ future task explicitly changes the desired protection mode.
   restore-primary cleanup.
 - Full KVM-backed pytest after adding the final-command missing-confirmation
   safety proof: `173 passed, 9 skipped`.
+- Live safe remaining-gates wrapper check after extending
+  `scripts/check-remaining-gates.sh`: with `--prove-confirmation-gate`, it ran
+  the standby-first media scan, selected-component readiness, final-command
+  missing-confirmation refusal, and FSFO readiness with no destructive
+  confirmation variables.
+- Full KVM-backed pytest after extending the safe remaining-gates wrapper:
+  `174 passed, 9 skipped`.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:

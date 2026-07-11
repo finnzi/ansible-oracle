@@ -11,9 +11,17 @@ Run the safe aggregate check at any time:
 scripts/check-remaining-gates.sh
 ```
 
-That command runs the read-only standby-first media scan and keeps the proven
-non-destructive FSFO readiness/libvirt regression check available. It does not
-pass any destructive execution confirmation variables.
+That command runs the read-only standby-first media scan, the selected-component
+standby-first readiness path with execution-plan output, and the proven
+non-destructive FSFO readiness/libvirt regression check. It does not pass any
+destructive execution confirmation variables.
+
+To also prove the final standby-first command shape refuses without the
+confirmation token, run:
+
+```bash
+scripts/check-remaining-gates.sh --prove-confirmation-gate
+```
 
 ## 1. Eligible Standby-First Patch Apply
 
