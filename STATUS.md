@@ -376,6 +376,12 @@ The supported lab path is now KVM/libvirt:
   `super_sby` standby, `MaxAvailability`, and standby `READ ONLY WITH APPLY`;
   no install, patch, switchover, datapatch, or restore tasks ran because
   execution groups were not created.
+- Current full safe remaining-gates wrapper proof on 2026-07-11: media scan
+  examined six staged patch zips and still found two eligible DB RU components,
+  selected component readiness reported `super` primary, `super_sby` standby,
+  and `MaxAvailability`, the execute-shaped standby-first command refused at
+  the missing-confirmation gate, and FSFO/libvirt readiness passed without
+  destructive actions.
 
 ## Not Yet Proven End To End
 

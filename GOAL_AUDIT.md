@@ -182,6 +182,12 @@ future task explicitly changes the desired protection mode.
   `current_standby=super_sby`, `protection=MaxAvailability`, and standby
   `READ ONLY WITH APPLY`; no install, patch, switchover, datapatch, or restore
   tasks ran because execution groups were not created.
+- Current full safe remaining-gates wrapper proof: media scan examined six
+  staged patch zips and still found two eligible DB RU components, selected
+  component readiness reported `super` primary, `super_sby` standby, and
+  `MaxAvailability`, the execute-shaped standby-first command refused at the
+  missing-confirmation gate, and FSFO/libvirt readiness passed without
+  destructive actions.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:
