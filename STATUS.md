@@ -371,6 +371,11 @@ The supported lab path is now KVM/libvirt:
   check on 2026-07-11: the helper prints safe preflight, confirmed apply, and
   safe post-apply readiness commands; with `--no-restore-primary`, the
   postcheck expects `super_sby` primary and `super` standby.
+- Live safe standby-first post-apply readiness command proof on 2026-07-11:
+  the exact helper postcheck command completed with `super` primary,
+  `super_sby` standby, `MaxAvailability`, and standby `READ ONLY WITH APPLY`;
+  no install, patch, switchover, datapatch, or restore tasks ran because
+  execution groups were not created.
 
 ## Not Yet Proven End To End
 

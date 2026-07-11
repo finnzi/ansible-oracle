@@ -177,6 +177,11 @@ future task explicitly changes the desired protection mode.
   check: the helper prints safe preflight, confirmed apply, and safe post-apply
   readiness commands; with `--no-restore-primary`, the postcheck expects
   `super_sby` primary and `super` standby.
+- Live safe standby-first post-apply readiness command proof: the exact helper
+  postcheck command completed with `current_primary=super`,
+  `current_standby=super_sby`, `protection=MaxAvailability`, and standby
+  `READ ONLY WITH APPLY`; no install, patch, switchover, datapatch, or restore
+  tasks ran because execution groups were not created.
 - Full KVM-backed pytest after the standby-first staged-media scanner:
   `136 passed, 8 skipped`.
 - Full KVM-backed pytest after the FSFO confirmation-gate proof:
