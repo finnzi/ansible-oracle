@@ -37,10 +37,11 @@ def test_standby_candidate_has_restart_online(standby_exec):
 
 
 def test_standby_candidate_has_database_home(standby_exec):
-    runinstaller = standby_exec("test -x /super/app/oracle/db_home1/runInstaller")
+    oracle_home = _standby_home(standby_exec)
+    runinstaller = standby_exec(f"test -x {oracle_home}/runInstaller")
     assert runinstaller.returncode == 0, runinstaller.stderr
 
-    opatch = standby_exec("/super/app/oracle/db_home1/OPatch/opatch version")
+    opatch = standby_exec(f"{oracle_home}/OPatch/opatch version")
     assert opatch.returncode == 0, opatch.stderr
     assert "OPatch Version" in (opatch.stdout + opatch.stderr)
 

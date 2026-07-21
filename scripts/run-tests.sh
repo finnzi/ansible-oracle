@@ -54,7 +54,9 @@ if [ -z "${PYTEST}" ]; then
 fi
 
 # Connection defaults for the lab (override via env).
-export ORACLE_TEST_HOST="${ORACLE_TEST_HOST:-superdb.domain.is}"
+# Use the initial primary VIP directly so tests do not depend on control-host
+# /etc/hosts write access. Data Guard tests use their broker aliases separately.
+export ORACLE_TEST_HOST="${ORACLE_TEST_HOST:-192.168.87.31}"
 export ORACLE_TEST_PORT="${ORACLE_TEST_PORT:-1521}"
 export ORACLE_TEST_SERVICE="${ORACLE_TEST_SERVICE:-super_svc}"
 export ORACLE_TEST_SID="${ORACLE_TEST_SID:-super}"

@@ -108,6 +108,10 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     service_tasks = (
         REPO_ROOT / "roles/oracle_service_manage/tasks/main.yml"
     ).read_text(encoding="utf-8")
+    service_create_tasks = (
+        REPO_ROOT / "roles/oracle_service_manage/tasks/create-service.yml"
+    ).read_text(encoding="utf-8")
+    site_playbook = (REPO_ROOT / "playbooks/site.yml").read_text(encoding="utf-8")
 
     assert "192.168.87.31" in all_vars
     assert "superdc1.domain.is superdc1" in all_vars
@@ -173,6 +177,11 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_prepare_standby: true" in dataguard_playbook
     assert "oracle_dataguard_duplicate_standby: true" in dataguard_playbook
     assert "oracle_dataguard_configure_broker: true" in dataguard_playbook
+    assert "Report deferred standby service reconciliation" in service_create_tasks
+    assert "'ORA-01034' in (_svc_database_state.stdout | default(''))" in service_create_tasks
+    assert "when: _svc_database_available | bool" in service_create_tasks
+    assert site_playbook.count("04-register-restart.yml") == 2
+    assert "Reconcile Restart services after standby creation" in site_playbook
     assert "dependencies: []" in dataguard_meta
     assert "standby_file_management" in dataguard_prepare
     assert "dg_broker_start" in dataguard_prepare
@@ -198,11 +207,17 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "PHYSICAL STANDBY" in dataguard_duplicate_standby
     assert "Read standby spfile in use" in dataguard_duplicate_standby
     assert "Configure standby Data Guard initialization parameters" in dataguard_duplicate_standby
+    assert dataguard_duplicate_standby.index(
+        "Restart standby from spfile for broker management"
+    ) < dataguard_duplicate_standby.index(
+        "Configure standby Data Guard initialization parameters"
+    )
     assert "ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH" in dataguard_duplicate_standby
     assert "Remove conflicting standalone Restart registration on standby" in dataguard_duplicate_standby
     assert "Start registered physical standby before role probe" in dataguard_duplicate_standby
     assert "DATABASE_ALREADY_RUNNING_OUTSIDE_RESTART" in dataguard_duplicate_standby
     assert "Restart standby from spfile for broker management" in dataguard_duplicate_standby
+    assert "replace('ORA-01109', '')" in dataguard_duplicate_standby
     assert "'NOT_REGISTERED' in (_dg_standby_registered_status_before.stdout | default(''))" in dataguard_duplicate_standby
     assert "oracle_dataguard_configure_broker | default(false) | bool" in dataguard_duplicate_standby
     assert "STARTUP MOUNT" in dataguard_duplicate_standby
@@ -218,6 +233,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_observer_user:" in dataguard_defaults
     assert "oracle_dataguard_observer_password:" in dataguard_defaults
     assert "Ensure observer SYSDG account exists on the primary" in dataguard_configure_broker
+    assert "Synchronize primary password file to the standby" in dataguard_configure_broker
+    assert "Add missing standby to existing Data Guard broker configuration" in dataguard_configure_broker
+    assert "_dg_standby_unique_name not in (_dg_broker_show_before.stdout | default(''))" in dataguard_configure_broker
     assert "GRANT SYSDG TO" in dataguard_configure_broker
     assert "Validate observer SYSDG account can inspect broker" in dataguard_configure_broker
     assert "CREATE CONFIGURATION" in dataguard_configure_broker
@@ -226,6 +244,7 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "EDIT CONFIGURATION SET PROTECTION MODE AS MAXAVAILABILITY" in dataguard_configure_broker
     assert "Stop standby apply through broker before opening read-only" in dataguard_configure_broker
     assert "READ ONLY WITH APPLY" in dataguard_configure_broker
+    assert "Configure standby Restart start policy for read-only apply" in dataguard_configure_broker
     assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "LogXptMode='SYNC'" in dataguard_configure_broker
@@ -353,8 +372,8 @@ def test_dataguard_listener_identities(lab_exec, standby_exec):
 
 def test_standby_auxiliary_prerequisites(standby_exec):
     oracle_home = _oracle_home(standby_exec, "super_sby")
-    pfile = standby_exec("test -f /super/app/oracle/db_home1/dbs/initsuper.ora")
-    pwfile = standby_exec("test -f /super/app/oracle/db_home1/dbs/orapwsuper")
+    pfile = standby_exec(f"test -f {oracle_home}/dbs/initsuper.ora")
+    pwfile = standby_exec(f"test -f {oracle_home}/dbs/orapwsuper")
     oratab = standby_exec(
         "awk -F'#' '/^super:/ {gsub(/[[:space:]]+$/, \"\", $1); print $1}' /etc/oratab | "
         "grep -E '^super:/super/app/oracle/db_home[12]:N$'"
@@ -363,7 +382,7 @@ def test_standby_auxiliary_prerequisites(standby_exec):
     assert pwfile.returncode == 0
     assert oratab.returncode == 0, oratab.stdout + oratab.stderr
 
-    pfile_text = standby_exec("cat /super/app/oracle/db_home1/dbs/initsuper.ora")
+    pfile_text = standby_exec(f"cat {oracle_home}/dbs/initsuper.ora")
     assert "db_unique_name='super_sby'" in pfile_text.stdout
     assert "fal_server='super_dgb'" in pfile_text.stdout
     assert (

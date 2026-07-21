@@ -10,7 +10,8 @@
   vars:
     # pytest is run from the repo root so tests/conftest.py resolves imports.
     repo_root: "{{ playbook_dir | dirname }}"
-    oracle_test_timeout_seconds: 1800
+    # A clean run also converges the optional duper/fluff smoke databases.
+    oracle_test_timeout_seconds: 7200
     oracle_test_pytest_args: "tests/ --tb=short -ra"
     oracle_test_environment:
       ANSIBLE_LOCAL_TEMP: /tmp/ansible-local

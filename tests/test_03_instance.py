@@ -268,12 +268,14 @@ def test_configured_memory_parameters_match_inventory(db_connection):
         """
     )
     rows = dict(cur.fetchall())
+    cur.execute("SELECT MAX(granule_size) FROM v$sga_dynamic_components")
+    granule_size = int(cur.fetchone()[0])
     cur.close()
 
-    assert rows == {
-        "sga_target": str(2 * 1024 * 1024 * 1024),
-        "pga_aggregate_target": str(1 * 1024 * 1024 * 1024),
-    }
+    expected_sga = 2 * 1024 * 1024 * 1024
+    actual_sga = int(rows["sga_target"])
+    assert expected_sga <= actual_sga < expected_sga + granule_size
+    assert rows["pga_aggregate_target"] == str(1 * 1024 * 1024 * 1024)
 
 
 def test_dedicated_data_path_used(lab_exec):

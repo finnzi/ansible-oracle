@@ -122,13 +122,18 @@ Preflight requires the lab media files named in `inventory/group_vars/all.yml`:
 For OS-only lab work without Oracle media, set `LAB_ALLOW_MISSING_MEDIA=1`.
 
 With system libvirt, the QEMU process usually runs as an unprivileged service
-user. If your home directory is private (`0700`), QEMU may not be able to
-traverse `~/sources/oracle`. In that case, put the media somewhere libvirt can
-read it and point `SOURCES_DIR` there, for example:
+user. Every parent directory must be traversable by that user. Thus, making
+`~/sources/oracle` itself world-readable does not help when your home directory
+is private (`0700`). Put the media somewhere libvirt can traverse and read.
+`/var/lib/libvirt/ansible-oracle-sources` is the recommended permanent location;
+a top-level `/sources` also works if its full path is readable, but is less
+conventional. For example:
 
 ```bash
 ./lab/scripts/prepare-host-fedora.sh --skip-package-install
-SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources ./lab/scripts/lab-up.sh
+export SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources
+./lab/scripts/preflight.sh
+./lab/scripts/lab-up.sh
 ```
 
 If your libvirt setup grants QEMU access another way, set
@@ -152,6 +157,10 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 # Bring up or start the lab.
 ./lab/scripts/lab-up.sh
 
+# Run the full install, including Oracle Restart/Grid Infrastructure.
+source .venv/bin/activate
+ansible-playbook playbooks/site.yml -e oracle_gi_install_enabled=true
+
 # Stop the VMs but keep disks.
 ./lab/scripts/lab-down.sh
 
@@ -169,6 +178,10 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 `inventory/hosts.example.yml` and writes a marked `/etc/hosts` block if direct
 write access or passwordless sudo is available. If not, it prints the block to
 add manually.
+
+On first boot, `lab-up.sh` waits for both SSH and cloud-init. This is expected
+to take longer while the guest installs the packages required for the shared
+read-only `/u01/stage` mount.
 
 `lab-up.sh` runs the same preflight checks first. Use `preflight.sh` directly
 when preparing a host or debugging permissions.

@@ -11,6 +11,11 @@ set -euo pipefail
 export ORACLE_HOME="$OBSERVER_CLIENT_HOME"
 export TNS_ADMIN
 
-exec "$ORACLE_HOME/bin/dgmgrl" -silent "$DGMGRL_CONNECT" <<DGMGRL
+"$ORACLE_HOME/bin/dgmgrl" -silent "$DGMGRL_CONNECT" <<DGMGRL
 START OBSERVER ${OBSERVER_NAME} FILE IS ${OBSERVER_FILE} LOGFILE IS ${OBSERVER_LOGFILE};
 DGMGRL
+
+# DGMGRL exits zero for some fatal observer conditions (including an
+# authentication failure at the target). Treat every unexpected return from
+# this foreground process as a failure so systemd's Restart=on-failure applies.
+exit 1

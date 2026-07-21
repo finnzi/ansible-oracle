@@ -48,8 +48,20 @@
 - name: Configure Data Guard in Maximum Availability mode
   ansible.builtin.import_playbook: 05-dataguard.yml
 
+- name: Reconcile Restart services after standby creation
+  ansible.builtin.import_playbook: 04-register-restart.yml
+  vars:
+    oracle_network_dataguard_enabled: true
+    oracle_lab_host_map_mode: dataguard
+    oracle_restart_apply_instance_overrides_require_dataguard: false
+    oracle_db_manage_apply_instance_overrides_require_dataguard: false
+    oracle_service_apply_instance_overrides_require_dataguard: false
+
 - name: Configure FSFO observer
   ansible.builtin.import_playbook: 06-observer.yml
+
+- name: Configure role-based client availability
+  ansible.builtin.import_playbook: 08-client-availability.yml
 
 - name: Converge Oracle DB home patch inventory
   ansible.builtin.import_playbook: 07-patch.yml

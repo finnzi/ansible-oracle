@@ -29,7 +29,7 @@
     argv: ["{{ oracle_gi_home }}/bin/srvctl", start, ons]
   become: true
   become_user: "{{ oracle_user }}"
-  when: "'running' not in (_fan_ons_status.stdout | default('') | lower)"
+  when: "'ONS daemon is running' not in (_fan_ons_status.stdout | default(''))"
 
 - name: Probe firewalld for remote ONS
   ansible.builtin.command: firewall-cmd --state
@@ -61,7 +61,7 @@
 - name: Validate Oracle Notification Services remote listener
   ansible.builtin.shell: |
     set -o pipefail
-    {{ oracle_gi_home }}/bin/srvctl status ons | grep -F 'ONS is running'
+    {{ oracle_gi_home }}/bin/srvctl status ons | grep -F 'ONS daemon is running'
     ss -lnt | grep -E '[:.]{{ oracle_fan_remote_port }}[[:space:]]'
   args: { executable: /bin/bash }
   changed_when: false

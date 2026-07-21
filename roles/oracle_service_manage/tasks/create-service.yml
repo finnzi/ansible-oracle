@@ -38,9 +38,30 @@
   register: _svc_database_state
   changed_when: false
   failed_when: >-
-    _svc_database_state.rc != 0 or
-    'ORA-' in (_svc_database_state.stdout | default('')) or
-    'SP2-' in (_svc_database_state.stdout | default(''))
+    (
+      _svc_database_state.rc != 0 or
+      'ORA-' in (_svc_database_state.stdout | default('')) or
+      'SP2-' in (_svc_database_state.stdout | default(''))
+    ) and not (
+      inst.dg_role | default('') == 'standby' and
+      'ORA-01034' in (_svc_database_state.stdout | default(''))
+    )
+
+- name: Record whether the local database is available for service reconciliation
+  ansible.builtin.set_fact:
+    _svc_database_available: >-
+      {{
+        _svc_database_state.rc == 0 and
+        'ORA-' not in (_svc_database_state.stdout | default('')) and
+        'SP2-' not in (_svc_database_state.stdout | default(''))
+      }}
+
+- name: Report deferred standby service reconciliation
+  ansible.builtin.debug:
+    msg: >-
+      {{ _svc_restart_db }} is not available yet; deferring its Restart services
+      until the post-Data Guard reconciliation pass.
+  when: not (_svc_database_available | bool)
 
 - name: Reconcile per-instance services
   ansible.builtin.include_tasks: reconcile-service.yml
@@ -48,3 +69,4 @@
   loop_control:
     loop_var: svc
     label: "{{ svc.name }} ({{ svc.role | default('PRIMARY') }})"
+  when: _svc_database_available | bool

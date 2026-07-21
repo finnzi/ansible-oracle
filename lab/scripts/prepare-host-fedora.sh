@@ -139,7 +139,8 @@ Host preparation complete.
 If group membership changed, log out and back in before starting the lab.
 Then run:
 
-  SOURCES_DIR=${MEDIA_DEST} ./lab/scripts/preflight.sh
-  SOURCES_DIR=${MEDIA_DEST} ./lab/scripts/lab-up.sh
+  export SOURCES_DIR=${MEDIA_DEST}
+  ./lab/scripts/preflight.sh
+  ./lab/scripts/lab-up.sh
 
 EOF

@@ -51,6 +51,7 @@ def test_client_availability_contract_is_wired():
     assert "-replay_init_time" in service
     assert "{{ observer_client_tac_alias }}" in client_tns
     assert "srvctl\", enable, ons" in fan_role
+    assert "'ONS daemon is running' not in" in fan_role
     assert "oracle_fan_remote_port: 6200" in fan_defaults
     assert "--confirm TAC_FCF_SWITCHOVER" in tac_helper
     assert "POC_RESULT|fan_down=true|fcf=true" in tac_helper

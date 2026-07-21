@@ -162,6 +162,18 @@ wait_for_ssh() {
   done
 }
 
+# SSH becomes available before cloud-init finishes installing guest packages and
+# mounting the Oracle media.  Do not hand the VM to Ansible until first boot is
+# actually complete.
+wait_for_cloud_init() {
+  local host_ip="$1"
+  if ! timeout "${LAB_CLOUD_INIT_TIMEOUT:-30m}" \
+    ssh $(ssh_opts) "root@${host_ip}" cloud-init status --wait; then
+    warn "cloud-init did not complete successfully on ${host_ip}"
+    return 1
+  fi
+}
+
 path_world_accessible_for_9p() {
   local real="$1" cur="" part mode other required
   real="$(readlink -f "${real}")" || return 1
@@ -234,6 +246,10 @@ write_files:
     permissions: '0644'
     content: |
       PermitRootLogin prohibit-password
+# QEMU guest agent: reliable virsh shutdown/reboot and guest introspection.
+# Requires the org.qemu.guest_agent.0 channel in write_domain_xml.
+packages:
+  - qemu-guest-agent
 runcmd:
   - [ sh, -lc, "growpart /dev/vda 4 || true" ]
   - [ sh, -lc, "pvresize /dev/vda4 || true" ]
@@ -246,6 +262,7 @@ runcmd:
   - [ sh, -lc, "modprobe 9pnet_virtio || dnf -y install \"kernel-uek-modules-\$(uname -r)\" || true" ]
   - [ sh, -lc, "modprobe 9pnet_virtio || true" ]
   - [ sh, -lc, "mount /u01/stage || true" ]
+  - [ systemctl, enable, --now, qemu-guest-agent ]
   - [ systemctl, enable, --now, sshd ]
   - [ systemctl, restart, sshd ]
 EOF
@@ -333,6 +350,12 @@ EOF
     <console type='pty'>
       <target type='serial' port='0'/>
     </console>
+    <controller type='virtio-serial' index='0'/>
+    <channel type='unix'>
+      <source mode='bind'/>
+      <target type='virtio' name='org.qemu.guest_agent.0'/>
+      <address type='virtio-serial' controller='0' bus='0' port='1'/>
+    </channel>
     <graphics type='vnc' listen='127.0.0.1' autoport='yes'/>
     <rng model='virtio'>
       <backend model='random'>/dev/urandom</backend>

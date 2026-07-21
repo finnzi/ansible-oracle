@@ -87,18 +87,32 @@
           the KVM lab disk before enabling oracle_gi_install.
       when: (_gi_free_mb.stdout | trim | int) < (oracle_gi_install_min_free_mb | int)
 
-    - name: Verify Grid ASM disk exists for Oracle Restart
+    - name: Verify Grid ASM disks exist for Oracle Restart
       ansible.builtin.stat:
-        path: "{{ oracle_gi_asm_disks.split(',')[0] }}"
-      register: _gi_asm_disk
+        path: "{{ item }}"
+      loop: "{{ oracle_gi_asm_disks.split(',') | map('trim') | list }}"
+      register: _gi_asm_disk_stats
 
-    - name: Fail when Grid ASM disk is missing
+    - name: Fail when a Grid ASM disk is missing
       ansible.builtin.fail:
         msg: >-
           Oracle Restart requires an ASM disk for Grid metadata in this lab.
-          Expected {{ oracle_gi_asm_disks.split(',')[0] }}. Recreate the KVM
+          Expected {{ item.item }}. Recreate the KVM
           lab, or attach the dedicated Grid ASM disk before enabling GI install.
-      when: not _gi_asm_disk.stat.exists
+      loop: "{{ _gi_asm_disk_stats.results }}"
+      when: not item.stat.exists
+
+    # The lab cloud-init image writes a persistent udev rule for /dev/vdb, but
+    # its first trigger can run before oracle/asmadmin exist. Enforce the
+    # installer's device contract here as well; the udev rule preserves it on
+    # subsequent boots.
+    - name: Ensure Grid ASM disks are writable by the Oracle installer
+      ansible.builtin.file:
+        path: "{{ item }}"
+        owner: "{{ oracle_user }}"
+        group: "{{ oracle_asm_group }}"
+        mode: "0660"
+      loop: "{{ oracle_gi_asm_disks.split(',') | map('trim') | list }}"
 
     - name: Check whether an incomplete GI home was unpacked
       ansible.builtin.stat:

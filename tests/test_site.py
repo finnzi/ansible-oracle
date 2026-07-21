@@ -19,15 +19,20 @@ def test_site_imports_safe_end_to_end_flow_in_order():
         "03-create-instance.yml",
         "04-register-restart.yml",
         "05-dataguard.yml",
+        "04-register-restart.yml",
         "06-observer.yml",
+        "08-client-availability.yml",
         "07-patch.yml",
         "07-patch-grid.yml",
         "07-patch-dual-db.yml",
         "99-test.yml",
     ]
-    positions = [
-        site.index(f"import_playbook: {playbook}") for playbook in expected_imports
-    ]
+    positions = []
+    cursor = 0
+    for playbook in expected_imports:
+        position = site.index(f"import_playbook: {playbook}", cursor)
+        positions.append(position)
+        cursor = position + 1
 
     assert positions == sorted(positions)
     assert "Configure Data Guard in Maximum Availability mode" in site
@@ -60,7 +65,7 @@ def test_test_playbook_runs_pytest_with_bounded_lab_environment():
         task for task in play["tasks"] if task["name"] == "Run pytest against the lab"
     )
 
-    assert play["vars"]["oracle_test_timeout_seconds"] == 1800
+    assert play["vars"]["oracle_test_timeout_seconds"] == 7200
     assert play["vars"]["oracle_test_environment"]["ANSIBLE_LOCAL_TEMP"] == "/tmp/ansible-local"
     assert (
         play["vars"]["oracle_test_environment"]["ANSIBLE_SSH_CONTROL_PATH_DIR"]
@@ -72,6 +77,15 @@ def test_test_playbook_runs_pytest_with_bounded_lab_environment():
     assert ".venv/bin/pytest" not in run_task["ansible.builtin.shell"]
     assert run_task["environment"] == "{{ oracle_test_environment }}"
     assert run_task["failed_when"] is False
+
+
+def test_multi_instance_fixture_allows_a_full_two_hour_convergence():
+    fixture = (REPO_ROOT / "tests/test_09_multi_instance.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "timeout=7200" in fixture
+    assert "timeout=3600" not in fixture
 
 
 def test_project_goal_pins_dataguard_maximum_availability():

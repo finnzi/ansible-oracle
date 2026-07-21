@@ -175,22 +175,22 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 ./scripts/bootstrap-venv.sh
 source .venv/bin/activate
 
-# Check host prerequisites before creating any lab state.
-./lab/scripts/preflight.sh
-
 # Optional: render and validate libvirt XML/cloud-init artifacts offline.
 ./lab/scripts/render-config.sh --validate
 
 # Bring up the KVM lab. This creates inventory/hosts.yml and updates /etc/hosts
 # if the current user can write it directly or via passwordless sudo.
+export SOURCES_DIR=/var/lib/libvirt/ansible-oracle-sources
+# Check host prerequisites before creating any lab state.
+./lab/scripts/preflight.sh
 ./lab/scripts/lab-up.sh
 
 # Optional: print or apply Data Guard host aliases plus multi-instance listener
 # aliases for duper/fluff on the control host.
 ./lab/scripts/update-hosts.sh --dg --multi --print
 
-# Run the umbrella playbook.
-ansible-playbook playbooks/site.yml
+# Run the full umbrella playbook, including Oracle Restart/Grid Infrastructure.
+ansible-playbook playbooks/site.yml -e oracle_gi_install_enabled=true
 
 # Run pytest against the lab.
 ./scripts/run-tests.sh
@@ -200,6 +200,11 @@ Oracle installers and patches are expected under `~/sources/oracle` by default
 and are mounted read-only into the VMs at `/u01/stage`. Override with
 `SOURCES_DIR=/path/to/oracle/sources`. For OS-only lab work without Oracle
 media, set `LAB_ALLOW_MISSING_MEDIA=1`.
+
+System QEMU must be able to traverse every parent of `SOURCES_DIR`; a private
+home directory (`0700`) prevents access even if the source directory itself is
+readable. Prefer `/var/lib/libvirt/ansible-oracle-sources` for a permanent
+staging location and export `SOURCES_DIR` before both preflight and `lab-up.sh`.
 
 ## Instance Settings
 
