@@ -8,6 +8,7 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dg_primary_unique_name: "{{ inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
     _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
+    _dg_primary_pwfile: "{{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}"
 
 - name: Read Data Guard broker configuration
   ansible.builtin.shell: |
@@ -54,6 +55,30 @@
     'ORA-' in (_dg_broker_create.stdout | default(''))
   no_log: true
   when: "'ORA-16532' in (_dg_broker_show_before.stdout | default(''))"
+
+- name: Add missing standby to existing Data Guard broker configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    ADD DATABASE '{{ _dg_standby_unique_name }}'
+      AS CONNECT IDENTIFIER IS {{ _dg_standby_unique_name }}_dgb
+      MAINTAINED AS PHYSICAL;
+    ENABLE CONFIGURATION;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_add_standby
+  changed_when: true
+  failed_when: >-
+    _dg_broker_add_standby.rc != 0 or
+    'Error:' in (_dg_broker_add_standby.stdout | default('')) or
+    'ORA-' in (_dg_broker_add_standby.stdout | default(''))
+  no_log: true
+  when:
+    - "'Configuration -' in (_dg_broker_show_before.stdout | default(''))"
+    - _dg_standby_unique_name not in (_dg_broker_show_before.stdout | default(''))
 
 - name: Wait for standby broker member to be available
   ansible.builtin.shell: |
@@ -153,6 +178,26 @@
     'ORA-' in (_dg_observer_user.stdout | default('')) or
     'SP2-' in (_dg_observer_user.stdout | default('')) or
     'PLS-' in (_dg_observer_user.stdout | default(''))
+  no_log: true
+
+# A SYSDG grant updates the Oracle password file. Data Guard redo replicates
+# the database user but not that file, so an observer can authenticate to the
+# primary yet fail when it checks the standby unless both copies are aligned.
+- name: Read primary password file after observer account update
+  ansible.builtin.slurp:
+    src: "{{ _dg_primary_pwfile }}"
+  register: _dg_primary_pwfile_contents
+  no_log: true
+
+- name: Synchronize primary password file to the standby
+  ansible.builtin.copy:
+    dest: "{{ _dg_primary_pwfile }}"
+    content: "{{ _dg_primary_pwfile_contents.content | b64decode }}"
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0640"
+  delegate_to: "{{ groups['standby'] | first }}"
+  register: _dg_standby_pwfile_sync
   no_log: true
 
 - name: Validate observer SYSDG account can inspect broker
@@ -370,6 +415,35 @@
     'ORA-' in (_dg_broker_apply_on.stdout | default(''))
   no_log: true
   when: "'READ ONLY WITH APPLY' not in (_dg_standby_open_mode_before.stdout | default(''))"
+
+- name: Read standby Restart start policy after broker convergence
+  ansible.builtin.command:
+    argv:
+      - "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl"
+      - config
+      - database
+      - -db
+      - "{{ _dg_standby_unique_name }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  delegate_to: "{{ groups['standby'] | first }}"
+  register: _dg_standby_restart_config
+  changed_when: false
+
+- name: Configure standby Restart start policy for read-only apply
+  ansible.builtin.command:
+    argv:
+      - "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl"
+      - modify
+      - database
+      - -db
+      - "{{ _dg_standby_unique_name }}"
+      - -startoption
+      - read only
+  become: true
+  become_user: "{{ oracle_user }}"
+  delegate_to: "{{ groups['standby'] | first }}"
+  when: "'Start options: read only' not in (_dg_standby_restart_config.stdout | default(''))"
 
 - name: Validate Data Guard broker and standby open mode
   ansible.builtin.shell: |

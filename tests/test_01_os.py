@@ -27,6 +27,14 @@ def test_required_groups_exist(lab_exec):
         assert grp in r.stdout, f"group {grp} not found"
 
 
+def test_grid_asm_disk_is_writable_by_oracle(lab_exec):
+    r = lab_exec("stat -c '%U:%G %a' /dev/vdb")
+    assert r.returncode == 0, f"Grid ASM disk missing: {r.stderr}"
+    assert r.stdout.strip() == "oracle:asmadmin 660", (
+        f"Grid ASM disk has invalid installer permissions: {r.stdout}"
+    )
+
+
 @pytest.mark.parametrize("path", [
     "/super",
     "/super/app/oracle",       # ORACLE_BASE

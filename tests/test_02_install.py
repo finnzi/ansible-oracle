@@ -20,7 +20,7 @@ import pytest
 
 pytestmark = pytest.mark.slice
 
-ORACLE_HOME = "/super/app/oracle/db_home1"
+ORACLE_HOME = "/super/app/oracle/db_home2"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -54,6 +54,16 @@ def test_install_role_applies_extracted_database_ru_directory():
     assert "-applyRU {{ _db_ru_apply_dir.stdout | trim | quote }}" in tasks
 
 
+def test_grid_install_role_enforces_asm_disk_permissions():
+    tasks = (
+        REPO_ROOT / "roles/oracle_gi_install/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Ensure Grid ASM disks are writable by the Oracle installer" in tasks
+    assert 'group: "{{ oracle_asm_group }}"' in tasks
+    assert 'mode: "0660"' in tasks
+
+
 def test_central_inventory_pointer_exists(lab_exec):
     r = lab_exec("cat /etc/oraInst.loc")
     # The pointer is written by the install role; it may have been removed by
@@ -78,8 +88,8 @@ def test_opatch_upgraded(lab_exec):
 
 def test_response_file_staged(lab_exec):
     r = lab_exec(
-        "if [ -f /super/app/oracle/.stage_db_home1/db_install.rsp ]; then "
-        "cat /super/app/oracle/.stage_db_home1/db_install.rsp; "
+        "if [ -f /super/app/oracle/.stage_db_home2/db_install.rsp ]; then "
+        "cat /super/app/oracle/.stage_db_home2/db_install.rsp; "
         f"else cat {ORACLE_HOME}/install/response/db_install.rsp; fi"
     )
     assert r.returncode == 0, f"response file missing: {r.stderr}"

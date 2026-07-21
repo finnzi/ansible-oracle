@@ -153,30 +153,6 @@
     'ORA-' in (_dg_standby_role_after.stdout | default('')) or
     'SP2-' in (_dg_standby_role_after.stdout | default(''))
 
-- name: Configure standby Data Guard initialization parameters
-  ansible.builtin.shell: |
-    set -o pipefail
-    export ORACLE_HOME={{ _dg_home_path }}
-    export ORACLE_SID={{ inst.name }}
-    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<SQL
-    ALTER SYSTEM SET standby_file_management='AUTO' SCOPE=BOTH;
-    ALTER SYSTEM SET dg_broker_start=TRUE SCOPE=BOTH;
-    ALTER SYSTEM SET log_archive_config='DG_CONFIG=({{ _dg_primary_unique_name }},{{ _dg_standby_unique_name }})' SCOPE=BOTH;
-    ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH;
-    ALTER SYSTEM SET fal_client='{{ _dg_standby_unique_name }}_dgb' SCOPE=BOTH;
-    ALTER SYSTEM SET local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST={{ inst.listener_vip }})(PORT={{ inst.listener_port | default(1521) }}))' SCOPE=BOTH;
-    EXIT;
-    SQL
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _dg_standby_params
-  changed_when: false
-  failed_when: >-
-    _dg_standby_params.rc != 0 or
-    'ORA-' in (_dg_standby_params.stdout | default('')) or
-    'SP2-' in (_dg_standby_params.stdout | default(''))
-
 - name: Check standby spfile for Restart registration
   ansible.builtin.stat:
     path: "{{ _dg_standby_spfile }}"
@@ -252,12 +228,39 @@
   changed_when: true
   failed_when: >-
     _dg_standby_restart_spfile.rc != 0 or
-    'ORA-' in (_dg_standby_restart_spfile.stdout | default('')) or
+    (
+      (_dg_standby_restart_spfile.stdout | default('')).replace('ORA-01109', '')
+      is search('ORA-')
+    ) or
     'SP2-' in (_dg_standby_restart_spfile.stdout | default(''))
   when:
     - oracle_dataguard_configure_broker | default(false) | bool
     - _dg_standby_spfile not in (_dg_standby_spfile_in_use.stdout | default(''))
     - "'NOT_REGISTERED' in (_dg_standby_registered_status_before.stdout | default(''))"
+
+- name: Configure standby Data Guard initialization parameters
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<SQL
+    ALTER SYSTEM SET standby_file_management='AUTO' SCOPE=BOTH;
+    ALTER SYSTEM SET dg_broker_start=TRUE SCOPE=BOTH;
+    ALTER SYSTEM SET log_archive_config='DG_CONFIG=({{ _dg_primary_unique_name }},{{ _dg_standby_unique_name }})' SCOPE=BOTH;
+    ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH;
+    ALTER SYSTEM SET fal_client='{{ _dg_standby_unique_name }}_dgb' SCOPE=BOTH;
+    ALTER SYSTEM SET local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST={{ inst.listener_vip }})(PORT={{ inst.listener_port | default(1521) }}))' SCOPE=BOTH;
+    EXIT;
+    SQL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_params
+  changed_when: false
+  failed_when: >-
+    _dg_standby_params.rc != 0 or
+    'ORA-' in (_dg_standby_params.stdout | default('')) or
+    'SP2-' in (_dg_standby_params.stdout | default(''))
 
 - name: Check local CSS status before standby Restart registration
   ansible.builtin.shell: |

@@ -162,6 +162,15 @@ def test_default_lab_state_dir_is_libvirt_readable_var_tmp():
     assert result.stdout.strip() == "/var/tmp/ansible-oracle-lab"
 
 
+def test_lab_up_waits_for_cloud_init_after_ssh():
+    script = (REPO_ROOT / "lab/scripts/lab-up.sh").read_text(encoding="utf-8")
+
+    assert script.index('wait_for_ssh "$(vm_ip "${svc}")"') < script.index(
+        'wait_for_cloud_init "$(vm_ip "${svc}")"'
+    )
+    assert "cloud-init complete" in script
+
+
 def test_preflight_state_dir_fails_for_private_home_like_parent(tmp_path: Path):
     private_parent = tmp_path / "private"
     private_parent.mkdir()
@@ -431,12 +440,17 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     assert "99-ansible-oracle-grid-asm.rules" in user_data
     assert "asmadmin" in user_data
     assert 'kernel-uek-modules-$(uname -r)' in user_data
+    assert "qemu-guest-agent" in user_data
+    assert "enable, --now, qemu-guest-agent" in user_data
 
     domain_xml = (state_dir / "vms/superdb1.xml").read_text(encoding="utf-8")
     assert "superdb1-grid.qcow2" in domain_xml
     assert "<target dev='vdb' bus='virtio'/>" in domain_xml
+    assert "org.qemu.guest_agent.0" in domain_xml
+    assert "<controller type='virtio-serial' index='0'/>" in domain_xml
     observer_xml = (state_dir / "vms/observer.xml").read_text(encoding="utf-8")
     assert "observer-grid.qcow2" not in observer_xml
+    assert "org.qemu.guest_agent.0" in observer_xml
 
     iso_listing = subprocess.run(
         ["isoinfo", "-J", "-i", str(state_dir / "seed/superdb1.iso"), "-f"],

@@ -77,6 +77,7 @@ def test_observer_role_installs_client_and_tns_contract():
     assert "EnvironmentFile=/etc/sysconfig/{{ observer_service_name }}" in service
     assert "START OBSERVER ${OBSERVER_NAME} FILE IS" in start
     assert "IN BACKGROUND" not in start
+    assert "exit 1" in start
 
 
 def test_observer_client_home_installed(observer_exec):

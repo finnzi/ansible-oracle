@@ -5,7 +5,7 @@
 #   1. Ensure the libvirt network exists with fixed DHCP leases.
 #   2. Ensure the OL cloud backing image exists.
 #   3. Create/import the three VMs with cloud-init seed ISOs.
-#   4. Wait for SSH.
+#   4. Wait for SSH and cloud-init completion.
 #   5. Generate inventory/hosts.yml and update /etc/hosts on the host.
 
 set -euo pipefail
@@ -93,6 +93,12 @@ for svc in superdb1 superdb2 observer; do
   log "${svc} SSH ready"
 done
 
+log "Waiting for cloud-init on the lab VMs"
+for svc in superdb1 superdb2 observer; do
+  wait_for_cloud_init "$(vm_ip "${svc}")"
+  log "${svc} cloud-init complete"
+done
+
 log "Generating ${INVENTORY_DIR}/hosts.yml"
 mkdir -p "${INVENTORY_DIR}"
 cp "${INVENTORY_DIR}/hosts.example.yml" "${INVENTORY_DIR}/hosts.yml"
@@ -102,4 +108,4 @@ log "Updating /etc/hosts (standalone listener VIP: superdb.domain.is -> ${IP_SUP
 
 log "Lab is up. Inventory: ${INVENTORY_DIR}/hosts.yml"
 log "Next: ./scripts/bootstrap-venv.sh && source .venv/bin/activate"
-log "Then:  ansible-playbook playbooks/site.yml"
+log "Then:  ansible-playbook playbooks/site.yml -e oracle_gi_install_enabled=true"

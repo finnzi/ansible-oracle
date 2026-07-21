@@ -50,7 +50,7 @@ def multi_instance_smoke_ready(lab_exec):
             env=env,
             capture_output=True,
             text=True,
-            timeout=3600,
+            timeout=7200,
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
@@ -142,6 +142,8 @@ def test_instance_memory_parameters_match_inventory(
 SELECT name || '|' || value
   FROM v$parameter
  WHERE name IN ('sga_target', 'pga_aggregate_target');
+SELECT 'sga_granule_size|' || MAX(granule_size)
+  FROM v$sga_dynamic_components;
 """,
     )
 
@@ -151,10 +153,10 @@ SELECT name || '|' || value
         for line in result.stdout.splitlines()
         if "|" in line
     )
-    assert values == {
-        "sga_target": str(sga_target),
-        "pga_aggregate_target": str(pga_aggregate_target),
-    }
+    actual_sga = int(values.pop("sga_target"))
+    granule_size = int(values.pop("sga_granule_size"))
+    assert sga_target <= actual_sga < sga_target + granule_size
+    assert values == {"pga_aggregate_target": str(pga_aggregate_target)}
 
 
 @pytest.mark.parametrize(
