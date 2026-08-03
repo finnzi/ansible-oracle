@@ -13,6 +13,7 @@ idempotency marker. The actual 19.3 binary link is OS-dependent:
 """
 from __future__ import annotations
 
+import os
 import shlex
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import pytest
 
 pytestmark = pytest.mark.slice
 
-ORACLE_HOME = "/super/app/oracle/db_home2"
+ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/dbhome_1")
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -88,8 +89,10 @@ def test_opatch_upgraded(lab_exec):
 
 def test_response_file_staged(lab_exec):
     r = lab_exec(
-        "if [ -f /super/app/oracle/.stage_db_home2/db_install.rsp ]; then "
-        "cat /super/app/oracle/.stage_db_home2/db_install.rsp; "
+        "if [ -f /super/app/oracle/.stage_dbhome_1/db_install.rsp ]; then "
+        "cat /super/app/oracle/.stage_dbhome_1/db_install.rsp; "
+        f"elif [ -f /super/app/oracle/.stage_dbhome_2/db_install.rsp ]; then "
+        "cat /super/app/oracle/.stage_dbhome_2/db_install.rsp; "
         f"else cat {ORACLE_HOME}/install/response/db_install.rsp; fi"
     )
     assert r.returncode == 0, f"response file missing: {r.stderr}"

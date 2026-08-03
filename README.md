@@ -82,6 +82,16 @@ Implemented:
 - DB-home and Grid-home patch inventory and in-place apply paths, plus DB
   dual-home Restart switching with automatic installation of inventory suffix
   and inventory-declared explicit-path target homes before patch/switch.
+  Out-of-place upgrades split **prepare** and **planned cutover**:
+  `playbooks/07-upgrade-dual-db-prepare.yml` rebuilds the unused home path in
+  place when needed (detach/remove + clean install into the same folder, e.g.
+  `dbhome_2`), applies the upgrade RU (default 19.32), and deploys
+  `network/admin` so TNS is not hand-copied; Restart is not switched until
+  `playbooks/07-upgrade-dual-db-cutover.yml` (confirmation-gated switch +
+  datapatch). Version detection lives in `library/oracle_home_facts.py`.
+  Non-standby-first Data Guard dual-home downtime readiness is scaffolded in
+  `playbooks/07-upgrade-dual-db-downtime.yml` (prefer eligible RU component +
+  standby-first when possible).
   `playbooks/07-patch-dual-db-switchback.yml` provides a gated standalone
   rehearsal that switches to an inventory suffix or existing explicit target
   path and back to the actual Restart-registered original home.
@@ -89,6 +99,8 @@ Implemented:
   checked on both DB VMs, brownfield DB homes can be discovered from `/etc/oratab`,
   brownfield Grid homes from `/etc/oracle/olr.loc`, and the current 19.31 RU
   convergence plus current-home dual mode are verified as idempotent.
+  Central Oracle inventory is standardized at `/home/oracle/oraInventory`
+  (greenfield rebuild; no live inventory migration).
 - `playbooks/site.yml` imports the non-destructive umbrella flow through Data
   Guard, observer, DB/Grid patch inventory, and current-home dual-home
   validation. Standby-first patching remains in its dedicated playbook; it runs
@@ -105,7 +117,7 @@ Implemented:
   switchover, or datapatch, while its DB RU component can be selected with
   `oracle_patch_apply_component_path=39062931/39034528`. The guarded helper
   has now applied that eligible component live through standby-first patching,
-  switching both Data Guard members to `/super/app/oracle/db_home2`, running
+  switching both Data Guard members to `/super/app/oracle/dbhome_2`, running
   datapatch on the promoted primary, and validating Maximum Availability plus
   standby `READ ONLY WITH APPLY`. Repeat destructive runs still require
   `--execute --confirm PATCH_STANDBY_FIRST`.
@@ -250,6 +262,9 @@ See [lab/README.md](lab/README.md) for KVM lab details.
 | Single-instance and Data Guard | `oracle_db_manage`; `oracle_dataguard`; FSFO lifecycle in `oracle_observer` |
 | Oracle Restart support | `oracle_gi_install`; `oracle_restart_manage`; `tests/test_04_restart.py` |
 | Patch DB homes and Grid homes | DB/Grid in-place inventory/apply in `oracle_patch`; DB dual-home target install and Restart switch |
+| Dual-home DB upgrade prepare + planned cutover | `07-upgrade-dual-db-prepare.yml` rebuilds unused path in place (detach/remove + clean install + RU + network/admin); `07-upgrade-dual-db-cutover.yml` gated switch + datapatch; `oracle_db_deinstall` + `oracle_home_facts` |
+| Non-standby-first DG dual-home downtime path | `playbooks/07-upgrade-dual-db-downtime.yml` readiness/safety scaffold; prefer eligible RU component + standby-first when possible |
+| Single central oraInventory | `oracle_inventory_loc=/home/oracle/oraInventory` in inventory and install roles (greenfield rebuild) |
 | Reversible standalone DB dual-home switch | `playbooks/07-patch-dual-db-switchback.yml` resolves readiness by default; confirmed execution requires explicit switchback confirmation |
 | Dedicated home/data/archive/flashback/redo paths | `inventory/group_vars/all.yml`; `oracle_storage`; DBCA response |
 | Flashback/archivelog/redo toggles | `oracle_instances[*]`; `oracle_db_manage` |

@@ -1,11 +1,11 @@
 ---
 # playbooks/07-patch-standbyfirst-media.yml - report staged standby-first media.
 #
-# This is a read-only preflight for the remaining eligible-RU apply proof. It
-# scans staged patch zips with the same README parser used by
-# 07-patch-standbyfirst.yml and reports whether any staged zip is fully Data
-# Guard Standby-First Installable or contains an eligible DB RU component that
-# can be selected explicitly from an otherwise ineligible combo bundle.
+# Read-only preflight: scans staged patch zips with patch_standbyfirst_info.
+# Policy reminder:
+#   - Fully SF-eligible zips → candidates for 07-patch-standbyfirst.yml
+#   - OJVM+RU combos are not SF as a unit → dual-home/downtime for the full
+#     combo; listed DB RU components are informational / opt-in RU-only SF only
 
 - name: Report Data Guard standby-first patch media
   hosts: primary
@@ -54,11 +54,13 @@
       ansible.builtin.debug:
         msg: >-
           Eligible standby-first DB RU component {{ item.patch_number }} in
-          {{ item.basename }} detected at {{ item.component_path }}. Use
-          -e oracle_patch_zip={{ oracle_stage_dir }}/{{ item.basename }} and
-          -e oracle_patch_apply_component_path={{ item.component_path }} on the
-          readiness and confirmed apply commands for
-          playbooks/07-patch-standbyfirst.yml.
+          {{ item.basename }} at {{ item.component_path }}. Prefer applying the
+          full combo together (dual-home/downtime) when this zip is an OJVM+RU
+          combo. Component-only SF is opt-in:
+          -e oracle_patch_zip={{ oracle_stage_dir }}/{{ item.basename }}
+          -e oracle_patch_apply_component_path={{ item.component_path }}
+          -e oracle_patch_standbyfirst_allow_component_only=true
+          on playbooks/07-patch-standbyfirst.yml.
       loop: "{{ _patch_sf_media.eligible_db_components }}"
       when: _patch_sf_media.eligible_db_component_count | int > 0
 

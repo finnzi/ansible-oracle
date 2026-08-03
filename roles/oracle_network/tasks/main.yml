@@ -10,19 +10,38 @@
 # The listener is started with lsnrctl here for the very first boot; once
 # Oracle Restart takes ownership (oracle_restart_manage), it owns reloads.
 
-- name: Resolve current ORACLE_HOME and listener VIP per instance
+- name: Fail when network home selection is invalid
+  ansible.builtin.fail:
+    msg: >-
+      oracle_network_home_selection={{ oracle_network_home_selection }} is
+      invalid. Supported values are current and selected.
+  when: oracle_network_home_selection | default('current') not in ['current', 'selected']
+
+- name: Resolve ORACLE_HOME and listener VIP per instance/home
   ansible.builtin.set_fact:
     _net_instances: >-
       {%- set out = [] -%}
       {%- set dg_mode = oracle_network_dataguard_enabled | default(false) | bool -%}
       {%- set require_dg = false if dg_mode else true -%}
+      {%- set selection = oracle_network_home_selection | default('current') -%}
+      {%- set selected_suffixes = oracle_network_home_suffixes | default([]) -%}
       {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
         {%- set inst = raw_inst -%}
         {# Primary hosts may mix standalone and Data Guard databases. Standby
            hosts only need listeners for the Data Guard instances they host. #}
         {%- set include_inst = ('standby' not in group_names or (inst.dataguard | default(false) | bool)) -%}
         {%- if include_inst -%}
-          {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
+          {%- set homes = [] -%}
+          {%- if selection == 'selected' -%}
+            {%- for home in inst.db_homes | default([]) -%}
+              {%- if home.suffix in selected_suffixes -%}
+                {%- set _ = homes.append(home) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- else -%}
+            {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
+            {%- set _ = homes.append(current_home) -%}
+          {%- endif -%}
           {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
           {%- set vip = namespace(ip='') -%}
           {%- for entry in (oracle_lab_listener_vips | default([])) -%}
@@ -30,11 +49,13 @@
               {%- set vip.ip = entry.ip -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set _ = out.append(inst | combine({
-            '_home': current_home.suffix,
-            '_net': listener_name,
-            '_vip': vip.ip,
-            '_port': (inst.listener_port | default(1521))})) -%}
+          {%- for home in homes -%}
+            {%- set _ = out.append(inst | combine({
+              '_home': home.suffix,
+              '_net': listener_name,
+              '_vip': vip.ip,
+              '_port': (inst.listener_port | default(1521))})) -%}
+          {%- endfor -%}
         {%- endif -%}
       {%- endfor -%}
       {{ out }}

@@ -18,8 +18,8 @@ oracle_instances_default:
       flashback: /super/f01
       redo:      /super/r01
     db_homes:
-      - { suffix: db_home1, current: true }
-      - { suffix: db_home2, current: false }
+      - { suffix: dbhome_1, current: true }
+      - { suffix: dbhome_2, current: false }
     gi_base: /grid
     gi_homes:
       - { suffix: 19c/gi_home1, current: true }

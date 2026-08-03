@@ -43,8 +43,14 @@
       'ORA-' in (_svc_database_state.stdout | default('')) or
       'SP2-' in (_svc_database_state.stdout | default(''))
     ) and not (
-      inst.dg_role | default('') == 'standby' and
-      'ORA-01034' in (_svc_database_state.stdout | default(''))
+      (
+        inst.dg_role | default('') == 'standby'
+        or (
+          'standby' in group_names
+          and inst.dataguard | default(false) | bool
+        )
+      )
+      and 'ORA-01034' in (_svc_database_state.stdout | default(''))
     )
 
 - name: Record whether the local database is available for service reconciliation

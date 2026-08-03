@@ -103,6 +103,12 @@
     label: "{{ inst.name }}"
   when:
     - oracle_restart_available
+    # Standalone multi-instance DBs (duper/fluff) live on the primary host only.
+    # Match oracle_db_manage / oracle_service_manage: do not register them on
+    # standby inventory hosts (there is no instance there to start).
+    - inst.dataguard | default(false) | bool or 'standby' not in group_names
+    # Data Guard standbys are registered by oracle_dataguard after duplicate,
+    # not here with the primary-side inventory shape.
     - not (
         inst.dataguard | default(false) | bool and
         (

@@ -22,9 +22,10 @@ CONFIRM=""
 RUN_PREFLIGHT=1
 RUN_POSTCHECK=1
 RESTORE_PRIMARY=1
+ALLOW_COMPONENT_ONLY=0
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
-STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
+STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-dbhome_2}"
 STANDBYFIRST_EXPECTED_PRIMARY="${STANDBYFIRST_EXPECTED_PRIMARY:-super}"
 STANDBYFIRST_EXPECTED_STANDBY="${STANDBYFIRST_EXPECTED_STANDBY:-super_sby}"
 
@@ -32,10 +33,16 @@ usage() {
   cat <<'EOF'
 Usage: scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST [options]
 
-Run the final confirmed Data Guard standby-first patch apply. By default this
-uses the staged 19.31 DB RU component that the media scanner reports as
-standby-first eligible, targets db_home2, and restores the original primary
-after both Data Guard homes are patched.
+Run the final confirmed Data Guard standby-first patch apply.
+
+Policy: standby-first is for zips that are fully SF-eligible (every component
+README). OJVM+DB RU combos are NOT SF as a unit — apply them together with
+dual-home prepare/cutover or 07-upgrade-dual-db-downtime.yml. Peeling an SF
+DB RU out of a combo requires --allow-component-only (and a component path).
+
+By default this script targets an eligible DB RU component path (historical
+lab default: 19.31 39062931/39034528), dbhome_2, and restores the original
+primary after both Data Guard homes are patched.
 
 Options:
   --dry-run                  Print commands without running them.
@@ -45,8 +52,10 @@ Options:
   --standbyfirst-zip PATH    Patch zip to apply.
   --standbyfirst-component PATH
                              Relative eligible DB RU component path in the zip.
+  --allow-component-only     Allow SF of one DB RU inside a mixed/ineligible
+                             combo zip (sets allow_component_only=true).
   --standbyfirst-dual-home-suffix SUFFIX
-                             Target home suffix (default: db_home2).
+                             Target home suffix (default: dbhome_2).
   --expected-primary NAME    Required current primary before apply (default: super).
   --expected-standby NAME    Required current standby before apply (default: super_sby).
   --no-restore-primary       Do not switch back to the original primary.
@@ -89,6 +98,9 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || { echo "error: --standbyfirst-component requires a path" >&2; exit 1; }
       STANDBYFIRST_COMPONENT_PATH="$2"
       shift
+      ;;
+    --allow-component-only)
+      ALLOW_COMPONENT_ONLY=1
       ;;
     --standbyfirst-dual-home-suffix)
       [ "$#" -ge 2 ] || { echo "error: --standbyfirst-dual-home-suffix requires a suffix" >&2; exit 1; }
@@ -210,6 +222,13 @@ apply_cmd=(
   -e
   "oracle_patch_standbyfirst_confirm=${CONFIRM}"
 )
+
+# Selecting a component path is intentional RU-only SF (not full-combo SF).
+# Always pass allow when a component path is set; omit only for whole-zip SF
+# of a fully eligible patch.
+if [ "${ALLOW_COMPONENT_ONLY}" -eq 1 ] || [ -n "${STANDBYFIRST_COMPONENT_PATH}" ]; then
+  apply_cmd+=(-e oracle_patch_standbyfirst_allow_component_only=true)
+fi
 
 if [ "${RESTORE_PRIMARY}" -eq 1 ]; then
   apply_cmd+=(-e oracle_patch_standbyfirst_restore_primary=true)

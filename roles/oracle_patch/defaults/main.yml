@@ -77,6 +77,11 @@ oracle_patch_extra_homes: []
 oracle_patch_dual_home_suffix: ""
 oracle_patch_dual_home_path: ""
 
+# When false, oop_dual still patches the target home but skips Restart
+# stop/modify/start and datapatch-for-switch. Use this for upgrade prepare
+# (install+patch second home now; planned cutover later).
+oracle_patch_switch_enabled: true
+
 # Set only from the dedicated standby-first playbook, where Data Guard role
 # changes are explicitly orchestrated around DB-home switches.
 oracle_patch_allow_dataguard_dual_home_switch: false

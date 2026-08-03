@@ -21,7 +21,8 @@ oracle_patch_files:
   opatch_zip: "p6880880_190000_Linux-x86-64.zip"
   gi_ru_zip: "p39062956_190000_Linux-x86-64.zip"
 
-oracle_inventory_loc: /opt/oracle/oraInventory
+oracle_inventory_loc: /home/oracle/oraInventory
+oracle_inventory_enforce_single: true
 oracle_inst_group: oinstall
 
 oracle_gi_asm_diskgroup_name: RESTART

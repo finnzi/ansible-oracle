@@ -10,12 +10,17 @@ oracle_primary_group_role: dba
 oracle_asm_group: asmadmin
 oracle_roles: [dba, oper, asmadmin, backupdba, dgdba, kmdba]
 
+# Single central Oracle inventory. All installers on a host must share this path.
+oracle_inventory_loc: /home/oracle/oraInventory
+oracle_inventory_enforce_single: true
+
 # The preinstall RPM usually sets these but a lab image may not have it. The
 # role is idempotent regardless.
 oracle_uid: 54321
 oracle_gid: 54321
 
 oracle_common_packages:
+  - cloud-utils-growpart
   - elfutils-libelf-devel
   - gcc
   - glibc-devel
@@ -28,6 +33,15 @@ oracle_common_packages:
   - policycoreutils-python-utils
   - sysstat
   - unzip
+
+# Expand the root LVM/XFS volume into free virtual-disk space (KVM lab OL
+# cloud image layout). Idempotent; no-op when already grown or layout differs.
+oracle_common_grow_root: true
+oracle_common_grow_root_disk: /dev/vda
+oracle_common_grow_root_partnum: "4"
+oracle_common_grow_root_partition: /dev/vda4
+oracle_common_grow_root_vg: vg_main
+oracle_common_grow_root_lv: lv_root
 
 # sysctl / limits — conservative lab defaults. Tune via inventory in real envs.
 oracle_sysctl:

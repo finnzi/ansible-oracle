@@ -1,0 +1,224 @@
+---
+# playbooks/07-upgrade-dual-db-cutover.yml
+#
+# Planned standalone cutover to a prepared dual-home upgrade target.
+# Default is readiness-only. Destructive cutover requires:
+#
+#   -e oracle_upgrade_cutover_execute=true
+#   -e oracle_upgrade_cutover_confirm=CUTOVER_TO_UPGRADE_HOME
+#
+# Prerequisite: playbooks/07-upgrade-dual-db-prepare.yml with apply enabled so
+# the target home is already at oracle_upgrade_release_update (19.32).
+
+- name: Planned dual-home upgrade cutover
+  hosts: oracle_db_hosts
+  become: true
+  gather_facts: false
+  vars:
+    oracle_upgrade_cutover_execute: false
+    oracle_upgrade_cutover_confirm: ""
+    oracle_upgrade_cutover_confirm_required: CUTOVER_TO_UPGRADE_HOME
+  tasks:
+    - name: Resolve dual-home cutover target identity
+      ansible.builtin.set_fact:
+        _upgrade_cutover_suffix: >-
+          {{
+            oracle_patch_dual_home_suffix
+            if (oracle_patch_dual_home_suffix | default('') | length > 0)
+            else 'dbhome_2'
+          }}
+        _upgrade_cutover_path: "{{ oracle_patch_dual_home_path | default('') }}"
+
+    - name: Resolve standalone cutover targets
+      ansible.builtin.set_fact:
+        _upgrade_cutover_targets: >-
+          {%- set out = [] -%}
+          {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+          {%- for inst in instances -%}
+            {%- if not (inst.dataguard | default(false) | bool) -%}
+              {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+              {%- set target_suffix = (
+                _upgrade_cutover_path.rsplit('/', 1)[1]
+                if _upgrade_cutover_path | length > 0
+                else _upgrade_cutover_suffix
+              ) -%}
+              {%- set target_home_path = (
+                _upgrade_cutover_path
+                if _upgrade_cutover_path | length > 0
+                else inst.oracle_base ~ '/' ~ target_suffix
+              ) -%}
+              {%- set _ = out.append({
+                'name': inst.name,
+                'restart_db_name': inst.db_unique_name | default(inst.name),
+                'sid_name': inst.name,
+                'listener_name': 'LISTENER_' ~ (inst.name | upper),
+                'oracle_base': inst.oracle_base,
+                'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+                'target_home_path': target_home_path,
+                'target_suffix': target_suffix
+              }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Fail when no standalone cutover targets were resolved
+      ansible.builtin.fail:
+        msg: No standalone DB instances were resolved for upgrade cutover.
+      when: _upgrade_cutover_targets | length == 0
+
+    - name: Read target home version facts for cutover readiness
+      oracle_home_facts:
+        home_path: "{{ item.target_home_path }}"
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_cutover_target_facts
+      loop: "{{ _upgrade_cutover_targets }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.target_home_path }}"
+
+    - name: Read Restart database home before cutover
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ item.restart_db_name | quote }} 2>/dev/null |
+          awk -F': ' '$1 == "Oracle home" {print $2}'
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_cutover_restart_homes
+      changed_when: false
+      failed_when: false
+      loop: "{{ _upgrade_cutover_targets }}"
+      loop_control:
+        label: "{{ item.restart_db_name }}"
+
+    - name: Report cutover readiness
+      ansible.builtin.debug:
+        msg:
+          name: "{{ item.item.name }}"
+          restart_db_name: "{{ item.item.restart_db_name }}"
+          restart_home: "{{ item.stdout | default('') | trim }}"
+          target_home: "{{ item.item.target_home_path }}"
+          target_release_update: "{{ _upgrade_cutover_target_facts.results[idx].facts.release_update | default('unknown') }}"
+          target_db_ru_patch_id: "{{ _upgrade_cutover_target_facts.results[idx].facts.db_ru_patch_id | default('unknown') }}"
+          expected_upgrade_release_update: "{{ oracle_upgrade_release_update | default('19.32.0.0.260721') }}"
+          execute: "{{ oracle_upgrade_cutover_execute | bool }}"
+      loop: "{{ _upgrade_cutover_restart_homes.results | default([]) }}"
+      loop_control:
+        index_var: idx
+        label: "{{ item.item.restart_db_name }}"
+      when: not oracle_upgrade_cutover_execute | bool
+
+    - name: Fail when destructive cutover confirmation is missing
+      ansible.builtin.fail:
+        msg: >-
+          Refusing upgrade cutover. Set oracle_upgrade_cutover_execute=true and
+          oracle_upgrade_cutover_confirm={{ oracle_upgrade_cutover_confirm_required }}.
+      when:
+        - oracle_upgrade_cutover_execute | bool
+        - oracle_upgrade_cutover_confirm != oracle_upgrade_cutover_confirm_required
+
+    - name: Fail when target home is not at expected upgrade version
+      ansible.builtin.fail:
+        msg: >-
+          Target home {{ item.item.target_home_path }} is not ready for cutover.
+          Expected release_update={{ oracle_upgrade_release_update | default('19.32.0.0.260721') }}
+          or patch id {{ oracle_upgrade_db_ru_patch_id | default('39472050') }};
+          facts report release_update={{ item.facts.release_update | default('none') }}
+          db_ru_patch_id={{ item.facts.db_ru_patch_id | default('none') }}.
+          Run playbooks/07-upgrade-dual-db-prepare.yml with apply enabled first.
+      loop: "{{ _upgrade_cutover_target_facts.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - oracle_upgrade_cutover_execute | bool
+        - >-
+            (item.facts.release_update | default('')) !=
+            (oracle_upgrade_release_update | default('19.32.0.0.260721'))
+            and
+            (item.facts.db_ru_patch_id | default('')) !=
+            (oracle_upgrade_db_ru_patch_id | default('39472050'))
+
+    - name: Check target home network/admin files before cutover
+      ansible.builtin.stat:
+        path: "{{ item.target_home_path }}/network/admin/{{ item.net_file }}"
+      register: _upgrade_cutover_net_stats
+      loop: >-
+        {%- set out = [] -%}
+        {%- for tgt in _upgrade_cutover_targets | default([]) -%}
+          {%- for net_file in ['tnsnames.ora', 'sqlnet.ora', 'listener.ora'] -%}
+            {%- set _ = out.append(tgt | combine({'net_file': net_file})) -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {{ out }}
+      loop_control:
+        label: "{{ item.name }}:{{ item.net_file }}"
+      when: oracle_upgrade_cutover_execute | bool
+
+    - name: Fail when target home is missing network/admin files
+      ansible.builtin.fail:
+        msg: >-
+          Refusing cutover: {{ item.item.target_home_path }} is missing
+          network/admin/{{ item.item.net_file }}. Re-run prepare so net files
+          are deployed into the rebuilt unused home (do not hand-copy TNS).
+      loop: "{{ _upgrade_cutover_net_stats.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}:{{ item.item.net_file }}"
+      when:
+        - oracle_upgrade_cutover_execute | bool
+        - not (item.stat.exists | default(false))
+
+    - name: Resolve upgrade patch media for cutover
+      ansible.builtin.set_fact:
+        _upgrade_cutover_component_path: >-
+          {{
+            oracle_upgrade_db_ru_component_path | default('39618649/39472050')
+            if (oracle_patch_apply_component_path | default('') | length == 0)
+            else oracle_patch_apply_component_path
+          }}
+        _upgrade_cutover_zip: >-
+          {{
+            oracle_stage_dir ~ '/' ~
+            (oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip'))
+          }}
+      when: oracle_upgrade_cutover_execute | bool
+
+    - name: Switch Restart to prepared upgrade home
+      ansible.builtin.include_role:
+        name: oracle_patch
+      vars:
+        oracle_patch_target: db
+        oracle_patch_mode: oop_dual
+        oracle_patch_switch_enabled: true
+        oracle_patch_apply_enabled: true
+        oracle_patch_run_datapatch: true
+        oracle_patch_discover_oratab: false
+        oracle_patch_dg_standbyfirst: false
+        oracle_patch_dual_home_suffix: >-
+          {{
+            _upgrade_cutover_suffix
+            if _upgrade_cutover_path | length == 0
+            else ''
+          }}
+        oracle_patch_dual_home_path: "{{ _upgrade_cutover_path }}"
+        oracle_patch_db_zip: "{{ _upgrade_cutover_zip }}"
+        oracle_patch_zip: "{{ _upgrade_cutover_zip }}"
+        oracle_patch_apply_component_path: "{{ _upgrade_cutover_component_path }}"
+      when: oracle_upgrade_cutover_execute | bool
+
+    - name: Validate Restart uses upgrade target after cutover
+      ansible.builtin.shell: |
+        set -o pipefail
+        "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ item.restart_db_name | quote }} |
+          awk -F': ' '$1 == "Oracle home" {print $2}'
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_cutover_after
+      changed_when: false
+      failed_when: >-
+        _upgrade_cutover_after.rc != 0 or
+        (_upgrade_cutover_after.stdout | trim) != item.target_home_path
+      loop: "{{ _upgrade_cutover_targets }}"
+      loop_control:
+        label: "{{ item.restart_db_name }} -> {{ item.target_home_path }}"
+      when: oracle_upgrade_cutover_execute | bool

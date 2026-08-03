@@ -1,0 +1,387 @@
+---
+# tasks/main.yml for oracle_db_deinstall
+#
+# For each configured home path:
+#   1. Resolve path metadata
+#   2. Fail if Oracle Restart still registers any database against that path
+#   3. Best-effort runInstaller -detachHome (when execute)
+#   4. Rescue spfile/pfile/orapw out of $OH/dbs to a durable data-dir path
+#      (and rewrite Restart if it still pointed under the doomed home)
+#   5. Remove the directory tree (when execute)
+#   6. Remove matching .stage_<suffix> under the parent base (optional)
+
+- name: Fail when no homes were provided for deinstall
+  ansible.builtin.fail:
+    msg: >-
+      oracle_db_deinstall_homes is empty. Pass one or more home paths (or dicts
+      with home_path) for the unused dual-home target.
+  when: (oracle_db_deinstall_homes | default([])) | length == 0
+
+- name: Normalize deinstall home targets
+  ansible.builtin.set_fact:
+    _deinstall_targets: >-
+      {%- set out = [] -%}
+      {%- for item in oracle_db_deinstall_homes | default([]) -%}
+        {%- set home_path = item if item is string else (item.home_path | default('')) -%}
+        {%- if home_path | length > 0 -%}
+          {%- set parent = home_path.rsplit('/', 1)[0] -%}
+          {%- set suffix = home_path.rsplit('/', 1)[1] -%}
+          {%- set inst_name = (suffix if item is string else item.name | default(suffix)) -%}
+          {%- set data_dir = (
+            '' if item is string
+            else (item.data_dir | default(item.dirs.data if item.dirs is defined else '') | default(''))
+          ) -%}
+          {%- set param_dir = (
+            '' if item is string
+            else (item.parameter_file_dir | default(''))
+          ) -%}
+          {%- if param_dir | length == 0 and data_dir | length > 0 -%}
+            {%- set param_dir = data_dir ~ '/' ~ (item.restart_db_name | default(inst_name) if item is not string else inst_name) -%}
+          {%- endif -%}
+          {%- set _ = out.append({
+            'home_path': home_path,
+            'oracle_base': (parent if item is string else item.oracle_base | default(parent)),
+            'home_suffix': (suffix if item is string else item.home_suffix | default(suffix)),
+            'name': inst_name,
+            'restart_db_name': (
+              inst_name if item is string
+              else item.restart_db_name | default(inst_name)
+            ),
+            'data_dir': data_dir,
+            'parameter_file_dir': param_dir
+          }) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Fail when normalized deinstall target list is empty
+  ansible.builtin.fail:
+    msg: oracle_db_deinstall_homes contained no usable home_path values.
+  when: _deinstall_targets | length == 0
+
+- name: Read Restart database names before deinstall
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    if [ -x "${gi}/bin/srvctl" ]; then
+      "${gi}/bin/srvctl" config database 2>/dev/null || true
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _deinstall_restart_dbs
+  changed_when: false
+  failed_when: false
+
+- name: Read Restart Oracle home for each registered database
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    "${gi}/bin/srvctl" config database -db {{ item | quote }} 2>/dev/null |
+      awk -F': ' '$1 == "Oracle home" {print $2}'
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _deinstall_restart_homes
+  changed_when: false
+  failed_when: false
+  loop: "{{ _deinstall_restart_dbs.stdout_lines | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when: (_deinstall_restart_dbs.stdout_lines | default([])) | length > 0
+
+- name: Fail when a deinstall target is still registered with Restart
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall {{ item.home_path }} because Oracle Restart still
+      registers at least one database against that home:
+      {{
+        _deinstall_restart_homes.results | default([])
+        | selectattr('rc', 'defined')
+        | selectattr('stdout', 'defined')
+        | map(attribute='stdout')
+        | map('trim')
+        | select('equalto', item.home_path)
+        | list
+        | length
+      }} match(es). Switch the database off this home first (or only deinstall
+      the unused dual-home target path).
+  loop: "{{ _deinstall_targets }}"
+  loop_control:
+    label: "{{ item.home_path }}"
+  when: >-
+    (
+      _deinstall_restart_homes.results | default([])
+      | selectattr('stdout', 'defined')
+      | map(attribute='stdout')
+      | map('trim')
+      | select('equalto', item.home_path)
+      | list
+      | length
+    ) > 0
+
+- name: Stat deinstall target homes
+  ansible.builtin.stat:
+    path: "{{ item.home_path }}"
+  register: _deinstall_stats
+  loop: "{{ _deinstall_targets }}"
+  loop_control:
+    label: "{{ item.home_path }}"
+
+- name: Report deinstall plan (readiness)
+  ansible.builtin.debug:
+    msg:
+      home_path: "{{ item.item.home_path }}"
+      exists: "{{ item.stat.exists | default(false) }}"
+      execute: "{{ oracle_db_deinstall_execute | bool }}"
+      action: >-
+        {{
+          'remove'
+          if (item.stat.exists | default(false) and oracle_db_deinstall_execute | bool)
+          else (
+            'would_remove'
+            if (item.stat.exists | default(false))
+            else 'absent'
+          )
+        }}
+  loop: "{{ _deinstall_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.home_path }}"
+  when: not (oracle_db_deinstall_execute | bool)
+
+- name: Detach Oracle home from central inventory
+  ansible.builtin.shell: |
+    set -o pipefail
+    oh={{ item.item.home_path | quote }}
+    if [ ! -d "$oh" ]; then
+      echo ABSENT
+      exit 0
+    fi
+    # Prefer OUI detach when available (updates oraInventory without full deinstall tool).
+    if [ -x "$oh/oui/bin/runInstaller" ]; then
+      if "$oh/oui/bin/runInstaller" -silent -detachHome \
+           "ORACLE_HOME=$oh" -local \
+           >/tmp/ansible-oracle-detach-{{ item.item.home_suffix }}.log 2>&1; then
+        echo DETACHED
+      else
+        # Home may already be detached or half-broken; continue to directory remove.
+        echo DETACH_BEST_EFFORT
+      fi
+    else
+      echo NO_RUNINSTALLER
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _deinstall_detach
+  changed_when: >-
+    'DETACHED' in (_deinstall_detach.stdout | default('')) or
+    'DETACH_BEST_EFFORT' in (_deinstall_detach.stdout | default('')) or
+    'NO_RUNINSTALLER' in (_deinstall_detach.stdout | default(''))
+  loop: "{{ _deinstall_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.home_path }}"
+  when:
+    - oracle_db_deinstall_execute | bool
+    - item.stat.exists | default(false)
+
+# Dual-home rebuilds delete $OH entirely. spfile/pfile/orapw often live under
+# $OH/dbs (or Restart still points there even after a home switch). Rescue them
+# to a durable location outside the home before the tree is removed.
+- name: Rescue spfile/pfile/orapw before removing Oracle home
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    oh={{ item.item.home_path | quote }}
+    base={{ item.item.oracle_base | quote }}
+    inst_name={{ item.item.name | quote }}
+    restart_db={{ item.item.restart_db_name | quote }}
+    data_dir={{ (item.item.data_dir | default('')) | quote }}
+    param_dir={{ (item.item.parameter_file_dir | default('')) | quote }}
+    changed=0
+
+    resolve_param_dir() {
+      sid="$1"
+      if [ -n "$param_dir" ]; then
+        printf '%s\n' "$param_dir"
+        return 0
+      fi
+      if [ -n "$data_dir" ]; then
+        printf '%s/%s\n' "$data_dir" "$sid"
+        return 0
+      fi
+      # Convention matching multi-instance labs: /<sid>/d01/<sid>
+      if [ -d "/${sid}/d01" ]; then
+        printf '/%s/d01/%s\n' "$sid" "$sid"
+        return 0
+      fi
+      printf '%s/parameter_files/%s\n' "$base" "$sid"
+    }
+
+    rescue_file() {
+      src="$1"
+      dest_dir="$2"
+      dest_name="$3"
+      if [ -z "$src" ] || [ ! -f "$src" ]; then
+        return 0
+      fi
+      # Never "rescue" stock template init.ora shipped with the home.
+      case "$src" in
+        */dbs/init.ora) return 0 ;;
+      esac
+      mkdir -p "$dest_dir"
+      dest="${dest_dir}/${dest_name}"
+      if [ "$src" = "$dest" ]; then
+        echo "ALREADY_DURABLE $src"
+        return 0
+      fi
+      if [ -f "$dest" ] && cmp -s "$src" "$dest" 2>/dev/null; then
+        echo "ALREADY_COPIED $src -> $dest"
+        return 0
+      fi
+      cp -a "$src" "$dest"
+      changed=1
+      echo "RESCUED $src -> $dest"
+    }
+
+    update_restart_paths() {
+      db="$1"
+      new_spfile="$2"
+      new_pwfile="$3"
+      if [ ! -x "${gi}/bin/srvctl" ]; then
+        return 0
+      fi
+      if [ -n "$new_spfile" ] && [ -f "$new_spfile" ]; then
+        "${gi}/bin/srvctl" modify database -db "$db" -spfile "$new_spfile" 2>/dev/null || true
+        echo "SRVCTL_SPFILE $db -> $new_spfile"
+      fi
+      if [ -n "$new_pwfile" ] && [ -f "$new_pwfile" ]; then
+        "${gi}/bin/srvctl" modify database -db "$db" -pwfile "$new_pwfile" 2>/dev/null || true
+        echo "SRVCTL_PWFILE $db -> $new_pwfile"
+      fi
+    }
+
+    # 1) Any Restart-registered DB whose spfile/pwfile still lives under this home.
+    if [ -x "${gi}/bin/srvctl" ]; then
+      while IFS= read -r db; do
+        [ -n "$db" ] || continue
+        cfg="$("${gi}/bin/srvctl" config database -db "$db" 2>/dev/null || true)"
+        cfg_spfile="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Spfile" {print $2; exit}')"
+        cfg_pwfile="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Password file" {print $2; exit}')"
+        case "$cfg_spfile" in
+          "${oh}"/*)
+            sid="$db"
+            dest_dir="$(resolve_param_dir "$sid")"
+            base_name="$(basename "$cfg_spfile")"
+            rescue_file "$cfg_spfile" "$dest_dir" "$base_name"
+            dest_sp="${dest_dir}/${base_name}"
+            dest_pw=""
+            case "$cfg_pwfile" in
+              "${oh}"/*)
+                pw_base="$(basename "$cfg_pwfile")"
+                rescue_file "$cfg_pwfile" "$dest_dir" "$pw_base"
+                dest_pw="${dest_dir}/${pw_base}"
+                ;;
+            esac
+            update_restart_paths "$db" "$dest_sp" "$dest_pw"
+            ;;
+        esac
+        case "$cfg_pwfile" in
+          "${oh}"/*)
+            # Password file under doomed home but spfile already durable.
+            sid="$db"
+            dest_dir="$(resolve_param_dir "$sid")"
+            pw_base="$(basename "$cfg_pwfile")"
+            rescue_file "$cfg_pwfile" "$dest_dir" "$pw_base"
+            update_restart_paths "$db" "" "${dest_dir}/${pw_base}"
+            ;;
+        esac
+      done < <("${gi}/bin/srvctl" config database 2>/dev/null || true)
+    fi
+
+    # 2) Orphan files under $OH/dbs that match common SID naming.
+    if [ -d "${oh}/dbs" ]; then
+      shopt -s nullglob
+      for src in "${oh}/dbs"/spfile*.ora "${oh}/dbs"/init*.ora "${oh}/dbs"/orapw*; do
+        [ -f "$src" ] || continue
+        bn="$(basename "$src")"
+        case "$bn" in
+          init.ora) continue ;;
+          spfile*.ora)
+            sid="${bn#spfile}"
+            sid="${sid%.ora}"
+            ;;
+          init*.ora)
+            sid="${bn#init}"
+            sid="${sid%.ora}"
+            ;;
+          orapw*)
+            sid="${bn#orapw}"
+            ;;
+          *)
+            continue
+            ;;
+        esac
+        [ -n "$sid" ] || continue
+        dest_dir="$(resolve_param_dir "$sid")"
+        rescue_file "$src" "$dest_dir" "$bn"
+      done
+      shopt -u nullglob
+    fi
+
+    # 3) Prefer inventory instance name when no files were found via scan.
+    if [ "$changed" -eq 0 ] && [ -d "${oh}/dbs" ]; then
+      sid="$restart_db"
+      dest_dir="$(resolve_param_dir "$sid")"
+      for candidate in \
+        "${oh}/dbs/spfile${sid}.ora" \
+        "${oh}/dbs/init${sid}.ora" \
+        "${oh}/dbs/orapw${sid}"
+      do
+        [ -f "$candidate" ] || continue
+        rescue_file "$candidate" "$dest_dir" "$(basename "$candidate")"
+      done
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+      echo CHANGED
+    else
+      echo OK_NO_RESCUE_NEEDED
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _deinstall_rescue_params
+  changed_when: "'CHANGED' in (_deinstall_rescue_params.stdout | default(''))"
+  failed_when: _deinstall_rescue_params.rc != 0
+  loop: "{{ _deinstall_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.home_path }}"
+  when:
+    - oracle_db_deinstall_execute | bool
+    - oracle_db_deinstall_rescue_parameter_files | default(true) | bool
+    - oracle_db_deinstall_remove_directory | bool
+    - item.stat.exists | default(false)
+
+- name: Remove Oracle home directory tree
+  ansible.builtin.file:
+    path: "{{ item.item.home_path }}"
+    state: absent
+  loop: "{{ _deinstall_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.home_path }}"
+  when:
+    - oracle_db_deinstall_execute | bool
+    - oracle_db_deinstall_remove_directory | bool
+    - item.stat.exists | default(false)
+
+- name: Remove per-home install staging directory
+  ansible.builtin.file:
+    path: "{{ item.item.oracle_base }}/.stage_{{ item.item.home_suffix }}"
+    state: absent
+  loop: "{{ _deinstall_stats.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.oracle_base }}/.stage_{{ item.item.home_suffix }}"
+  when:
+    - oracle_db_deinstall_execute | bool
+    - oracle_db_deinstall_remove_stage | bool

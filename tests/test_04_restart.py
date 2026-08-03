@@ -120,7 +120,7 @@ def _current_restart_home(lab_exec, db_unique_name: str) -> str:
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().splitlines()[-1]
-    return "/super/app/oracle/db_home1"
+    return "/super/app/oracle/dbhome_1"
 
 
 def _sqlplus_sysdba(lab_exec, sql: str):
@@ -210,10 +210,12 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "lab_exec",
             "super",
             "super",
-            ("/super/app/oracle/db_home1", "/super/app/oracle/db_home2"),
+            ("/super/app/oracle/dbhome_1", "/super/app/oracle/dbhome_2"),
             (
-                "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
-                "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+                # Durable data-dir path (preferred for dual-home rebuild safety)
+                "/super/d01/super/spfilesuper.ora",
+                "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+                "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
             ),
             "PRIMARY",
             "open",
@@ -224,10 +226,12 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "standby_exec",
             "super_sby",
             "super",
-            ("/super/app/oracle/db_home1", "/super/app/oracle/db_home2"),
+            ("/super/app/oracle/dbhome_1", "/super/app/oracle/dbhome_2"),
             (
-                "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
-                "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+                "/super/d01/super/spfilesuper.ora",
+                "/super/d01/super_sby/spfilesuper.ora",
+                "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+                "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
             ),
             "PHYSICAL_STANDBY",
             "read only",
@@ -238,8 +242,12 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "lab_exec",
             "duper",
             "duper",
-            "/duper/app/oracle/db_home1",
-            "/duper/app/oracle/db_home1/dbs/spfileduper.ora",
+            ("/duper/app/oracle/dbhome_1", "/duper/app/oracle/dbhome_2"),
+            (
+                "/duper/d01/duper/spfileduper.ora",
+                "/duper/app/oracle/dbhome_1/dbs/spfileduper.ora",
+                "/duper/app/oracle/dbhome_2/dbs/spfileduper.ora",
+            ),
             "PRIMARY",
             "open",
             "duper_svc",
@@ -249,8 +257,12 @@ def test_srvctl_status_or_honest_gap(lab_exec):
             "lab_exec",
             "fluff",
             "fluff",
-            "/fluff/app/oracle/db_home1",
-            "/fluff/app/oracle/db_home1/dbs/spfilefluff.ora",
+            ("/fluff/app/oracle/dbhome_1", "/fluff/app/oracle/dbhome_2"),
+            (
+                "/fluff/d01/fluff/spfilefluff.ora",
+                "/fluff/app/oracle/dbhome_1/dbs/spfilefluff.ora",
+                "/fluff/app/oracle/dbhome_2/dbs/spfilefluff.ora",
+            ),
             "PRIMARY",
             "open",
             "fluff_svc",
@@ -325,7 +337,7 @@ def test_standby_recovers_after_ohasd_unit_restart(standby_exec):
     assert restart.returncode == 0, restart.stdout + restart.stderr
 
     sql_command = (
-        "export ORACLE_HOME=/super/app/oracle/db_home2 ORACLE_SID=super; "
+        "export ORACLE_HOME=/super/app/oracle/dbhome_1 ORACLE_SID=super; "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF\n"
         "SELECT database_role || '|' || open_mode FROM v$database;\n"
@@ -362,8 +374,8 @@ def test_restart_can_stop_and_start_database(lab_exec):
     fsfo = lab_exec(
         "su - oracle -c "
         + shlex.quote(
-            "export ORACLE_HOME=/super/app/oracle/db_home2 "
-            "TNS_ADMIN=/super/app/oracle/db_home2/network/admin; "
+            "export ORACLE_HOME=/super/app/oracle/dbhome_1 "
+            "TNS_ADMIN=/super/app/oracle/dbhome_1/network/admin; "
             "printf 'SHOW FAST_START FAILOVER;\\nEXIT;\\n' | "
             "$ORACLE_HOME/bin/dgmgrl -silent sys/SysPassword1_@super_dgb"
         ),

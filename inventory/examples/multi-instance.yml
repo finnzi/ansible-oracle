@@ -12,9 +12,9 @@ oracle_instances:
   - name: super
     oracle_base: /super/app/oracle
     db_homes:
-      - suffix: db_home1
+      - suffix: dbhome_1
         current: true
-      - suffix: db_home2
+      - suffix: dbhome_2
         current: false
     gi_base: /grid
     gi_homes:
@@ -41,9 +41,9 @@ oracle_instances:
   - name: duper
     oracle_base: /duper/app/oracle
     db_homes:
-      - suffix: db_home1
+      - suffix: dbhome_1
         current: true
-      - suffix: db_home2
+      - suffix: dbhome_2
         current: false
     gi_base: /grid
     gi_homes:
@@ -74,9 +74,9 @@ oracle_instances:
   - name: fluff
     oracle_base: /fluff/app/oracle
     db_homes:
-      - suffix: db_home1
+      - suffix: dbhome_1
         current: true
-      - suffix: db_home2
+      - suffix: dbhome_2
         current: false
     gi_base: /grid
     gi_homes:

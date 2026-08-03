@@ -1,0 +1,82 @@
+---
+# tasks/grow-root.yml — expand the lab root filesystem into free virtual disk.
+#
+# Cloud-init already grows on first boot when the qcow is created at the target
+# size. This task is for later increases (e.g. LAB_ROOT_DISK_SIZE bumped and the
+# host qcow resized) and is safe/idempotent when there is nothing to grow.
+#
+# Expected layout (Oracle Linux cloud image used by the KVM lab):
+#   /dev/vda4 → LVM PV → vg_main/lv_root (XFS) mounted on /
+
+- name: Check for lab root LVM partition
+  ansible.builtin.stat:
+    path: "{{ oracle_common_grow_root_partition }}"
+  register: _grow_root_part
+
+- name: Check for lab root volume group
+  ansible.builtin.command:
+    cmd: vgs --noheadings -o vg_name {{ oracle_common_grow_root_vg }}
+  register: _grow_root_vg
+  changed_when: false
+  failed_when: false
+  when:
+    - oracle_common_grow_root | bool
+    - _grow_root_part.stat.exists | default(false)
+
+- name: Ensure growpart is available for root partition expansion
+  ansible.builtin.package:
+    name: cloud-utils-growpart
+    state: present
+  when:
+    - oracle_common_grow_root | bool
+    - _grow_root_part.stat.exists | default(false)
+    - _grow_root_vg.rc | default(1) == 0
+
+- name: Expand root LVM volume and filesystem to fill virtual disk
+  ansible.builtin.shell: |
+    set -euo pipefail
+    disk={{ oracle_common_grow_root_disk | quote }}
+    partnum={{ oracle_common_grow_root_partnum | quote }}
+    part={{ oracle_common_grow_root_partition | quote }}
+    vg={{ oracle_common_grow_root_vg | quote }}
+    lv={{ oracle_common_grow_root_lv | quote }}
+    lvpath="/dev/${vg}/${lv}"
+
+    before="$(df -B1 --output=size / | tail -1 | tr -d ' ')"
+
+    # Grow the LVM partition into free disk space (NOCHANGE is success/no-op).
+    if command -v growpart >/dev/null 2>&1; then
+      growpart "${disk}" "${partnum}" >/tmp/ansible-oracle-growpart.out 2>&1 || true
+    fi
+
+    pvresize "${part}" >/dev/null 2>&1 || true
+
+    # Any free extents in the VG can extend the root LV.
+    free_m="$(vgs --noheadings --units m -o vg_free "${vg}" 2>/dev/null | awk '{gsub(/[^0-9.]/,"",$1); print $1+0}')"
+    if awk "BEGIN {exit !(${free_m:-0} > 1)}"; then
+      lvextend -l +100%FREE "${lvpath}"
+      fs="$(findmnt -n -o FSTYPE /)"
+      case "${fs}" in
+        xfs) xfs_growfs / >/dev/null ;;
+        ext4|ext3) resize2fs "${lvpath}" >/dev/null ;;
+        *)
+          printf 'Unsupported root filesystem for grow: %s\n' "${fs}" >&2
+          exit 1
+          ;;
+      esac
+    fi
+
+    after="$(df -B1 --output=size / | tail -1 | tr -d ' ')"
+    printf 'root_bytes_before=%s root_bytes_after=%s free_vg_mib=%s\n' \
+      "${before}" "${after}" "${free_m:-0}"
+    if [ "${after}" -gt "${before}" ]; then
+      printf 'ROOT_GROWN\n'
+    fi
+  args:
+    executable: /bin/bash
+  register: _grow_root
+  changed_when: "'ROOT_GROWN' in (_grow_root.stdout | default(''))"
+  when:
+    - oracle_common_grow_root | bool
+    - _grow_root_part.stat.exists | default(false)
+    - _grow_root_vg.rc | default(1) == 0

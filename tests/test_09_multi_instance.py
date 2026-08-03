@@ -57,9 +57,9 @@ def multi_instance_smoke_ready(lab_exec):
 
 def _instance_sql(lab_exec, name: str, sql: str, timeout: int = 60):
     oracle_home = (
-        "/super/app/oracle/db_home2"
+        "/super/app/oracle/dbhome_1"
         if name == "super"
-        else f"/{name}/app/oracle/db_home1"
+        else f"/{name}/app/oracle/dbhome_1"
     )
     probe = lab_exec(
         f"stat -c '%s' {oracle_home}/bin/sqlplus 2>/dev/null || echo 0"
@@ -83,7 +83,7 @@ def _instance_sql(lab_exec, name: str, sql: str, timeout: int = 60):
 
 def test_super_dataguard_remains_maximum_availability(lab_exec):
     cmd = (
-        "export ORACLE_HOME=/super/app/oracle/db_home2 ORACLE_SID=super && "
+        "export ORACLE_HOME=/super/app/oracle/dbhome_1 ORACLE_SID=super && "
         "$ORACLE_HOME/bin/sqlplus -S / as sysdba <<'SQL'\n"
         "SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF\n"
         "SELECT name || '|' || database_role || '|' || open_mode || '|' || "

@@ -26,7 +26,7 @@ def _current_super_home(lab_exec) -> str:
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().splitlines()[-1]
-    return "/super/app/oracle/db_home1"
+    return "/super/app/oracle/dbhome_1"
 
 
 def _run_super_sql(lab_exec, sql: str, timeout: int = 60):

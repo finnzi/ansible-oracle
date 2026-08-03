@@ -270,3 +270,38 @@ def test_real_gi_ru_19_31_returns_a_verdict():
     )
     assert inventory["39107855"]["description"].startswith("TOMCAT RELEASE UPDATE")
     assert inventory["39107855"]["parent_patch_number"] == "39036936"
+
+
+@pytest.mark.slice
+def test_real_db_ru_19_32_standbyfirst_verdict():
+    """The 19.32 OJVM+DB RU combo: whole zip ineligible; DB RU component eligible."""
+    z = _real_zip("p39618649_190000_Linux-x86-64.zip")
+    if not z:
+        pytest.skip("p39618649 not staged under download/; skipping real-patch test.")
+    result = analyze_zip(z)
+    assert result["eligible"] is False, (
+        f"Expected the OJVM+RU combo to be NOT standby-first. Got: {result}"
+    )
+    components = {c["name"]: c["standby_first"] for c in result["components"]}
+    assert components.get("39472050") is True, (
+        f"DB RU component should be standby-first installable. Components: {components}"
+    )
+    eligible_paths = [c["component_path"] for c in result["eligible_db_components"]]
+    assert "39618649/39472050" in eligible_paths
+
+
+@pytest.mark.slice
+def test_real_gi_ru_19_32_returns_a_verdict():
+    """The 19.32 GI RU combo: module must produce a structured verdict."""
+    z = _real_zip("p39618711_190000_Linux-x86-64.zip")
+    if not z:
+        pytest.skip("p39618711 not staged under download/; skipping real-patch test.")
+    result = analyze_zip(z)
+    assert "eligible" in result
+    assert result["eligible"] is False
+    assert isinstance(result["components"], list)
+    assert result["readme_files_examined"] >= 1
+    inventory_ids = {p["patch_number"] for p in result["patch_inventory"]}
+    assert "39467003" in inventory_ids or any(
+        "39467003" in (c.get("patch_number") or "") for c in result["components"]
+    )

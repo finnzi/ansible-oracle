@@ -1,9 +1,13 @@
 ---
 # playbooks/00-prep-os.yml — OS substrate: groups, oracle user, sysctl,
-# limits, and the per-instance directory tree.
+# limits, root filesystem headroom, and the per-instance directory tree.
 #
-# Targets every DB-bearing host in the lab. The slice populates [primary]
-# with superdb1; standby/observer groups pass through harmlessly.
+# Root grow: oracle_common expands the lab LVM root (vda4 / vg_main/lv_root)
+# into free virtual-disk space so multi-instance dual-home RU work has room.
+# Host qcow size is controlled by lab-up LAB_ROOT_DISK_SIZE (default 250G).
+#
+# DB hosts get full common + storage. The observer gets root grow + common
+# packages/user so its disk expansion is also playbook-driven.
 
 - name: Prepare OS for Oracle on all DB hosts
   hosts: oracle_db_hosts
@@ -12,3 +16,10 @@
   roles:
     - role: oracle_common
     - role: oracle_storage
+
+- name: Prepare OS substrate on observer hosts
+  hosts: observer
+  become: true
+  gather_facts: true
+  roles:
+    - role: oracle_common

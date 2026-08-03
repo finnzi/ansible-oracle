@@ -5,7 +5,7 @@
 # per-host overrides live in primary.yml / standby.yml / observer.yml and in
 # host_vars/. These defaults express the layout the project mandates:
 #
-#   /<instance>/app/oracle/<db_homeN>   ORACLE_HOMEs (out-of-place friendly)
+#   /<instance>/app/oracle/<dbhome_N>   ORACLE_HOMEs (out-of-place friendly)
 #   /<instance>/d01                     data files
 #   /<instance>/a01                     archive logs
 #   /<instance>/f01                     flashback recovery area
@@ -19,7 +19,13 @@
 # (symlinked from ~/sources/oracle). Override per-environment if your sources
 # differ.
 oracle_version: "19.3.0.0"
-oracle_release_update: "19.31.0.0.260421"   # informational; surfaces in facts/tests
+oracle_release_update: "19.31.0.0.260421"          # baseline / current-home target
+oracle_upgrade_release_update: "19.32.0.0.260721" # dual-home upgrade target
+
+# Single central Oracle inventory for every home on the host (DB, Grid, client).
+# Greenfield-only: rebuild the lab rather than migrating an existing inventory.
+oracle_inventory_loc: /home/oracle/oraInventory
+oracle_inventory_enforce_single: true
 
 # The KVM lab opts into repairing/recovering an already-installed Restart stack
 # even when the slow Grid installer itself is disabled.
@@ -32,8 +38,14 @@ oracle_install_files:
 
 oracle_patch_files:
   opatch_zip: "p6880880_190000_Linux-x86-64.zip"
-  db_ru_zip: "p39062931_190000_Linux-x86-64.zip"   # OJVM 19.31 + DB RU 19.31
-  gi_ru_zip: "p39062956_190000_Linux-x86-64.zip"   # OJVM 19.31 + GI RU 19.31
+  db_ru_zip: "p39062931_190000_Linux-x86-64.zip"          # OJVM 19.31 + DB RU 19.31
+  gi_ru_zip: "p39062956_190000_Linux-x86-64.zip"          # OJVM 19.31 + GI RU 19.31
+  db_ru_upgrade_zip: "p39618649_190000_Linux-x86-64.zip"  # OJVM 19.32 + DB RU 19.32
+  gi_ru_upgrade_zip: "p39618711_190000_Linux-x86-64.zip"  # OJVM 19.32 + GI RU 19.32 (staged)
+
+# Eligible standby-first DB RU component path inside the 19.32 combo zip.
+oracle_upgrade_db_ru_component_path: "39618649/39472050"
+oracle_upgrade_db_ru_patch_id: "39472050"
 
 # Where the KVM lab VMs see the staged installers. lab-up.sh mounts
 # ~/sources/oracle read-only at this path through libvirt.
@@ -62,10 +74,10 @@ oracle_instances:
   - name: super
     oracle_base: /super/app/oracle
     db_homes:
-      - suffix: db_home1
-        current: false
-      - suffix: db_home2
+      - suffix: dbhome_1
         current: true
+      - suffix: dbhome_2
+        current: false
     gi_base: /grid
     gi_homes:
       - suffix: 19c/gi_home1

@@ -26,7 +26,12 @@ LAB_NETWORK_NAME="${LAB_NETWORK_NAME:-ansible-oracle-lab}"
 LAB_BRIDGE_NAME="${LAB_BRIDGE_NAME:-virbr-oracle}"
 LAB_DOMAIN="${LAB_DOMAIN:-domain.is}"
 LAB_OS_VERSION="${LAB_OS_VERSION:-9}"
-LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-120G}"
+# Root disk must hold OS + multi-instance ORACLE_HOMEs (dbhome_1/dbhome_2 each
+# ~11G) + RU extract/opatchauto workspace. 120G filled during dual-home 19.32
+# upgrades with super+duper+fluff; 250G leaves headroom for second homes and RUs.
+# Guest FS expansion is playbook-driven: oracle_common grow-root tasks in
+# playbooks/00-prep-os.yml (and cloud-init runcmd on first boot).
+LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-250G}"
 LAB_GRID_DISK_SIZE="${LAB_GRID_DISK_SIZE:-20G}"
 LAB_DB_MEMORY_MIB="${LAB_DB_MEMORY_MIB:-12288}"
 LAB_OBSERVER_MEMORY_MIB="${LAB_OBSERVER_MEMORY_MIB:-4096}"
@@ -75,6 +80,47 @@ virsh_cmd() {
 lab_prepare_state_dirs() {
   mkdir -p "${IMAGE_DIR}" "${VM_DIR}" "${SEED_DIR}" "${EMPTY_STAGE_DIR}" "${DOWNLOAD_DIR}"
   touch "${DOWNLOAD_DIR}/.gitkeep"
+}
+
+# Parse sizes like 250G / 120G / 10240M into mebibytes for comparison.
+lab_size_to_mib() {
+  local raw size unit
+  raw="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"
+  size="${raw%%[A-Z]*}"
+  unit="${raw#"${size}"}"
+  case "${unit}" in
+    G|GB) printf '%s\n' "$((size * 1024))" ;;
+    M|MB|"") printf '%s\n' "${size}" ;;
+    T|TB) printf '%s\n' "$((size * 1024 * 1024))" ;;
+    *) printf '%s\n' "${size}" ;;
+  esac
+}
+
+# Enlarge an existing root qcow when LAB_ROOT_DISK_SIZE is larger. Domain must
+# not be running. Returns 0 always; logs a warning when resize is skipped.
+lab_ensure_root_disk_size() {
+  local short="$1" disk="$2" name want_mib have_mib
+  name="$(vm_name "${short}")"
+  [ -f "${disk}" ] || return 0
+
+  want_mib="$(lab_size_to_mib "${LAB_ROOT_DISK_SIZE}")"
+  # qemu-img reports virtual size in bytes on the parenthetical field.
+  have_mib="$(qemu-img info --output=json "${disk}" 2>/dev/null \
+    | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["virtual-size"]) // (1024*1024))' \
+    2>/dev/null || printf '0\n')"
+
+  if [ "${have_mib}" -ge "${want_mib}" ]; then
+    return 0
+  fi
+
+  if virsh_cmd dominfo "${name}" >/dev/null 2>&1 \
+      && virsh_cmd domstate "${name}" 2>/dev/null | grep -q running; then
+    warn "${short} root disk is ${have_mib}MiB but LAB_ROOT_DISK_SIZE=${LAB_ROOT_DISK_SIZE}; stop the VM and re-run lab-up to enlarge, then run playbooks/00-prep-os.yml to grow the guest FS."
+    return 0
+  fi
+
+  log "Enlarging ${short} root disk to ${LAB_ROOT_DISK_SIZE} (was ${have_mib}MiB)"
+  qemu-img resize "${disk}" "${LAB_ROOT_DISK_SIZE}" >/dev/null
 }
 
 lab_pubkey() {
@@ -388,7 +434,9 @@ lab_required_media_files() {
     V982068-01-Oracle.19c.Grid.Infrastructure.zip \
     p6880880_190000_Linux-x86-64.zip \
     p39062931_190000_Linux-x86-64.zip \
-    p39062956_190000_Linux-x86-64.zip
+    p39062956_190000_Linux-x86-64.zip \
+    p39618649_190000_Linux-x86-64.zip \
+    p39618711_190000_Linux-x86-64.zip
 }
 
 lab_requested_memory_mib() {

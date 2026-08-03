@@ -6,7 +6,18 @@
 
 - name: Resolve Data Guard instances
   ansible.builtin.set_fact:
-    _dg_instances: "{{ (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) }}"
+    # Multi-instance inventories include standalone DBs (duper/fluff). Only
+    # instances with dataguard=true participate in prepare/duplicate/broker.
+    _dg_instances: >-
+      {{
+        (
+          (oracle_instances | default([]))
+          | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false)
+        )
+        | selectattr('dataguard', 'defined')
+        | selectattr('dataguard', 'equalto', true)
+        | list
+      }}
 
 - name: Fail when automatic switchover is ambiguous across instances
   ansible.builtin.fail:

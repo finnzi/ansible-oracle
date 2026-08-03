@@ -18,6 +18,14 @@ oracle_network_persist_listener_vips: true
 oracle_network_listener_vip_prefix: 24
 oracle_network_open_firewall: false
 
+# Which DB homes receive network/admin files:
+#   current  - homes marked current:true (default runtime path)
+#   selected - only suffixes listed in oracle_network_home_suffixes
+# Dual-home upgrade prepare writes the target (unused) home so cutover never
+# depends on a manual TNS_ADMIN / tnsnames copy.
+oracle_network_home_selection: current
+oracle_network_home_suffixes: []
+
 # Default listener shape; overridden per-instance in inventory.
 listener_name_template: "LISTENER_{% raw %}{{ inst.name | upper }}{% endraw %}"
 listener_port: 1521

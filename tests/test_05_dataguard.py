@@ -28,7 +28,7 @@ def _oracle_home(exec_fn, db_unique_name: str) -> str:
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip().splitlines()[-1]
-    return "/super/app/oracle/db_home1"
+    return "/super/app/oracle/dbhome_1"
 
 
 def test_dataguard_defaults_use_maximum_availability():
@@ -376,7 +376,7 @@ def test_standby_auxiliary_prerequisites(standby_exec):
     pwfile = standby_exec(f"test -f {oracle_home}/dbs/orapwsuper")
     oratab = standby_exec(
         "awk -F'#' '/^super:/ {gsub(/[[:space:]]+$/, \"\", $1); print $1}' /etc/oratab | "
-        "grep -E '^super:/super/app/oracle/db_home[12]:N$'"
+        "grep -E '^super:/super/app/oracle/dbhome_[12]:N$'"
     )
     assert pfile.returncode == 0
     assert pwfile.returncode == 0
@@ -454,12 +454,15 @@ def test_physical_standby_restart_registration(standby_exec):
     assert "Database unique name: super_sby" in config.stdout
     assert "Database name: super" in config.stdout
     assert "Database role: PHYSICAL_STANDBY" in config.stdout
-    assert "Oracle home: /super/app/oracle/db_home2" in config.stdout
+    assert (
+        "Oracle home: /super/app/oracle/dbhome_1" in config.stdout
+        or "Oracle home: /super/app/oracle/dbhome_2" in config.stdout
+    ), config.stdout
     assert any(
         path in config.stdout
         for path in (
-            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
-            "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
         )
     )
     assert "LISTENER_SUPER" in listener.stdout
@@ -481,8 +484,8 @@ def test_physical_standby_uses_spfile(standby_exec):
     assert any(
         path in r.stdout
         for path in (
-            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
-            "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
         )
     )
 

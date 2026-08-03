@@ -25,7 +25,7 @@ PROVE_CONFIRMATION_GATE=0
 STANDBYFIRST_RESTORE_PRIMARY=1
 STANDBYFIRST_ZIP="${STANDBYFIRST_ZIP:-/u01/stage/p39062931_190000_Linux-x86-64.zip}"
 STANDBYFIRST_COMPONENT_PATH="${STANDBYFIRST_COMPONENT_PATH:-39062931/39034528}"
-STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-db_home2}"
+STANDBYFIRST_DUAL_HOME_SUFFIX="${STANDBYFIRST_DUAL_HOME_SUFFIX:-dbhome_2}"
 STANDBYFIRST_EXPECTED_PRIMARY="${STANDBYFIRST_EXPECTED_PRIMARY:-super}"
 STANDBYFIRST_EXPECTED_STANDBY="${STANDBYFIRST_EXPECTED_STANDBY:-super_sby}"
 
@@ -227,11 +227,13 @@ if [ "${RUN_MEDIA}" -eq 1 ]; then
 fi
 
 if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
+  # Component path peels an SF DB RU out of a combo zip — opt-in only.
   readiness_cmd=(
     "${base_cmd[@]}" \
     playbooks/07-patch-standbyfirst.yml \
     -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
     -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}" \
+    -e oracle_patch_standbyfirst_allow_component_only=true \
     -e "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}"
   )
   if [ -n "${STANDBYFIRST_EXPECTED_PRIMARY}" ]; then
@@ -250,6 +252,7 @@ if [ "${RUN_STANDBYFIRST_READINESS}" -eq 1 ]; then
       playbooks/07-patch-standbyfirst.yml \
       -e "oracle_patch_zip=${STANDBYFIRST_ZIP}" \
       -e "oracle_patch_apply_component_path=${STANDBYFIRST_COMPONENT_PATH}" \
+      -e oracle_patch_standbyfirst_allow_component_only=true \
       -e "oracle_patch_dual_home_suffix=${STANDBYFIRST_DUAL_HOME_SUFFIX}" \
       -e oracle_patch_standbyfirst_execute=true
     )

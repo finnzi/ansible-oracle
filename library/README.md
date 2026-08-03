@@ -1,7 +1,32 @@
 # Custom Ansible modules
 
-Three modules live here and are picked up automatically by `ansible.cfg`'s
+Modules live here and are picked up automatically by `ansible.cfg`'s
 `library = library` setting.
+
+## oracle_home_facts
+
+Inspect an Oracle home directory and report product/version facts without
+connecting to a database:
+
+```yaml
+- name: Read dual-home target version
+  oracle_home_facts:
+    home_path: /fluff/app/oracle/dbhome_2
+  register: home
+- debug:
+    msg: "{{ home.facts.release_update }} ({{ home.facts.db_ru_patch_id }})"
+```
+
+Returns under `facts`:
+
+- `exists`, `home_path`
+- `oracle_home_version` from `inventory/ContentsXML/comps.xml`
+- `release_update`, `db_ru_patch_id`, `db_ru_description` from `opatch lspatches`
+- `patch_ids`, `opatch_version`
+- `errors` map for partial failures
+
+Pure helpers (`parse_lspatches`, `parse_comps_version`, `gather_home_facts`) are
+unit-tested offline so upgrade prepare/cutover can assert 19.31 vs 19.32.
 
 ## patch_standbyfirst_info
 

@@ -62,6 +62,11 @@ ensure_vm() {
   if ! [ -f "${disk}" ]; then
     log "Creating ${short} root disk (${LAB_ROOT_DISK_SIZE})"
     qemu-img create -f qcow2 -F qcow2 -b "${BASE_IMAGE}" "${disk}" "${LAB_ROOT_DISK_SIZE}" >/dev/null
+  else
+    # Enlarge existing root disks when LAB_ROOT_DISK_SIZE increases. qemu-img
+    # needs the domain stopped; guest FS expansion is done by oracle_common
+    # (playbooks/00-prep-os.yml) via growpart/lvextend/xfs_growfs.
+    lab_ensure_root_disk_size "${short}" "${disk}" || true
   fi
 
   if vm_has_grid_disk "${short}" && ! [ -f "${grid_disk}" ]; then

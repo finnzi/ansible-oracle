@@ -14,10 +14,10 @@ oracle_instances:
   - name: super
     oracle_base: /super/app/oracle
     db_homes:
-      - suffix: db_home1
-        current: false
-      - suffix: db_home2
+      - suffix: dbhome_1
         current: true
+      - suffix: dbhome_2
+        current: false
     gi_base: /grid
     gi_homes:
       - suffix: 19c/gi_home1
@@ -28,6 +28,7 @@ oracle_instances:
       data: /super/d01
       archive: /super/a01
       flashback: /super/f01
+
       redo: /super/r01
     dataguard: true
     archivelog: true
@@ -43,9 +44,9 @@ oracle_instances:
   - name: duper
     oracle_base: /duper/app/oracle
     db_homes:
-      - suffix: db_home1
+      - suffix: dbhome_1
         current: true
-      - suffix: db_home2
+      - suffix: dbhome_2
         current: false
     gi_base: /grid
     gi_homes:
@@ -76,9 +77,9 @@ oracle_instances:
   - name: fluff
     oracle_base: /fluff/app/oracle
     db_homes:
-      - suffix: db_home1
+      - suffix: dbhome_1
         current: true
-      - suffix: db_home2
+      - suffix: dbhome_2
         current: false
     gi_base: /grid
     gi_homes:
@@ -106,13 +107,10 @@ oracle_instances:
     listener_port: 1523
     service_name: fluff_svc
 
-oracle_instance_overrides:
-  super:
-    dataguard: true
-    flashback: true
-    listener_vip: superdc1.domain.is
-    dg_role: primary
-    db_unique_name: super
+# Do NOT set oracle_instance_overrides here. Extra-var overrides replace
+# inventory/group_vars for every host and would pin the standby to primary
+# role/unique name. primary.yml / standby.yml supply per-group DG shape.
+# Ensure super is a Data Guard instance in the list above (dataguard: true).
 
 oracle_lab_guest_hosts:
   - ip: 192.168.87.11
