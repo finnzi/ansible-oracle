@@ -35,8 +35,10 @@ oracle_common_packages:
   - unzip
 
 # Expand the root LVM/XFS volume into free virtual-disk space (KVM lab OL
-# cloud image layout). Idempotent; no-op when already grown or layout differs.
-oracle_common_grow_root: true
+# cloud image layout). Off by default so non-lab hosts keep VG headroom;
+# the lab inventory opts in via inventory/group_vars/all.yml. Idempotent;
+# no-op when already grown or layout differs.
+oracle_common_grow_root: false
 oracle_common_grow_root_disk: /dev/vda
 oracle_common_grow_root_partnum: "4"
 oracle_common_grow_root_partition: /dev/vda4

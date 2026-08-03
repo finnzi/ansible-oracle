@@ -68,6 +68,16 @@ def test_db_deinstall_role_safety_contract():
     assert "oracle_db_deinstall_homes: []" in defaults
     assert "oracle_db_deinstall_rescue_parameter_files: true" in defaults
     assert "Fail when a deinstall target is still registered with Restart" in tasks
+    # Fail closed: discovery must succeed; empty/failed/multi-line srvctl must not skip the guard.
+    assert "Fail when Restart discovery could not list databases" in tasks
+    assert "Fail when Restart home discovery failed for a registered database" in tasks
+    assert "Fail when Restart home is not exactly one absolute path line" in tasks
+    assert "exactly one absolute" in tasks
+    assert "_deinstall_restart_home_paths" in tasks
+    assert "fails closed" in tasks
+    assert "failed_when: false" not in tasks.split("Read Restart database names before deinstall")[1].split(
+        "Fail when a deinstall target is still registered"
+    )[0]
     assert "Detach Oracle home from central inventory" in tasks
     assert "-detachHome" in tasks
     assert "Rescue spfile/pfile/orapw before removing Oracle home" in tasks
@@ -100,9 +110,22 @@ def test_network_role_supports_selected_homes_for_upgrade_target():
     tasks = (REPO_ROOT / "roles/oracle_network/tasks/main.yml").read_text(encoding="utf-8")
     assert "oracle_network_home_selection: current" in defaults
     assert "oracle_network_home_suffixes: []" in defaults
+    assert "oracle_network_instances: []" in defaults
+    assert "oracle_network_instances" in tasks
     assert "Fail when network home selection is invalid" in tasks
     assert "selection == 'selected'" in tasks
     assert "selected_suffixes" in tasks
+
+
+def test_patch_role_accepts_scoped_instances_list():
+    defaults = (REPO_ROOT / "roles/oracle_patch/defaults/main.yml").read_text(
+        encoding="utf-8"
+    )
+    tasks = (REPO_ROOT / "roles/oracle_patch/tasks/main.yml").read_text(encoding="utf-8")
+    assert "oracle_patch_instances: []" in defaults
+    assert "oracle_patch_instances" in tasks
+    # Prefer role-scoped list over inventory/extra-var oracle_instances.
+    assert "if (oracle_patch_instances | default([]) | length > 0)" in tasks
 
 
 def test_upgrade_prepare_playbook_contract():
@@ -130,6 +153,16 @@ def test_upgrade_prepare_playbook_contract():
     assert "clean_reinstall_unused_path" in playbook
     assert "parameter_file_dir" in playbook
     assert "data_dir" in playbook
+    # Play-level media defaults; -e wins because include_role never rebinds zip.
+    assert "db_ru_upgrade_zip" in playbook
+    assert "Extra vars (-e) win" in playbook
+    assert "never rebind zip or component" in playbook
+    assert "oracle_patch_db_zip: \"{{ _upgrade_prepare_zip }}\"" not in playbook
+    assert "oracle_patch_zip: \"{{ _upgrade_prepare_zip }}\"" not in playbook
+    # Role-scoped instance list survives -e oracle_instances (extra-var clash).
+    assert 'oracle_patch_instances: "{{ _upgrade_prepare_standalone_instances }}"' in playbook
+    assert 'oracle_network_instances: "{{ _upgrade_prepare_standalone_instances }}"' in playbook
+    assert 'oracle_instances: "{{ _upgrade_prepare_standalone_instances }}"' not in playbook
     # Prepare must not invent a third home suffix by default.
     assert "dbhome_3" not in playbook
 
@@ -147,6 +180,15 @@ def test_upgrade_cutover_playbook_contract():
     assert "Fail when target home is missing network/admin files" in playbook
     assert "tnsnames.ora" in playbook
     assert "Validate Restart uses upgrade target after cutover" in playbook
+    # Role-scoped list so -e oracle_instances cannot reintroduce Data Guard super.
+    assert "_upgrade_cutover_standalone_instances" in playbook
+    assert 'oracle_patch_instances: "{{ _upgrade_cutover_standalone_instances }}"' in playbook
+    assert 'oracle_instances: "{{ _upgrade_cutover_standalone_instances }}"' not in playbook
+    # Play-level media defaults; -e wins because include_role never rebinds zip.
+    assert "Extra vars (-e) win" in playbook
+    assert "never rebind zip or component" in playbook
+    assert "oracle_patch_db_zip: \"{{ _upgrade_cutover_zip }}\"" not in playbook
+    assert "oracle_patch_zip: \"{{ _upgrade_cutover_zip }}\"" not in playbook
 
 
 def test_upgrade_downtime_playbook_contract():
@@ -158,7 +200,7 @@ def test_upgrade_downtime_playbook_contract():
     assert "patch_standbyfirst_info" in playbook
     assert "playbooks/07-patch-standbyfirst.yml" in playbook
     assert "Fail when downtime confirmation is missing" in playbook
-    assert "intentionally not fully automated yet" in playbook
+    assert "readiness scaffold only" in playbook
 
 
 def test_oracle_home_facts_module_present():
@@ -181,6 +223,9 @@ def test_dual_db_upgrade_helper_script_contract():
     assert "--apply" in helper
     assert "--force-rebuild" in helper
     assert "--cutover" in helper
+    assert "--limit" in helper
+    assert "--extra-vars" in helper
+    assert "multi-instance-smoke.yml" in helper
     assert "detach" in helper.lower() or "rebuild" in helper.lower()
 
 
@@ -189,3 +234,7 @@ def test_remaining_gates_documents_clean_reinstall_prepare():
     assert "07-upgrade-dual-db-prepare.yml" in gates
     assert "dbhome_2" in gates
     assert "force" in gates.lower() or "rebuild" in gates.lower()
+    assert "multi-instance-smoke.yml" in gates
+    assert "--limit superdb1" in gates
+    # Align with GOAL_AUDIT / STATUS live proof naming.
+    assert "standalone `duper`" in gates

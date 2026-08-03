@@ -148,11 +148,18 @@
   failed_when: not _opatch_zip.stat.exists
 
 # ── Resolve DB-home patch targets ──────────────────────────────────────
+# Prefer oracle_patch_instances when the caller supplied a filtered list
+# (avoids extra-var oracle_instances clobbering include_role params).
 - name: Resolve inventory DB patch targets
   ansible.builtin.set_fact:
     _patch_inventory_targets: >-
       {%- set out=[] -%}
-      {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+      {%- set raw_instances = (
+            oracle_patch_instances
+            if (oracle_patch_instances | default([]) | length > 0)
+            else (oracle_instances | default([]))
+          ) -%}
+      {%- set instances = raw_instances | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
       {%- for inst in instances -%}
         {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
         {%- set target_suffix = oracle_patch_dual_home_suffix if (oracle_patch_dual_home_suffix | length > 0) else current_home.suffix -%}
@@ -243,7 +250,12 @@
   ansible.builtin.set_fact:
     _patch_inventory_grid_targets: >-
       {%- set out=[] -%}
-      {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+      {%- set raw_instances = (
+            oracle_patch_instances
+            if (oracle_patch_instances | default([]) | length > 0)
+            else (oracle_instances | default([]))
+          ) -%}
+      {%- set instances = raw_instances | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
       {%- for inst in instances -%}
         {%- if inst.gi_homes is defined and inst.gi_base is defined -%}
           {%- set current_home = (inst.gi_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.gi_homes[0]) -%}
@@ -354,7 +366,9 @@
     msg: >-
       oracle_patch_mode=oop_dual requires inventory-backed DB targets so the
       role can safely resolve Restart database names and target homes.
-      Configure oracle_instances or use inplace mode for brownfield-only homes.
+      Configure oracle_instances / oracle_patch_instances or use inplace mode
+      for brownfield-only homes.
+
   when:
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'

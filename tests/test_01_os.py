@@ -36,8 +36,11 @@ def test_os_prep_grows_root_disk_via_oracle_common():
     assert "growpart" in grow
     assert "lvextend" in grow
     assert "xfs_growfs" in grow
-    assert "oracle_common_grow_root: true" in defaults
+    # Role default is opt-in false; the KVM lab inventory enables growth.
+    assert "oracle_common_grow_root: false" in defaults
     assert "cloud-utils-growpart" in defaults
+    all_vars = (REPO_ROOT / "inventory/group_vars/all.yml").read_text(encoding="utf-8")
+    assert "oracle_common_grow_root: true" in all_vars
     assert "role: oracle_common" in prep
     assert "hosts: observer" in prep
     assert 'LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-250G}"' in common_sh

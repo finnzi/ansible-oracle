@@ -108,14 +108,14 @@
         - oracle_upgrade_downtime_execute | bool
         - oracle_upgrade_downtime_confirm != oracle_upgrade_downtime_confirm_required
 
-    - name: Fail until coordinated DG downtime cutover execution is implemented
+    - name: Fail — DG downtime cutover remains a readiness scaffold only
       ansible.builtin.fail:
         msg: >-
           Confirmation accepted, but coordinated multi-host non-standby-first
-          dual-home cutover execution is intentionally not fully automated yet.
-          Prepare both homes offline, then switch Restart homes during a
-          maintenance window following Oracle's non-standby-first procedure.
-          Prefer standby-first with component path
+          dual-home cutover execution is intentionally not automated (readiness
+          scaffold only). Prepare both homes offline, then switch Restart homes
+          during a maintenance window following Oracle's non-standby-first
+          procedure. Prefer standby-first with component path
           {{ oracle_upgrade_db_ru_component_path | default('39618649/39472050') }}
           when the DB RU is eligible.
       when: oracle_upgrade_downtime_execute | bool

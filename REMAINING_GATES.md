@@ -28,20 +28,25 @@ installs into the **same** folder, applies the upgrade RU, and deploys
 copy. It refuses to touch a path that is still the inventory current home or
 that Restart still registers.
 
-Guarded helper (preferred):
+Guarded helper (preferred). The shipped inventory only defines Data Guard
+`super` (via host overrides); standalone prepare/cutover need multi-instance
+vars (`duper`/`fluff`) and `--limit superdb1`:
 
 ```bash
+SMOKE=( -e @inventory/examples/multi-instance-smoke.yml --limit superdb1 )
+
 # Readiness / version report only
-scripts/run-dual-db-upgrade.sh
+scripts/run-dual-db-upgrade.sh "${SMOKE[@]}"
 
 # Rebuild unused home if needed + 19.32 + net files (no Restart switch)
-scripts/run-dual-db-upgrade.sh --apply
+scripts/run-dual-db-upgrade.sh "${SMOKE[@]}" --apply
 
 # Always detach/remove unused path first, then clean install
-scripts/run-dual-db-upgrade.sh --apply --force-rebuild
+scripts/run-dual-db-upgrade.sh "${SMOKE[@]}" --apply --force-rebuild
 
 # Planned cutover window
-scripts/run-dual-db-upgrade.sh --cutover --confirm CUTOVER_TO_UPGRADE_HOME
+scripts/run-dual-db-upgrade.sh "${SMOKE[@]}" \
+  --cutover --confirm CUTOVER_TO_UPGRADE_HOME
 ```
 
 Equivalent ansible-playbook form:
@@ -49,12 +54,14 @@ Equivalent ansible-playbook form:
 ```bash
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
+  -e @inventory/examples/multi-instance-smoke.yml --limit superdb1 \
   playbooks/07-upgrade-dual-db-prepare.yml \
   -e oracle_patch_dual_home_suffix=dbhome_2
 
 # Rebuild unused path if needed + install + 19.32 + network/admin:
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
+  -e @inventory/examples/multi-instance-smoke.yml --limit superdb1 \
   playbooks/07-upgrade-dual-db-prepare.yml \
   -e oracle_patch_dual_home_suffix=dbhome_2 \
   -e oracle_patch_apply_enabled=true
@@ -62,6 +69,7 @@ env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
 # Force detach/remove of dbhome_2 even if already at target RU:
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
+  -e @inventory/examples/multi-instance-smoke.yml --limit superdb1 \
   playbooks/07-upgrade-dual-db-prepare.yml \
   -e oracle_patch_dual_home_suffix=dbhome_2 \
   -e oracle_patch_apply_enabled=true \
@@ -73,19 +81,22 @@ Planned cutover (default readiness; confirmed switch + datapatch):
 ```bash
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
+  -e @inventory/examples/multi-instance-smoke.yml --limit superdb1 \
   playbooks/07-upgrade-dual-db-cutover.yml \
   -e oracle_patch_dual_home_suffix=dbhome_2
 
 env ANSIBLE_LOCAL_TEMP=/tmp/ansible-local \
   .venv/bin/ansible-playbook -i inventory/hosts.yml \
+  -e @inventory/examples/multi-instance-smoke.yml --limit superdb1 \
   playbooks/07-upgrade-dual-db-cutover.yml \
   -e oracle_patch_dual_home_suffix=dbhome_2 \
   -e oracle_upgrade_cutover_execute=true \
   -e oracle_upgrade_cutover_confirm=CUTOVER_TO_UPGRADE_HOME
 ```
 
-Live proof target: standalone `fluff` (`dbhome_1` = 19.31 running, `dbhome_2` =
-prepared 19.32, then cut over).
+Live proof target: standalone `duper` (`dbhome_1` = 19.31 running, `dbhome_2` =
+prepared 19.32, then cut over). `fluff` is the second standalone on the same
+host and follows the same path.
 ### Data Guard 19.32 standby-first (eligible component)
 
 ```bash

@@ -18,6 +18,14 @@
     oracle_upgrade_cutover_execute: false
     oracle_upgrade_cutover_confirm: ""
     oracle_upgrade_cutover_confirm_required: CUTOVER_TO_UPGRADE_HOME
+    # Default upgrade media for this playbook. Extra vars (-e) win
+    # unconditionally — do not re-bind zip/component under include_role vars
+    # (task/role params beat -e and would silently rewrite operator media).
+    oracle_patch_db_zip: >-
+      {{ oracle_stage_dir }}/{{ oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip') }}
+    oracle_patch_zip: "{{ oracle_patch_db_zip }}"
+    oracle_patch_apply_component_path: >-
+      {{ oracle_upgrade_db_ru_component_path | default('39618649/39472050') }}
   tasks:
     - name: Resolve dual-home cutover target identity
       ansible.builtin.set_fact:
@@ -29,35 +37,44 @@
           }}
         _upgrade_cutover_path: "{{ oracle_patch_dual_home_path | default('') }}"
 
+    - name: Resolve standalone instances for upgrade cutover
+      ansible.builtin.set_fact:
+        _upgrade_cutover_standalone_instances: >-
+          {{
+            (
+              oracle_instances | default([])
+            ) | oracle_apply_instance_overrides(
+              oracle_instance_overrides | default({}),
+              false
+            ) | rejectattr('dataguard', 'equalto', true) | list
+          }}
+
     - name: Resolve standalone cutover targets
       ansible.builtin.set_fact:
         _upgrade_cutover_targets: >-
           {%- set out = [] -%}
-          {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
-          {%- for inst in instances -%}
-            {%- if not (inst.dataguard | default(false) | bool) -%}
-              {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
-              {%- set target_suffix = (
-                _upgrade_cutover_path.rsplit('/', 1)[1]
-                if _upgrade_cutover_path | length > 0
-                else _upgrade_cutover_suffix
-              ) -%}
-              {%- set target_home_path = (
-                _upgrade_cutover_path
-                if _upgrade_cutover_path | length > 0
-                else inst.oracle_base ~ '/' ~ target_suffix
-              ) -%}
-              {%- set _ = out.append({
-                'name': inst.name,
-                'restart_db_name': inst.db_unique_name | default(inst.name),
-                'sid_name': inst.name,
-                'listener_name': 'LISTENER_' ~ (inst.name | upper),
-                'oracle_base': inst.oracle_base,
-                'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
-                'target_home_path': target_home_path,
-                'target_suffix': target_suffix
-              }) -%}
-            {%- endif -%}
+          {%- for inst in _upgrade_cutover_standalone_instances -%}
+            {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+            {%- set target_suffix = (
+              _upgrade_cutover_path.rsplit('/', 1)[1]
+              if _upgrade_cutover_path | length > 0
+              else _upgrade_cutover_suffix
+            ) -%}
+            {%- set target_home_path = (
+              _upgrade_cutover_path
+              if _upgrade_cutover_path | length > 0
+              else inst.oracle_base ~ '/' ~ target_suffix
+            ) -%}
+            {%- set _ = out.append({
+              'name': inst.name,
+              'restart_db_name': inst.db_unique_name | default(inst.name),
+              'sid_name': inst.name,
+              'listener_name': 'LISTENER_' ~ (inst.name | upper),
+              'oracle_base': inst.oracle_base,
+              'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+              'target_home_path': target_home_path,
+              'target_suffix': target_suffix
+            }) -%}
           {%- endfor -%}
           {{ out }}
 
@@ -167,25 +184,13 @@
         - oracle_upgrade_cutover_execute | bool
         - not (item.stat.exists | default(false))
 
-    - name: Resolve upgrade patch media for cutover
-      ansible.builtin.set_fact:
-        _upgrade_cutover_component_path: >-
-          {{
-            oracle_upgrade_db_ru_component_path | default('39618649/39472050')
-            if (oracle_patch_apply_component_path | default('') | length == 0)
-            else oracle_patch_apply_component_path
-          }}
-        _upgrade_cutover_zip: >-
-          {{
-            oracle_stage_dir ~ '/' ~
-            (oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip'))
-          }}
-      when: oracle_upgrade_cutover_execute | bool
-
     - name: Switch Restart to prepared upgrade home
       ansible.builtin.include_role:
         name: oracle_patch
       vars:
+        # Role-scoped list: extra-var oracle_instances must not clobber this.
+        # Restrict to standalones so dual-home switch does not hit Data Guard.
+        oracle_patch_instances: "{{ _upgrade_cutover_standalone_instances }}"
         oracle_patch_target: db
         oracle_patch_mode: oop_dual
         oracle_patch_switch_enabled: true
@@ -200,9 +205,7 @@
             else ''
           }}
         oracle_patch_dual_home_path: "{{ _upgrade_cutover_path }}"
-        oracle_patch_db_zip: "{{ _upgrade_cutover_zip }}"
-        oracle_patch_zip: "{{ _upgrade_cutover_zip }}"
-        oracle_patch_apply_component_path: "{{ _upgrade_cutover_component_path }}"
+        # Media: inherit play vars / extra vars (never rebind zip or component).
       when: oracle_upgrade_cutover_execute | bool
 
     - name: Validate Restart uses upgrade target after cutover

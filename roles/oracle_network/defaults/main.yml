@@ -8,6 +8,10 @@
 oracle_user: oracle
 oracle_group: oinstall
 oracle_instances: []
+# Optional role-scoped instance list. Prefer this over oracle_instances when
+# non-empty so callers can pass a filtered list via include_role vars even when
+# inventory/extra-vars still define the full oracle_instances.
+oracle_network_instances: []
 
 oracle_lab_guest_hosts: []
 oracle_lab_host_map_mode: standalone

@@ -25,7 +25,12 @@
       {%- set require_dg = false if dg_mode else true -%}
       {%- set selection = oracle_network_home_selection | default('current') -%}
       {%- set selected_suffixes = oracle_network_home_suffixes | default([]) -%}
-      {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
+      {%- set raw_instances = (
+            oracle_network_instances
+            if (oracle_network_instances | default([]) | length > 0)
+            else (oracle_instances | default([]))
+          ) -%}
+      {%- for raw_inst in (raw_instances | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
         {%- set inst = raw_inst -%}
         {# Primary hosts may mix standalone and Data Guard databases. Standby
            hosts only need listeners for the Data Guard instances they host. #}

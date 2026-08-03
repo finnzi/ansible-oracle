@@ -22,6 +22,14 @@
   become: true
   vars:
     oracle_upgrade_prepare_force_rebuild: false
+    # Default upgrade media for this playbook. Extra vars (-e) win
+    # unconditionally — do not re-bind zip/component under include_role vars
+    # (task/role params beat -e and would silently rewrite operator media).
+    oracle_patch_db_zip: >-
+      {{ oracle_stage_dir }}/{{ oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip') }}
+    oracle_patch_zip: "{{ oracle_patch_db_zip }}"
+    oracle_patch_apply_component_path: >-
+      {{ oracle_upgrade_db_ru_component_path | default('39618649/39472050') }}
   tasks:
     - name: Default dual-home upgrade target suffix when unset
       ansible.builtin.set_fact:
@@ -227,37 +235,19 @@
         - oracle_patch_apply_enabled | default(false) | bool
         - _upgrade_prepare_standalone_instances | length > 0
 
-    - name: Resolve upgrade patch component path for prepare
-      ansible.builtin.set_fact:
-        _upgrade_prepare_component_path: >-
-          {{
-            oracle_upgrade_db_ru_component_path | default('39618649/39472050')
-            if (oracle_patch_apply_component_path | default('') | length == 0)
-            else oracle_patch_apply_component_path
-          }}
-        _upgrade_prepare_zip: >-
-          {{
-            oracle_stage_dir ~ '/' ~
-            (oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip'))
-          }}
-      when:
-        - oracle_patch_apply_enabled | default(false) | bool
-        - _upgrade_prepare_standalone_instances | length > 0
-
     - name: Patch standalone dual-home upgrade target without Restart switch
       ansible.builtin.include_role:
         name: oracle_patch
       vars:
-        oracle_instances: "{{ _upgrade_prepare_standalone_instances }}"
+        # Role-scoped list: extra-var oracle_instances must not clobber this.
+        oracle_patch_instances: "{{ _upgrade_prepare_standalone_instances }}"
         oracle_patch_target: db
         oracle_patch_mode: oop_dual
         oracle_patch_switch_enabled: false
         oracle_patch_discover_oratab: false
         oracle_patch_run_datapatch: false
         oracle_patch_dg_standbyfirst: false
-        oracle_patch_db_zip: "{{ _upgrade_prepare_zip }}"
-        oracle_patch_zip: "{{ _upgrade_prepare_zip }}"
-        oracle_patch_apply_component_path: "{{ _upgrade_prepare_component_path }}"
+        # Media: inherit play vars / extra vars (never rebind zip or component).
       when:
         - oracle_patch_apply_enabled | default(false) | bool
         - _upgrade_prepare_standalone_instances | length > 0
@@ -266,7 +256,8 @@
       ansible.builtin.include_role:
         name: oracle_network
       vars:
-        oracle_instances: "{{ _upgrade_prepare_standalone_instances }}"
+        # Role-scoped list: extra-var oracle_instances must not clobber this.
+        oracle_network_instances: "{{ _upgrade_prepare_standalone_instances }}"
         oracle_network_home_selection: selected
         oracle_network_home_suffixes: >-
           {{

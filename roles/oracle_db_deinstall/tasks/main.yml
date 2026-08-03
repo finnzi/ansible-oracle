@@ -59,66 +59,125 @@
     msg: oracle_db_deinstall_homes contained no usable home_path values.
   when: _deinstall_targets | length == 0
 
+# Fail closed: if Restart discovery cannot run, refuse deinstall rather than
+# treating an empty/failed probe as "no databases registered".
 - name: Read Restart database names before deinstall
   ansible.builtin.shell: |
     set -o pipefail
     gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
-    if [ -x "${gi}/bin/srvctl" ]; then
-      "${gi}/bin/srvctl" config database 2>/dev/null || true
+    if [ ! -x "${gi}/bin/srvctl" ]; then
+      printf 'srvctl missing or not executable at %s/bin/srvctl\n' "${gi}" >&2
+      exit 2
     fi
+    # Empty output with rc=0 means no databases are registered (safe to proceed).
+    "${gi}/bin/srvctl" config database
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _deinstall_restart_dbs
   changed_when: false
-  failed_when: false
+
+- name: Fail when Restart discovery could not list databases
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall: could not discover Oracle Restart databases via
+      srvctl (rc={{ _deinstall_restart_dbs.rc | default('unknown') }}).
+      stderr={{ _deinstall_restart_dbs.stderr | default('') | trim }}.
+      Deinstall fails closed when Restart registration cannot be verified.
+  when: (_deinstall_restart_dbs.rc | default(1)) != 0
 
 - name: Read Restart Oracle home for each registered database
   ansible.builtin.shell: |
     set -o pipefail
     gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
-    "${gi}/bin/srvctl" config database -db {{ item | quote }} 2>/dev/null |
-      awk -F': ' '$1 == "Oracle home" {print $2}'
+    # Require exactly one absolute "Oracle home" line so multi-line blobs
+    # cannot pass validation while bypassing the active-home guard.
+    "${gi}/bin/srvctl" config database -db {{ item | quote }} |
+      awk -F': ' '
+        $1 == "Oracle home" {
+          gsub(/^[ \t]+|[ \t]+$/, "", $2)
+          if ($2 ~ /^\//) {
+            count++
+            home = $2
+          }
+        }
+        END {
+          if (count != 1) {
+            printf "expected exactly one absolute Oracle home line, got %d\n", count+0 > "/dev/stderr"
+            exit 1
+          }
+          print home
+        }
+      '
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _deinstall_restart_homes
   changed_when: false
-  failed_when: false
   loop: "{{ _deinstall_restart_dbs.stdout_lines | default([]) }}"
   loop_control:
     label: "{{ item }}"
+  when: (_deinstall_restart_dbs.stdout_lines | default([])) | length > 0
+
+- name: Fail when Restart home discovery failed for a registered database
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall: could not read Oracle home for Restart database
+      {{ item.item | default('?') }} (rc={{ item.rc | default('unknown') }}).
+      stderr={{ item.stderr | default('') | trim }}.
+      Deinstall fails closed when Restart registration cannot be verified.
+  loop: "{{ _deinstall_restart_homes.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('?') }}"
+  when:
+    - (_deinstall_restart_dbs.stdout_lines | default([])) | length > 0
+    - (item.rc | default(1)) != 0
+
+- name: Fail when Restart home is not exactly one absolute path line
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall: Restart database {{ item.item | default('?') }} did
+      not yield exactly one absolute Oracle home path line (got
+      {{ item.stdout | default('') | trim | quote }};
+      lines={{ item.stdout_lines | default([]) | length }}). Multi-line or
+      relative output is treated as discovery failure so the active-home guard
+      cannot be bypassed. Deinstall fails closed when registration cannot be
+      verified.
+  loop: "{{ _deinstall_restart_homes.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item | default('?') }}"
+  when:
+    - (_deinstall_restart_dbs.stdout_lines | default([])) | length > 0
+    - (item.rc | default(1)) == 0
+    - >-
+      (item.stdout_lines | default([]) | length != 1)
+      or not ((item.stdout_lines | default(['']) | first | trim) is match('^/'))
+
+- name: Normalize Restart Oracle home paths for active-home guard
+  ansible.builtin.set_fact:
+    _deinstall_restart_home_paths: >-
+      {{
+        _deinstall_restart_homes.results | default([])
+        | map(attribute='stdout_lines')
+        | map('first')
+        | map('trim')
+        | list
+      }}
   when: (_deinstall_restart_dbs.stdout_lines | default([])) | length > 0
 
 - name: Fail when a deinstall target is still registered with Restart
   ansible.builtin.fail:
     msg: >-
       Refusing to deinstall {{ item.home_path }} because Oracle Restart still
-      registers at least one database against that home:
-      {{
-        _deinstall_restart_homes.results | default([])
-        | selectattr('rc', 'defined')
-        | selectattr('stdout', 'defined')
-        | map(attribute='stdout')
-        | map('trim')
-        | select('equalto', item.home_path)
-        | list
-        | length
-      }} match(es). Switch the database off this home first (or only deinstall
+      registers at least one database against that home
+      ({{ _deinstall_restart_home_paths | default([]) | select('equalto', item.home_path) | list | length }}
+      match(es)). Switch the database off this home first (or only deinstall
       the unused dual-home target path).
   loop: "{{ _deinstall_targets }}"
   loop_control:
     label: "{{ item.home_path }}"
   when: >-
-    (
-      _deinstall_restart_homes.results | default([])
-      | selectattr('stdout', 'defined')
-      | map(attribute='stdout')
-      | map('trim')
-      | select('equalto', item.home_path)
-      | list
-      | length
-    ) > 0
+    item.home_path in (_deinstall_restart_home_paths | default([]))
 
 - name: Stat deinstall target homes
   ansible.builtin.stat:

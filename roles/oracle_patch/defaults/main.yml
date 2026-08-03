@@ -39,6 +39,11 @@ oracle_user: oracle
 oracle_group: oinstall
 oracle_stage_dir: /u01/stage
 oracle_instances: []
+# Optional role-scoped instance list. Prefer this over oracle_instances when
+# non-empty so callers can pass a filtered list via include_role vars even when
+# inventory/extra-vars still define the full oracle_instances (extra vars beat
+# include_role params for the same name).
+oracle_patch_instances: []
 
 oracle_patch_mode: inplace
 oracle_patch_target: db

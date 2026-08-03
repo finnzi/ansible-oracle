@@ -4,6 +4,11 @@
 # Guarded standalone dual-home upgrade helper (prepare + optional cutover).
 # Default is readiness/prepare-only. Destructive cutover requires:
 #   --cutover --confirm CUTOVER_TO_UPGRADE_HOME
+#
+# The shipped inventory only defines `super`, which host overrides turn into a
+# Data Guard instance. Standalone prepare/cutover therefore need multi-instance
+# variables (duper/fluff) and usually --limit superdb1. See --extra-vars / --limit
+# below and the examples.
 
 set -euo pipefail
 
@@ -21,15 +26,23 @@ APPLY=0
 FORCE_REBUILD=0
 CUTOVER=0
 CONFIRM=""
+LIMIT=""
 DUAL_HOME_SUFFIX="${DUAL_HOME_SUFFIX:-dbhome_2}"
 UPGRADE_ZIP="${UPGRADE_ZIP:-/u01/stage/p39618649_190000_Linux-x86-64.zip}"
 UPGRADE_COMPONENT_PATH="${UPGRADE_COMPONENT_PATH:-39618649/39472050}"
+# Accumulated ansible -e / --extra-vars (repeatable).
+EXTRA_VARS=()
 
 usage() {
   cat <<'EOF'
 Usage: scripts/run-dual-db-upgrade.sh [options]
 
 Standalone dual-home upgrade against the 19.32 DB RU combo by default.
+
+The default inventory only has Data Guard `super` (via host overrides), so the
+standalone filter finds no targets unless you also supply multi-instance vars
+(for example inventory/examples/multi-instance-smoke.yml) and typically
+--limit superdb1.
 
 Phases:
   readiness (default)  Plan/facts only (no detach/install/patch).
@@ -46,6 +59,9 @@ Options:
   --cutover            Execute planned cutover after prepare.
   --confirm TOKEN      Required for cutover: CUTOVER_TO_UPGRADE_HOME.
   --inventory PATH     Inventory path (default: inventory/hosts.yml).
+  --limit HOSTPATTERN  Pass-through ansible-playbook --limit.
+  -e, --extra-vars VAR Pass-through ansible-playbook -e (repeatable; use
+                       @file.yml for multi-instance smoke vars).
   --dual-home-suffix SUFFIX
                        Target home suffix (default: dbhome_2).
   --upgrade-zip PATH   Staged upgrade zip path inside guests.
@@ -54,17 +70,28 @@ Options:
   -h, --help           Show this help.
 
 Examples:
-  # Readiness / version report only
-  scripts/run-dual-db-upgrade.sh
+  # Readiness with multi-instance standalones on the primary host
+  scripts/run-dual-db-upgrade.sh \
+    -e @inventory/examples/multi-instance-smoke.yml \
+    --limit superdb1
 
   # Clean rebuild of dbhome_2 + 19.32 + net files (DB stays on current home)
-  scripts/run-dual-db-upgrade.sh --apply
+  scripts/run-dual-db-upgrade.sh \
+    -e @inventory/examples/multi-instance-smoke.yml \
+    --limit superdb1 \
+    --apply
 
   # Force rebuild even if already at 19.32
-  scripts/run-dual-db-upgrade.sh --apply --force-rebuild
+  scripts/run-dual-db-upgrade.sh \
+    -e @inventory/examples/multi-instance-smoke.yml \
+    --limit superdb1 \
+    --apply --force-rebuild
 
   # Planned cutover window
-  scripts/run-dual-db-upgrade.sh --cutover --confirm CUTOVER_TO_UPGRADE_HOME
+  scripts/run-dual-db-upgrade.sh \
+    -e @inventory/examples/multi-instance-smoke.yml \
+    --limit superdb1 \
+    --cutover --confirm CUTOVER_TO_UPGRADE_HOME
 EOF
 }
 
@@ -102,6 +129,16 @@ while [ "$#" -gt 0 ]; do
     --inventory)
       [ "$#" -ge 2 ] || { echo "error: --inventory requires a path" >&2; exit 1; }
       INVENTORY="$2"
+      shift
+      ;;
+    --limit)
+      [ "$#" -ge 2 ] || { echo "error: --limit requires a host pattern" >&2; exit 1; }
+      LIMIT="$2"
+      shift
+      ;;
+    -e|--extra-vars)
+      [ "$#" -ge 2 ] || { echo "error: $1 requires a value" >&2; exit 1; }
+      EXTRA_VARS+=(-e "$2")
       shift
       ;;
     --dual-home-suffix)
@@ -147,6 +184,14 @@ prepare_args=(
   "XDG_CACHE_HOME=${XDG_CACHE_HOME}"
   "${PLAYBOOK}" -i "${INVENTORY}"
   playbooks/07-upgrade-dual-db-prepare.yml
+)
+if [ -n "${LIMIT}" ]; then
+  prepare_args+=(--limit "${LIMIT}")
+fi
+if [ "${#EXTRA_VARS[@]}" -gt 0 ]; then
+  prepare_args+=("${EXTRA_VARS[@]}")
+fi
+prepare_args+=(
   -e "oracle_patch_dual_home_suffix=${DUAL_HOME_SUFFIX}"
   -e "oracle_patch_db_zip=${UPGRADE_ZIP}"
   -e "oracle_patch_zip=${UPGRADE_ZIP}"
@@ -162,18 +207,29 @@ run_cmd "${prepare_args[@]}"
 
 if [ "${CUTOVER}" -eq 1 ]; then
   echo "[upgrade] planned cutover to ${DUAL_HOME_SUFFIX}"
-  run_cmd env \
-    "ANSIBLE_LOCAL_TEMP=${ANSIBLE_LOCAL_TEMP}" \
-    "ANSIBLE_SSH_CONTROL_PATH_DIR=${ANSIBLE_SSH_CONTROL_PATH_DIR}" \
-    "XDG_CACHE_HOME=${XDG_CACHE_HOME}" \
-    "${PLAYBOOK}" -i "${INVENTORY}" \
-    playbooks/07-upgrade-dual-db-cutover.yml \
-    -e "oracle_patch_dual_home_suffix=${DUAL_HOME_SUFFIX}" \
-    -e "oracle_patch_db_zip=${UPGRADE_ZIP}" \
-    -e "oracle_patch_zip=${UPGRADE_ZIP}" \
-    -e "oracle_patch_apply_component_path=${UPGRADE_COMPONENT_PATH}" \
-    -e oracle_upgrade_cutover_execute=true \
+  cutover_args=(
+    env
+    "ANSIBLE_LOCAL_TEMP=${ANSIBLE_LOCAL_TEMP}"
+    "ANSIBLE_SSH_CONTROL_PATH_DIR=${ANSIBLE_SSH_CONTROL_PATH_DIR}"
+    "XDG_CACHE_HOME=${XDG_CACHE_HOME}"
+    "${PLAYBOOK}" -i "${INVENTORY}"
+    playbooks/07-upgrade-dual-db-cutover.yml
+  )
+  if [ -n "${LIMIT}" ]; then
+    cutover_args+=(--limit "${LIMIT}")
+  fi
+  if [ "${#EXTRA_VARS[@]}" -gt 0 ]; then
+    cutover_args+=("${EXTRA_VARS[@]}")
+  fi
+  cutover_args+=(
+    -e "oracle_patch_dual_home_suffix=${DUAL_HOME_SUFFIX}"
+    -e "oracle_patch_db_zip=${UPGRADE_ZIP}"
+    -e "oracle_patch_zip=${UPGRADE_ZIP}"
+    -e "oracle_patch_apply_component_path=${UPGRADE_COMPONENT_PATH}"
+    -e oracle_upgrade_cutover_execute=true
     -e "oracle_upgrade_cutover_confirm=${CONFIRM}"
+  )
+  run_cmd "${cutover_args[@]}"
 fi
 
 echo "[upgrade] done"
