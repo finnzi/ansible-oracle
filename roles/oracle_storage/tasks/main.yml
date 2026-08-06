@@ -70,7 +70,7 @@
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0775"
-  loop: "{{ oracle_instances | subelements('gi_homes') }}"
+  loop: "{{ oracle_instances | subelements('gi_homes', skip_missing=True) }}"
   loop_control:
     loop_var: _pair
     label: "{{ _pair.0.name }}:{{ _pair.1.suffix }}"

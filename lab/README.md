@@ -115,8 +115,10 @@ Preflight requires the lab media files named in `inventory/group_vars/all.yml`:
 - `V982064-01-Oracle.19c.Database.Client.zip`
 - `V982068-01-Oracle.19c.Grid.Infrastructure.zip`
 - `p6880880_190000_Linux-x86-64.zip`
-- `p39062931_190000_Linux-x86-64.zip`
-- `p39062956_190000_Linux-x86-64.zip`
+- `p39062931_190000_Linux-x86-64.zip` (19.31 DB RU combo)
+- `p39062956_190000_Linux-x86-64.zip` (19.31 GI RU combo)
+- `p39618649_190000_Linux-x86-64.zip` (19.32 DB RU combo)
+- `p39618711_190000_Linux-x86-64.zip` (19.32 GI RU combo)
 - `info.txt`
 
 For OS-only lab work without Oracle media, set `LAB_ALLOW_MISSING_MEDIA=1`.
@@ -127,7 +129,22 @@ user. Every parent directory must be traversable by that user. Thus, making
 is private (`0700`). Put the media somewhere libvirt can traverse and read.
 `/var/lib/libvirt/ansible-oracle-sources` is the recommended permanent location;
 a top-level `/sources` also works if its full path is readable, but is less
-conventional. For example:
+conventional.
+
+When copying media into `/var/lib/libvirt/ansible-oracle-sources` from a home
+directory, fix SELinux labels so guest `oracle` can read the 9p mount:
+
+```bash
+cp ~/sources/oracle/* /var/lib/libvirt/ansible-oracle-sources/
+chmod a+rX /var/lib/libvirt/ansible-oracle-sources/*
+chcon -t virt_var_lib_t /var/lib/libvirt/ansible-oracle-sources/*
+# or: restorecon -v /var/lib/libvirt/ansible-oracle-sources/*
+```
+
+Files left with `user_home_t` may show mode `755` yet still return
+`Permission denied` to non-owner guest users.
+
+For example:
 
 ```bash
 ./lab/scripts/prepare-host-fedora.sh --skip-package-install
@@ -188,8 +205,15 @@ when preparing a host or debugging permissions.
 
 ## Notes
 
-- Root disks default to `120G` qcow2 overlays. Override with
-  `LAB_ROOT_DISK_SIZE`.
+- Root disks default to `250G` qcow2 overlays (enough for multi-instance dual
+  homes plus RU upgrade workspace). Override with `LAB_ROOT_DISK_SIZE`.
+  - **Host (repeatable):** `lab-up.sh` creates disks at that size and enlarges
+    existing stopped-domain qcow2 files via `lab_ensure_root_disk_size`.
+  - **Guest (repeatable):** `playbooks/00-prep-os.yml` → `oracle_common`
+    `grow-root.yml` runs `growpart` on `/dev/vda4`, `pvresize`, `lvextend`, and
+    `xfs_growfs` (idempotent). Cloud-init does the same on first boot.
+  - If a VM is still running when the host disk is undersized, `lab-up` warns;
+    stop the domain, re-run `lab-up`, then `ansible-playbook playbooks/00-prep-os.yml`.
 - DB VMs also get a small Grid disk at `vdb` for Oracle Restart metadata.
   Override with `LAB_GRID_DISK_SIZE`.
 - DB nodes default to `12288` MiB and 4 vCPUs. Override with

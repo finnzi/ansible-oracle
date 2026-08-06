@@ -1,0 +1,395 @@
+---
+# playbooks/07-upgrade-dual-db-prepare.yml
+#
+# Out-of-place DB upgrade prepare for standalone instances:
+#   1. Resolve the unused dual-home target path (default dbhome_2).
+#   2. When apply is enabled and rebuild is needed: detach/remove that path
+#      (never if Restart still uses it), then clean-install into the same folder.
+#   3. Apply the upgrade RU (default 19.32 DB RU component) without switching.
+#   4. Deploy network/admin (listener/tnsnames/sqlnet) into the target home so
+#      cutover never depends on a manual TNS copy.
+#   5. Report version facts; fail apply if target is not at the expected RU.
+#
+# Readiness (default): plan + facts only.
+# Apply: -e oracle_patch_apply_enabled=true
+# Always rebuild unused home even if already at target RU:
+#   -e oracle_upgrade_prepare_force_rebuild=true
+#
+# Data Guard: use standby-first or the downtime playbook, not this prepare.
+
+- name: Prepare standalone dual-home upgrade target
+  hosts: oracle_db_hosts
+  become: true
+  vars:
+    oracle_upgrade_prepare_force_rebuild: false
+    # Default upgrade media for this playbook. Extra vars (-e) win
+    # unconditionally — do not re-bind zip/component under include_role vars
+    # (task/role params beat -e and would silently rewrite operator media).
+    oracle_patch_db_zip: >-
+      {{ oracle_stage_dir }}/{{ oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip') }}
+    oracle_patch_zip: "{{ oracle_patch_db_zip }}"
+    oracle_patch_apply_component_path: >-
+      {{ oracle_upgrade_db_ru_component_path | default('39618649/39472050') }}
+  tasks:
+    - name: Default dual-home upgrade target suffix when unset
+      ansible.builtin.set_fact:
+        oracle_patch_dual_home_suffix: >-
+          {{
+            oracle_patch_dual_home_suffix
+            if (oracle_patch_dual_home_suffix | default('') | length > 0)
+            else 'dbhome_2'
+          }}
+      when: oracle_patch_dual_home_path | default('') | length == 0
+
+    - name: Resolve standalone instances for upgrade prepare
+      ansible.builtin.set_fact:
+        _upgrade_prepare_standalone_instances: >-
+          {{
+            (
+              oracle_instances | default([])
+            ) | oracle_apply_instance_overrides(
+              oracle_instance_overrides | default({}),
+              false
+            ) | rejectattr('dataguard', 'equalto', true) | list
+          }}
+
+    - name: Report Data Guard instances skipped by standalone prepare
+      ansible.builtin.debug:
+        msg: >-
+          Skipping Data Guard instance(s) in standalone upgrade prepare. Use
+          playbooks/07-patch-standbyfirst.yml for eligible DB RU components, or
+          playbooks/07-upgrade-dual-db-downtime.yml for non-standby-first
+          bundles. Skipped:
+          {{
+            (
+              oracle_instances | default([])
+            ) | oracle_apply_instance_overrides(
+              oracle_instance_overrides | default({}),
+              false
+            ) | selectattr('dataguard', 'equalto', true)
+              | map(attribute='name')
+              | list
+          }}
+      when: >-
+        (
+          (
+            oracle_instances | default([])
+          ) | oracle_apply_instance_overrides(
+            oracle_instance_overrides | default({}),
+            false
+          ) | selectattr('dataguard', 'equalto', true) | list | length
+        ) > 0
+
+    - name: Resolve upgrade prepare home targets
+      ansible.builtin.set_fact:
+        _upgrade_prepare_home_targets: >-
+          {%- set out = [] -%}
+          {%- set seen = [] -%}
+          {%- set target_suffix = oracle_patch_dual_home_suffix if (oracle_patch_dual_home_suffix | default('') | length > 0) else 'dbhome_2' -%}
+          {%- for inst in _upgrade_prepare_standalone_instances -%}
+            {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+            {%- set target_path = (
+              oracle_patch_dual_home_path
+              if (oracle_patch_dual_home_path | default('') | length > 0)
+              else (inst.oracle_base ~ '/' ~ target_suffix)
+            ) -%}
+            {%- set target_sfx = target_path.rsplit('/', 1)[1] -%}
+            {%- if target_path not in seen -%}
+              {%- set _ = seen.append(target_path) -%}
+              {%- set data_dir = (inst.dirs.data | default('')) -%}
+              {%- set db_unique = inst.db_unique_name | default(inst.name) -%}
+              {%- set param_dir = (
+                (data_dir ~ '/' ~ db_unique)
+                if (data_dir | length > 0)
+                else (inst.oracle_base ~ '/parameter_files/' ~ db_unique)
+              ) -%}
+              {%- set _ = out.append({
+                'name': inst.name,
+                'restart_db_name': db_unique,
+                'oracle_base': inst.oracle_base,
+                'home_suffix': target_sfx,
+                'home_path': target_path,
+                'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+                'data_dir': data_dir,
+                'parameter_file_dir': param_dir
+              }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: _upgrade_prepare_standalone_instances | length > 0
+
+    - name: Fail when target path equals the current runtime home
+      ansible.builtin.fail:
+        msg: >-
+          Refusing to rebuild {{ item.home_path }} because it is also the
+          inventory current home for {{ item.name }}. Dual-home prepare only
+          rebuilds the unused target path.
+      loop: "{{ _upgrade_prepare_home_targets | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.home_path }}"
+      when:
+        - _upgrade_prepare_home_targets | default([]) | length > 0
+        - item.home_path == item.current_home_path
+
+    - name: Read existing target home version facts (prepare decision)
+      oracle_home_facts:
+        home_path: "{{ item.home_path }}"
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_prepare_existing_facts
+      loop: "{{ _upgrade_prepare_home_targets | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.home_path }}"
+      when: _upgrade_prepare_home_targets | default([]) | length > 0
+
+    - name: Decide which target homes need a clean rebuild
+      ansible.builtin.set_fact:
+        _upgrade_prepare_rebuild_homes: >-
+          {%- set out = [] -%}
+          {%- set expected_ru = oracle_upgrade_release_update | default('19.32.0.0.260721') -%}
+          {%- set expected_id = oracle_upgrade_db_ru_patch_id | default('39472050') -%}
+          {%- for result in _upgrade_prepare_existing_facts.results | default([]) -%}
+            {%- set facts = result.facts | default({}) -%}
+            {%- set at_target = (
+              (facts.release_update | default('')) == expected_ru
+              or (facts.db_ru_patch_id | default('')) == expected_id
+            ) -%}
+            {%- set needs = (
+              oracle_upgrade_prepare_force_rebuild | default(false) | bool
+              or not (facts.exists | default(false))
+              or not at_target
+            ) -%}
+            {%- if needs -%}
+              {%- set _ = out.append(result.item) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+      when: _upgrade_prepare_home_targets | default([]) | length > 0
+
+    - name: Record rebuild path list
+      ansible.builtin.set_fact:
+        _upgrade_prepare_rebuild_paths: >-
+          {{
+            _upgrade_prepare_rebuild_homes | default([])
+            | map(attribute='home_path')
+            | list
+          }}
+      when: _upgrade_prepare_home_targets | default([]) | length > 0
+
+    - name: Report prepare rebuild plan
+      ansible.builtin.debug:
+        msg:
+          home_path: "{{ item.home_path }}"
+          name: "{{ item.name }}"
+          rebuild: "{{ item.home_path in (_upgrade_prepare_rebuild_paths | default([])) }}"
+          force_rebuild: "{{ oracle_upgrade_prepare_force_rebuild | default(false) | bool }}"
+          apply: "{{ oracle_patch_apply_enabled | default(false) | bool }}"
+      loop: "{{ _upgrade_prepare_home_targets | default([]) }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.home_path }}"
+      when: _upgrade_prepare_home_targets | default([]) | length > 0
+
+    - name: Detach and remove unused dual-home target for clean reinstall
+      ansible.builtin.include_role:
+        name: oracle_db_deinstall
+      vars:
+        oracle_db_deinstall_execute: true
+        oracle_db_deinstall_homes: "{{ _upgrade_prepare_rebuild_homes | default([]) }}"
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - (_upgrade_prepare_rebuild_homes | default([])) | length > 0
+
+    - name: Report readiness-only (no rebuild/install/patch)
+      ansible.builtin.debug:
+        msg: >-
+          Upgrade prepare readiness only. Re-run with
+          oracle_patch_apply_enabled=true to detach/remove the unused home when
+          needed, clean-install into the same path, apply the upgrade RU, and
+          deploy network/admin files. Optional
+          oracle_upgrade_prepare_force_rebuild=true always rebuilds the unused
+          path.
+      when: not (oracle_patch_apply_enabled | default(false) | bool)
+
+    - name: Install standalone dual-home upgrade target into cleaned path
+      ansible.builtin.include_role:
+        name: oracle_db_install
+      vars:
+        oracle_db_install_instances: "{{ _upgrade_prepare_standalone_instances }}"
+        oracle_db_install_home_selection: selected
+        oracle_db_install_home_suffixes: >-
+          {{
+            [oracle_patch_dual_home_suffix]
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 and
+              oracle_patch_dual_home_path | default('') | length == 0
+            )
+            else []
+          }}
+        oracle_db_install_home_paths: >-
+          {{
+            [oracle_patch_dual_home_path]
+            if (oracle_patch_dual_home_path | default('') | length > 0)
+            else []
+          }}
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - _upgrade_prepare_standalone_instances | length > 0
+
+    - name: Patch standalone dual-home upgrade target without Restart switch
+      ansible.builtin.include_role:
+        name: oracle_patch
+      vars:
+        # Role-scoped list: extra-var oracle_instances must not clobber this.
+        oracle_patch_instances: "{{ _upgrade_prepare_standalone_instances }}"
+        oracle_patch_target: db
+        oracle_patch_mode: oop_dual
+        oracle_patch_switch_enabled: false
+        oracle_patch_discover_oratab: false
+        oracle_patch_run_datapatch: false
+        oracle_patch_dg_standbyfirst: false
+        # Media: inherit play vars / extra vars (never rebind zip or component).
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - _upgrade_prepare_standalone_instances | length > 0
+
+    - name: Deploy network/admin into the unused upgrade target home
+      ansible.builtin.include_role:
+        name: oracle_network
+      vars:
+        # Role-scoped list: extra-var oracle_instances must not clobber this.
+        oracle_network_instances: "{{ _upgrade_prepare_standalone_instances }}"
+        oracle_network_home_selection: selected
+        oracle_network_home_suffixes: >-
+          {{
+            [oracle_patch_dual_home_suffix]
+            if (
+              oracle_patch_dual_home_suffix | default('') | length > 0 and
+              oracle_patch_dual_home_path | default('') | length == 0
+            )
+            else (
+              [oracle_patch_dual_home_path.rsplit('/', 1)[1]]
+              if (oracle_patch_dual_home_path | default('') | length > 0)
+              else ['dbhome_2']
+            )
+          }}
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - _upgrade_prepare_standalone_instances | length > 0
+
+- name: Report prepared dual-home upgrade versions
+  hosts: oracle_db_hosts
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Resolve prepare version report targets
+      ansible.builtin.set_fact:
+        _upgrade_prepare_report_targets: >-
+          {%- set out = [] -%}
+          {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+          {%- set target_suffix = oracle_patch_dual_home_suffix if (oracle_patch_dual_home_suffix | default('') | length > 0) else 'dbhome_2' -%}
+          {%- for inst in instances -%}
+            {%- if not (inst.dataguard | default(false) | bool) -%}
+              {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+              {%- set target_path = oracle_patch_dual_home_path if (oracle_patch_dual_home_path | default('') | length > 0) else (inst.oracle_base ~ '/' ~ target_suffix) -%}
+              {%- set _ = out.append({
+                'name': inst.name,
+                'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+                'target_home_path': target_path
+              }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Read current home version facts
+      oracle_home_facts:
+        home_path: "{{ item.current_home_path }}"
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_current_home_facts
+      loop: "{{ _upgrade_prepare_report_targets }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.current_home_path }}"
+      when: _upgrade_prepare_report_targets | length > 0
+
+    - name: Read target home version facts
+      oracle_home_facts:
+        home_path: "{{ item.target_home_path }}"
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_target_home_facts
+      loop: "{{ _upgrade_prepare_report_targets }}"
+      loop_control:
+        label: "{{ item.name }}:{{ item.target_home_path }}"
+      when: _upgrade_prepare_report_targets | length > 0
+
+    - name: Check target home network/admin files
+      ansible.builtin.stat:
+        path: "{{ item.target_home_path }}/network/admin/{{ item.net_file }}"
+      register: _upgrade_prepare_net_stats
+      loop: >-
+        {%- set out = [] -%}
+        {%- for tgt in _upgrade_prepare_report_targets | default([]) -%}
+          {%- for net_file in ['tnsnames.ora', 'sqlnet.ora', 'listener.ora'] -%}
+            {%- set _ = out.append(tgt | combine({'net_file': net_file})) -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {{ out }}
+      loop_control:
+        label: "{{ item.name }}:{{ item.net_file }}"
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - _upgrade_prepare_report_targets | length > 0
+
+    - name: Fail when target home is missing network/admin files after apply
+      ansible.builtin.fail:
+        msg: >-
+          Target home {{ item.item.target_home_path }} is missing
+          network/admin/{{ item.item.net_file }}. Dual-home prepare must deploy
+          net files so cutover does not depend on a manual TNS_ADMIN copy.
+      loop: "{{ _upgrade_prepare_net_stats.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}:{{ item.item.net_file }}"
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - not (item.stat.exists | default(false))
+
+    - name: Report prepare version matrix
+      ansible.builtin.debug:
+        msg:
+          name: "{{ item.item.name }}"
+          current_home: "{{ item.item.current_home_path }}"
+          current_release_update: "{{ item.facts.release_update | default('unknown') }}"
+          current_db_ru_patch_id: "{{ item.facts.db_ru_patch_id | default('unknown') }}"
+          target_home: "{{ _upgrade_target_home_facts.results[idx].item.target_home_path }}"
+          target_release_update: "{{ _upgrade_target_home_facts.results[idx].facts.release_update | default('unknown') }}"
+          target_db_ru_patch_id: "{{ _upgrade_target_home_facts.results[idx].facts.db_ru_patch_id | default('unknown') }}"
+          expected_upgrade_release_update: "{{ oracle_upgrade_release_update | default('19.32.0.0.260721') }}"
+          restart_switch: deferred
+          rebuild_policy: clean_reinstall_unused_path
+      loop: "{{ _upgrade_current_home_facts.results | default([]) }}"
+      loop_control:
+        index_var: idx
+        label: "{{ item.item.name }}"
+      when: _upgrade_prepare_report_targets | length > 0
+
+    - name: Fail when apply was requested but target is not at expected upgrade version
+      ansible.builtin.fail:
+        msg: >-
+          Upgrade prepare expected target home
+          {{ item.item.target_home_path }} at release_update
+          {{ oracle_upgrade_release_update | default('19.32.0.0.260721') }}
+          (or patch id {{ oracle_upgrade_db_ru_patch_id | default('39472050') }}),
+          but facts report release_update={{ item.facts.release_update | default('none') }}
+          db_ru_patch_id={{ item.facts.db_ru_patch_id | default('none') }}.
+      loop: "{{ _upgrade_target_home_facts.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}"
+      when:
+        - oracle_patch_apply_enabled | default(false) | bool
+        - _upgrade_prepare_report_targets | length > 0
+        - >-
+            (item.facts.release_update | default('')) !=
+            (oracle_upgrade_release_update | default('19.32.0.0.260721'))
+            and
+            (item.facts.db_ru_patch_id | default('')) !=
+            (oracle_upgrade_db_ru_patch_id | default('39472050'))

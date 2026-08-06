@@ -24,7 +24,7 @@ def _standby_home(standby_exec) -> str:
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().splitlines()[-1]
-    return "/super/app/oracle/db_home1"
+    return "/super/app/oracle/dbhome_1"
 
 
 def test_standby_candidate_has_restart_online(standby_exec):
@@ -79,6 +79,6 @@ def test_standby_candidate_has_no_standalone_database(standby_exec):
     )
     assert oratab.stdout.strip() in (
         "",
-        "super:/super/app/oracle/db_home1:N",
-        "super:/super/app/oracle/db_home2:N",
+        "super:/super/app/oracle/dbhome_1:N",
+        "super:/super/app/oracle/dbhome_2:N",
     )

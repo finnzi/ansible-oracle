@@ -1,0 +1,33 @@
+---
+# defaults/main.yml for oracle_db_deinstall
+#
+# Safely remove an unused Oracle DB software home so the same path can be
+# reinstalled cleanly (dual-home upgrade prepare). Prefer detachHome, then
+# remove the directory. Never remove a home that Restart still uses.
+
+oracle_user: oracle
+oracle_group: oinstall
+oracle_inventory_loc: /home/oracle/oraInventory
+oracle_inst_group: oinstall
+oracle_gi_home: /grid/19c/gi_home1
+
+# List of homes to remove. Each item is a path string or a dict with
+# home_path (required) and optional name/oracle_base/home_suffix.
+oracle_db_deinstall_homes: []
+
+# When false, role is report-only (used by readiness paths).
+oracle_db_deinstall_execute: false
+
+# After detachHome (best-effort), always remove the directory tree when execute.
+oracle_db_deinstall_remove_directory: true
+
+# Also remove per-home staging dirs under oracle_base/.stage_<suffix>.
+oracle_db_deinstall_remove_stage: true
+
+# Before removing an Oracle home, copy spfile/pfile/orapw out of $OH/dbs (and
+# rewrite Restart paths that still pointed under the doomed home). Durable
+# location matches oracle_restart_manage:
+#   {{ data_dir }}/{{ db_name }}/spfile{{ db_name }}.ora
+# When data_dir is unknown, fall back to
+#   {{ oracle_base }}/parameter_files/{{ db_name }}/
+oracle_db_deinstall_rescue_parameter_files: true

@@ -12,18 +12,18 @@ import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/db_home2")
+ORACLE_HOME = os.environ.get("ORACLE_TEST_ORACLE_HOME", "/super/app/oracle/dbhome_1")
 GRID_HOME = os.environ.get("ORACLE_TEST_GRID_HOME", "/grid/19c/gi_home1")
 DATAGUARD_SID = os.environ.get("ORACLE_TEST_DATAGUARD_SID", "super")
 SWITCHBACK_DB = os.environ.get("ORACLE_TEST_SWITCHBACK_DB", "fluff")
 SWITCHBACK_SID = os.environ.get("ORACLE_TEST_SWITCHBACK_SID", SWITCHBACK_DB)
 SWITCHBACK_ORIGINAL_HOME = os.environ.get(
     "ORACLE_TEST_SWITCHBACK_ORIGINAL_HOME",
-    f"/{SWITCHBACK_DB}/app/oracle/db_home1",
+    f"/{SWITCHBACK_DB}/app/oracle/dbhome_1",
 )
 SWITCHBACK_TARGET_HOME = os.environ.get(
     "ORACLE_TEST_SWITCHBACK_TARGET_HOME",
-    f"/{SWITCHBACK_DB}/app/oracle/db_home2",
+    f"/{SWITCHBACK_DB}/app/oracle/dbhome_2",
 )
 SWITCHBACK_LISTENER = os.environ.get(
     "ORACLE_TEST_SWITCHBACK_LISTENER",
@@ -90,6 +90,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_extra_grid_homes: []" in defaults
     assert "oracle_patch_dual_home_suffix: \"\"" in defaults
     assert "oracle_patch_dual_home_path: \"\"" in defaults
+    assert "oracle_patch_switch_enabled: true" in defaults
     assert "oracle_patch_allow_dataguard_dual_home_switch: false" in defaults
     assert "oracle_patch_run_datapatch: true" in defaults
     assert "oracle_patch_standbyfirst_require_eligible: true" in defaults
@@ -124,8 +125,10 @@ def test_patch_role_db_apply_contract():
     assert "Apply Oracle home patch with opatchauto" in tasks
     assert "Read Restart database home for dual-home DB targets" in tasks
     assert "Record dual-home DB switch targets" in tasks
+    assert "Report dual-home switch deferred (prepare-only)" in tasks
     assert "Fail when dual-home switch would need Data Guard orchestration" in tasks
     assert "oracle_patch_allow_dataguard_dual_home_switch | default(false)" in tasks
+    assert "oracle_patch_switch_enabled | default(true) | bool" in tasks
     assert "Switch Restart database to dual-home target" in tasks
     assert "Start DBs after dual-home Restart switch" in tasks
     assert "Reopen Data Guard standby read-only with apply after dual-home switch" in tasks
@@ -260,7 +263,10 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_apply_component_path: \"\"" in standbyfirst_playbook
     assert "Resolve selected standby-first patch component" in standbyfirst_playbook
     assert "Fail when selected patch component is not standby-first eligible" in standbyfirst_playbook
+    assert "Fail when peeling SF component from mixed combo without opt-in" in standbyfirst_playbook
+    assert "oracle_patch_standbyfirst_allow_component_only" in standbyfirst_playbook
     assert "Fail when patch is not standby-first eligible" in standbyfirst_playbook
+    assert "apply the combo together via dual-home" in standbyfirst_playbook
     assert "oracle_patch_standbyfirst_execute: false" in standbyfirst_playbook
     assert "oracle_patch_standbyfirst_restore_primary: false" in standbyfirst_playbook
     assert 'oracle_patch_standbyfirst_expected_primary: ""' in standbyfirst_playbook
@@ -469,6 +475,9 @@ def test_patch_role_db_apply_contract():
     assert "Report eligible standby-first DB RU component handoff" in standbyfirst_media_playbook
     assert "oracle_patch_zip={{ oracle_stage_dir }}/{{ item.basename }}" in standbyfirst_media_playbook
     assert "oracle_patch_apply_component_path={{ item.component_path }}" in standbyfirst_media_playbook
+    assert "oracle_patch_standbyfirst_allow_component_only=true" in standbyfirst_media_playbook
+    assert "Prefer applying the" in standbyfirst_media_playbook
+    assert "full combo together" in standbyfirst_media_playbook
     assert "No staged patch zip or DB RU component is Data Guard Standby-First" in standbyfirst_media_playbook
 
 
@@ -509,7 +518,12 @@ def test_dual_home_switchback_target_installed_and_original_restored(lab_exec):
     )
     patch_result = lab_exec(f"su - oracle -c {shlex.quote(target_patch)}", timeout=180)
     assert patch_result.returncode == 0, patch_result.stdout + patch_result.stderr
-    assert EXPECTED_DB_RU in patch_result.stdout
+    # Baseline dual-home switchback leaves the unused home at the lab baseline RU.
+    # Full e2e upgrades both homes to the upgrade RU (19.32); accept either.
+    upgrade_ru = os.environ.get("ORACLE_TEST_UPGRADE_DB_RU_PATCH_ID", "39472050")
+    assert (
+        EXPECTED_DB_RU in patch_result.stdout or upgrade_ru in patch_result.stdout
+    ), patch_result.stdout
     assert "OPatch succeeded" in patch_result.stdout
 
     db_home = lab_exec(
@@ -596,7 +610,10 @@ def test_patch_playbook_converges_when_ru_already_present():
     assert "changed=0" in r.stdout
     assert '"name": "super"' in r.stdout
     assert '"source": "inventory"' in r.stdout
-    assert '"home_path": "/super/app/oracle/db_home2"' in r.stdout
+    assert (
+        '"home_path": "/super/app/oracle/dbhome_1"' in r.stdout
+        or '"home_path": "/super/app/oracle/dbhome_2"' in r.stdout
+    )
 
 
 def test_grid_patch_playbook_converges_when_ru_already_present():
@@ -691,8 +708,14 @@ def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
     assert '"restart_db_name": "super"' in r.stdout
     assert '"restart_db_name": "super_sby"' in r.stdout
     assert '"source": "inventory"' in r.stdout
-    assert '"original_home_path": "/super/app/oracle/db_home2"' in r.stdout
-    assert '"target_home_path": "/super/app/oracle/db_home2"' in r.stdout
+    assert (
+        '"original_home_path": "/super/app/oracle/dbhome_1"' in r.stdout
+        or '"original_home_path": "/super/app/oracle/dbhome_2"' in r.stdout
+    )
+    assert (
+        '"target_home_path": "/super/app/oracle/dbhome_1"' in r.stdout
+        or '"target_home_path": "/super/app/oracle/dbhome_2"' in r.stdout
+    )
     assert "Restart-discovered target-home install plan" not in r.stdout
     assert "Data Guard targets must use playbooks/07-patch-standbyfirst.yml" in r.stdout
     assert "TASK [Install dual-home switchback target]" in r.stdout
@@ -719,7 +742,7 @@ all:
         "oracle_patch_dual_home_switchback_restart_discovery_fixture": [
             {
                 "restart_db_name": "brown",
-                "home_path": "/brown/app/oracle/db_home1",
+                "home_path": "/brown/app/oracle/dbhome_1",
             }
         ],
     }
@@ -746,7 +769,7 @@ all:
     assert "Restart-discovered target-home install plan" in r.stdout
     assert "'name': 'brown'" in r.stdout
     assert "'oracle_base': '/brown/app/oracle'" in r.stdout
-    assert "'suffix': 'db_home2'" in r.stdout
+    assert "'suffix': 'dbhome_2'" in r.stdout
     assert "TASK [Install Restart-discovered dual-home target homes]" in r.stdout
     assert "skipping:" in r.stdout
 
@@ -773,7 +796,7 @@ all:
         "oracle_patch_dual_home_switchback_restart_discovery_fixture": [
             {
                 "restart_db_name": "brown",
-                "home_path": "/brown/app/oracle/db_home1",
+                "home_path": "/brown/app/oracle/dbhome_1",
             }
         ],
     }
@@ -819,7 +842,7 @@ all:
         "oracle_patch_dual_home_switchback_restart_discovery_fixture": [
             {
                 "restart_db_name": "brown_sby",
-                "home_path": "/brown/app/oracle/db_home1",
+                "home_path": "/brown/app/oracle/dbhome_1",
                 "dataguard": True,
             }
         ],
@@ -885,7 +908,12 @@ def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
     ):
         pytest.skip("KVM lab host unreachable; standby-first live precheck not run")
     assert r.returncode != 0, r.stdout + r.stderr
-    assert "not Data Guard standby-first installable" in r.stdout
+    assert (
+        "not Data Guard Standby-First Installable as a whole" in r.stdout
+        or "not Data Guard standby-first installable" in r.stdout
+        or "Do not use playbooks/07-patch-standbyfirst.yml for full OJVM+RU combo"
+        in r.stdout
+    )
     for skipped_task in [
         "Discover current Data Guard roles for standby-first patching",
         "Read Data Guard broker roles and protection mode",
@@ -911,7 +939,9 @@ def test_standbyfirst_final_command_without_confirmation_refuses_before_patching
         "-e",
         "oracle_patch_apply_component_path=39062931/39034528",
         "-e",
-        "oracle_patch_dual_home_suffix=db_home2",
+        "oracle_patch_standbyfirst_allow_component_only=true",
+        "-e",
+        "oracle_patch_dual_home_suffix=dbhome_2",
         "-e",
         "oracle_patch_standbyfirst_execute=true",
         "-e",

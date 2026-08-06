@@ -23,7 +23,7 @@
     oracle_patch_dual_home_switchback_execute: false
     oracle_patch_dual_home_switchback_confirm: ""
     oracle_patch_dual_home_switchback_confirm_required: SWITCH_DUAL_HOME_AND_BACK
-    oracle_patch_dual_home_switchback_target_suffix: db_home2
+    oracle_patch_dual_home_switchback_target_suffix: dbhome_2
     oracle_patch_dual_home_switchback_target_path: ""
     oracle_patch_dual_home_switchback_discover_restart: false
     oracle_patch_dual_home_switchback_discovered_restart_names: []

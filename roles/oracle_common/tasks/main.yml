@@ -5,6 +5,14 @@
 # sysctl, limits, and the base directory layout under each instance's ORACLE_BASE.
 # Idempotent — every task checks before it changes.
 
+# ── 0. Root disk headroom (lab LVM/XFS) ────────────────────────────────
+# Grow / into free space on the virtual disk before large Oracle installs.
+# Host qcow size is set by lab-up (LAB_ROOT_DISK_SIZE, default 250G); this
+# step expands the guest partition/LV/FS after that capacity is available.
+- name: Grow root filesystem into free virtual-disk space
+  ansible.builtin.include_tasks: grow-root.yml
+  when: oracle_common_grow_root | default(false) | bool
+
 # ── 1. Groups ─────────────────────────────────────────────────────────
 - name: Ensure oinstall group exists
   ansible.builtin.group:
@@ -30,6 +38,14 @@
     shell: /bin/bash
     create_home: true
     comment: "Oracle software owner"
+
+- name: Ensure single central Oracle inventory directory exists
+  ansible.builtin.file:
+    path: "{{ oracle_inventory_loc }}"
+    state: directory
+    owner: "{{ oracle_user }}"
+    group: "{{ oracle_group }}"
+    mode: "0775"
 
 # ── 3. sudoers ────────────────────────────────────────────────────────
 - name: Allow oracle to run sudo without a password (lab)

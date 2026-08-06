@@ -56,6 +56,40 @@
     group: "{{ oracle_group }}"
     mode: "0775"
 
+- name: Check existing central inventory pointer
+  ansible.builtin.stat:
+    path: /etc/oraInst.loc
+  register: _ora_inst_loc_stat
+  when:
+    - oracle_inventory_enforce_single | default(true) | bool
+    - _install_targets | length > 0
+
+- name: Read existing central inventory pointer
+  ansible.builtin.slurp:
+    src: /etc/oraInst.loc
+  register: _ora_inst_loc
+  when:
+    - oracle_inventory_enforce_single | default(true) | bool
+    - _install_targets | length > 0
+    - _ora_inst_loc_stat.stat.exists | default(false)
+
+- name: Fail when inventory pointer conflicts with single-inventory policy
+  ansible.builtin.fail:
+    msg: >-
+      /etc/oraInst.loc points at a different inventory than
+      oracle_inventory_loc={{ oracle_inventory_loc }}. This project requires a
+      single inventory at that path (greenfield). Rebuild the lab or fix
+      /etc/oraInst.loc rather than creating a second inventory.
+      Current pointer content:
+      {{ _ora_inst_loc.content | b64decode }}
+  when:
+    - oracle_inventory_enforce_single | default(true) | bool
+    - _install_targets | length > 0
+    - _ora_inst_loc_stat.stat.exists | default(false)
+    - >-
+        'inventory_loc=' ~ oracle_inventory_loc
+        not in (_ora_inst_loc.content | b64decode)
+
 - name: Stage the installer zip is reachable (download/ bind-mount)
   ansible.builtin.stat:
     path: "{{ oracle_stage_dir }}/{{ oracle_install_files.db_zip }}"

@@ -8,9 +8,44 @@ GREEN in the vertical slice once 00-prep-os.yml has converged.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 pytestmark = pytest.mark.slice
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_os_prep_grows_root_disk_via_oracle_common():
+    """Root headroom must be playbook-driven (repeatable), not one-off manual."""
+    common_main = (REPO_ROOT / "roles/oracle_common/tasks/main.yml").read_text(
+        encoding="utf-8"
+    )
+    grow = (REPO_ROOT / "roles/oracle_common/tasks/grow-root.yml").read_text(
+        encoding="utf-8"
+    )
+    defaults = (REPO_ROOT / "roles/oracle_common/defaults/main.yml").read_text(
+        encoding="utf-8"
+    )
+    prep = (REPO_ROOT / "playbooks/00-prep-os.yml").read_text(encoding="utf-8")
+    common_sh = (REPO_ROOT / "lab/scripts/lib/common.sh").read_text(encoding="utf-8")
+    lab_up = (REPO_ROOT / "lab/scripts/lab-up.sh").read_text(encoding="utf-8")
+
+    assert "include_tasks: grow-root.yml" in common_main
+    assert "growpart" in grow
+    assert "lvextend" in grow
+    assert "xfs_growfs" in grow
+    # Role default is opt-in false; the KVM lab inventory enables growth.
+    assert "oracle_common_grow_root: false" in defaults
+    assert "cloud-utils-growpart" in defaults
+    all_vars = (REPO_ROOT / "inventory/group_vars/all.yml").read_text(encoding="utf-8")
+    assert "oracle_common_grow_root: true" in all_vars
+    assert "role: oracle_common" in prep
+    assert "hosts: observer" in prep
+    assert 'LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-250G}"' in common_sh
+    assert "lab_ensure_root_disk_size" in common_sh
+    assert "lab_ensure_root_disk_size" in lab_up
 
 
 def test_oracle_user_exists(lab_exec):
@@ -38,8 +73,8 @@ def test_grid_asm_disk_is_writable_by_oracle(lab_exec):
 @pytest.mark.parametrize("path", [
     "/super",
     "/super/app/oracle",       # ORACLE_BASE
-    "/super/app/oracle/db_home1",
-    "/super/app/oracle/db_home2",
+    "/super/app/oracle/dbhome_1",
+    "/super/app/oracle/dbhome_2",
     "/super/d01",              # data
     "/super/a01",              # archive
     "/super/f01",              # flashback
@@ -81,7 +116,7 @@ def test_per_instance_env_fragment(lab_exec):
     assert r.returncode == 0, r.stderr
     assert "ORACLE_BASE=/super/app/oracle" in r.stdout
     assert (
-        "ORACLE_HOME=/super/app/oracle/db_home1" in r.stdout
-        or "ORACLE_HOME=/super/app/oracle/db_home2" in r.stdout
+        "ORACLE_HOME=/super/app/oracle/dbhome_1" in r.stdout
+        or "ORACLE_HOME=/super/app/oracle/dbhome_2" in r.stdout
     )
     assert "ORACLE_SID=super" in r.stdout

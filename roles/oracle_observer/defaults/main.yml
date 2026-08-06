@@ -14,7 +14,8 @@
 
 oracle_user: oracle
 oracle_group: oinstall
-oracle_inventory_loc: /opt/oracle/oraInventory
+oracle_inventory_loc: /home/oracle/oraInventory
+oracle_inventory_enforce_single: true
 oracle_inst_group: oinstall
 
 observer_enabled: false

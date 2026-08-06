@@ -1,0 +1,10 @@
+---
+galaxy_info:
+  author: ansible-oracle
+  description: Safely detach and remove unused Oracle DB software homes
+  license: MIT
+  min_ansible_version: "2.16"
+  platforms:
+    - name: EL
+      versions: ["9"]
+dependencies: []

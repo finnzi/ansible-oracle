@@ -182,6 +182,40 @@
         mode: "0600"
       when: not _gi_crsconfig_params.stat.exists
 
+    - name: Check existing central inventory pointer for GI install
+      ansible.builtin.stat:
+        path: /etc/oraInst.loc
+      register: _gi_ora_inst_loc_stat
+      when:
+        - oracle_inventory_enforce_single | default(true) | bool
+        - not _gi_crsconfig_params.stat.exists
+
+    - name: Read existing central inventory pointer for GI install
+      ansible.builtin.slurp:
+        src: /etc/oraInst.loc
+      register: _gi_ora_inst_loc
+      when:
+        - oracle_inventory_enforce_single | default(true) | bool
+        - not _gi_crsconfig_params.stat.exists
+        - _gi_ora_inst_loc_stat.stat.exists | default(false)
+
+    - name: Fail when GI inventory pointer conflicts with single-inventory policy
+      ansible.builtin.fail:
+        msg: >-
+          /etc/oraInst.loc points at a different inventory than
+          oracle_inventory_loc={{ oracle_inventory_loc }}. This project requires
+          a single inventory at that path (greenfield). Rebuild the lab or fix
+          /etc/oraInst.loc rather than creating a second inventory.
+          Current pointer content:
+          {{ _gi_ora_inst_loc.content | b64decode }}
+      when:
+        - oracle_inventory_enforce_single | default(true) | bool
+        - not _gi_crsconfig_params.stat.exists
+        - _gi_ora_inst_loc_stat.stat.exists | default(false)
+        - >-
+            'inventory_loc=' ~ oracle_inventory_loc
+            not in (_gi_ora_inst_loc.content | b64decode)
+
     - name: Write oraInst.loc pointer for GI installer
       ansible.builtin.copy:
         dest: /etc/oraInst.loc

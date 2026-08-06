@@ -41,21 +41,34 @@
   failed_when: >-
     _srvctl_add.rc != 0 and 'already exists' not in (_srvctl_add.stdout | default(''))
 
-# If a spfile isn't at the declared path yet, point Restart at the default in
-# $ORACLE_HOME/dbs. We try the canonical path; on failure we re-add with the
-# default. Keep this defensive — the slice tolerates it.
-- name: Fallback — re-add using default spfile location if canonical missing
+# Prefer durable spfile under dirs.data (survives dual-home OH rebuilds). If
+# that path is empty but $OH/dbs has a copy, seed the durable location and
+# point Restart there. Only fall back to $OH/dbs when data dir is unavailable.
+- name: Ensure durable spfile path for Restart (seed from $OH/dbs when needed)
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" modify database \
-      -db {{ inst.name }} \
-      -spfile {{ _restart_home_path }}/dbs/spfile{{ inst.name }}.ora
+    durable="{{ inst.dirs.data }}/{{ inst.name }}/spfile{{ inst.name }}.ora"
+    home_spfile="{{ _restart_home_path }}/dbs/spfile{{ inst.name }}.ora"
+    mkdir -p "$(dirname "$durable")"
+    if [ ! -f "$durable" ] && [ -f "$home_spfile" ]; then
+      cp -a "$home_spfile" "$durable"
+      echo SEEDED_FROM_HOME
+    fi
+    if [ -f "$durable" ]; then
+      "$ORACLE_HOME/bin/srvctl" modify database -db {{ inst.name }} -spfile "$durable"
+      echo DURABLE
+    elif [ -f "$home_spfile" ]; then
+      "$ORACLE_HOME/bin/srvctl" modify database -db {{ inst.name }} -spfile "$home_spfile"
+      echo HOME_FALLBACK
+    else
+      echo MISSING
+    fi
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _srvctl_mod_spfile
-  changed_when: false
+  changed_when: "'SEEDED_FROM_HOME' in (_srvctl_mod_spfile.stdout | default(''))"
   failed_when: false
 
 - name: Srvctl add listener for this instance (idempotent)

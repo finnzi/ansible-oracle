@@ -16,6 +16,8 @@ REQUIRED_MEDIA = [
     "p6880880_190000_Linux-x86-64.zip",
     "p39062931_190000_Linux-x86-64.zip",
     "p39062956_190000_Linux-x86-64.zip",
+    "p39618649_190000_Linux-x86-64.zip",
+    "p39618711_190000_Linux-x86-64.zip",
 ]
 
 IGNORED_TREE_NAMES = {
@@ -94,7 +96,8 @@ def test_required_media_list_is_complete():
         encoding="utf-8"
     )
     inventory_media = re.findall(
-        r"(?:db_zip|gi_zip|client_zip|opatch_zip|db_ru_zip|gi_ru_zip): \"([^\"]+)\"",
+        r"(?:db_zip|gi_zip|client_zip|opatch_zip|db_ru_zip|gi_ru_zip|"
+        r"db_ru_upgrade_zip|gi_ru_upgrade_zip): \"([^\"]+)\"",
         inventory_defaults,
     )
 

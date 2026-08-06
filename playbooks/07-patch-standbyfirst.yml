@@ -1,8 +1,16 @@
 ---
 # playbooks/07-patch-standbyfirst.yml - Data Guard standby-first DB patching.
-# Flow: prove the patch is standby-first eligible, stage optional target homes,
-# patch the current standby, switchover through broker, then patch the old
-# primary as the new standby.
+#
+# Policy:
+#   - Whole zip must be Data Guard Standby-First Installable (every component
+#     README). Classic OJVM+DB RU combos are NOT SF as a unit — apply them
+#     together via dual-home / downtime (07-upgrade-dual-db-*.yml), not SF.
+#   - Peeling an SF DB RU out of an otherwise ineligible combo is opt-in only
+#     (oracle_patch_standbyfirst_allow_component_only=true). Default is refuse,
+#     so operators do not SF the RU and leave OJVM for a later window.
+#
+# Flow when allowed: prove eligibility, stage optional target homes, patch the
+# current standby, switchover through broker, then patch the old primary.
 
 - name: Validate standby-first patch eligibility
   hosts: primary
@@ -12,6 +20,9 @@
     oracle_patch_db_zip: "{{ oracle_stage_dir }}/{{ oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip') }}"
     oracle_patch_zip: "{{ oracle_patch_db_zip }}"
     oracle_patch_apply_component_path: ""
+    # When true, allow SF apply of a single eligible DB RU component inside a
+    # mixed/ineligible combo zip. Default false: combos are applied together.
+    oracle_patch_standbyfirst_allow_component_only: false
     oracle_patch_standbyfirst_require_eligible: true
     oracle_patch_standbyfirst_execute: false
     oracle_patch_standbyfirst_restore_primary: false
@@ -56,12 +67,42 @@
         - oracle_patch_apply_component_path | default('') | length > 0
         - _patch_standbyfirst_selected_component | default({}) | length == 0
 
+    # Combo (e.g. OJVM+DB RU): whole zip is not SF. Default refuse even when an
+    # eligible DB RU component path is supplied — apply the combo together via
+    # dual-home/downtime unless the operator opts into RU-only SF.
+    - name: Fail when peeling SF component from mixed combo without opt-in
+      ansible.builtin.fail:
+        msg: >-
+          {{ oracle_patch_zip | basename }} is not standby-first installable as a
+          whole ({{ _patch_standbyfirst.reason | default('mixed or non-SF components') }}).
+          Combo packages (OJVM + RU) should be applied together with
+          playbooks/07-upgrade-dual-db-prepare.yml + cutover/downtime, not
+          standby-first for the RU alone then OJVM later. To intentionally SF
+          only component {{ oracle_patch_apply_component_path }}, re-run with
+          -e oracle_patch_standbyfirst_allow_component_only=true.
+      when:
+        - oracle_patch_standbyfirst_require_eligible | default(true) | bool
+        - oracle_patch_apply_component_path | default('') | length > 0
+        - not (_patch_standbyfirst.eligible | default(false) | bool)
+        - not (oracle_patch_standbyfirst_allow_component_only | default(false) | bool)
+
     - name: Fail when patch is not standby-first eligible
       ansible.builtin.fail:
         msg: >-
-          {{ oracle_patch_zip | basename }} is not Data Guard standby-first
-          installable. Use the standard patch path or the patch's documented
-          special procedure instead of playbooks/07-patch-standbyfirst.yml.
+          {{ oracle_patch_zip | basename }} is not Data Guard Standby-First
+          Installable as a whole
+          ({{ _patch_standbyfirst.reason | default('see patch README') }}).
+          Do not use playbooks/07-patch-standbyfirst.yml for full OJVM+RU combo
+          zips — apply the combo together via dual-home prepare/cutover
+          (standalone) or playbooks/07-upgrade-dual-db-downtime.yml (Data Guard).
+          Standby-first is for zips where every component README is SF eligible.
+          {% if (_patch_standbyfirst.eligible_db_components | default([]) | length) > 0 -%}
+          This zip does contain SF-eligible DB RU component(s)
+          {{ _patch_standbyfirst.eligible_db_components | map(attribute='component_path') | list | join(', ') }}
+          — only use component-only SF with
+          oracle_patch_standbyfirst_allow_component_only=true if you intentionally
+          want the RU without the rest of the combo.
+          {%- endif %}
       when:
         - oracle_patch_standbyfirst_require_eligible | default(true) | bool
         - oracle_patch_apply_component_path | default('') | length == 0

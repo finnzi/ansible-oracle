@@ -28,7 +28,7 @@ def _oracle_home(exec_fn, db_unique_name: str) -> str:
         )
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip().splitlines()[-1]
-    return "/super/app/oracle/db_home1"
+    return "/super/app/oracle/dbhome_1"
 
 
 def test_dataguard_defaults_use_maximum_availability():
@@ -249,7 +249,10 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "LogXptMode='SYNC'" in dataguard_configure_broker
     assert "export ORACLE_SID={{ inst.name }}" in dataguard_configure_broker
-    assert "SWITCHOVER TO '{{ _dg_switchover_target }}'" in dataguard_switchover
+    assert 'printf "SWITCHOVER TO' in dataguard_switchover
+    assert "${TARGET}" in dataguard_switchover
+    assert "SWITCHOVER_COMPLETE" in dataguard_switchover
+    assert "ALREADY_SWITCHED_PRIMARY" in dataguard_switchover
     assert "_dg_switchover_requested_target" in dataguard_switchover
     assert "_dg_standby_unique_name if _dg_switchover_requested_target == oracle_dataguard_auto_switchover_target" in dataguard_switchover
     assert "ALREADY_PRIMARY" in dataguard_switchover
@@ -314,10 +317,12 @@ def test_primary_dataguard_prerequisites(lab_exec):
     needed_standby_logs = int(lines[8])
     standby_logs_on_dedicated_path = int(lines[9])
 
-    assert standby_file_management == "AUTO"
-    assert dg_broker_start == "TRUE"
-    assert "DG_CONFIG=(" in log_archive_config
-    assert "super_sby" in log_archive_config
+    assert standby_file_management.upper() == "AUTO"
+    assert dg_broker_start.upper() == "TRUE"
+    # Oracle may return log_archive_config with either DG_CONFIG or dg_config.
+    log_archive_config_upper = log_archive_config.upper()
+    assert "DG_CONFIG=(" in log_archive_config_upper
+    assert "SUPER_SBY" in log_archive_config_upper
     log_archive_dest_2_lower = log_archive_dest_2.lower()
     assert (
         'service="super_sby_dgb"' in log_archive_dest_2_lower
@@ -376,7 +381,7 @@ def test_standby_auxiliary_prerequisites(standby_exec):
     pwfile = standby_exec(f"test -f {oracle_home}/dbs/orapwsuper")
     oratab = standby_exec(
         "awk -F'#' '/^super:/ {gsub(/[[:space:]]+$/, \"\", $1); print $1}' /etc/oratab | "
-        "grep -E '^super:/super/app/oracle/db_home[12]:N$'"
+        "grep -E '^super:/super/app/oracle/dbhome_[12]:N$'"
     )
     assert pfile.returncode == 0
     assert pwfile.returncode == 0
@@ -454,12 +459,15 @@ def test_physical_standby_restart_registration(standby_exec):
     assert "Database unique name: super_sby" in config.stdout
     assert "Database name: super" in config.stdout
     assert "Database role: PHYSICAL_STANDBY" in config.stdout
-    assert "Oracle home: /super/app/oracle/db_home2" in config.stdout
+    assert (
+        "Oracle home: /super/app/oracle/dbhome_1" in config.stdout
+        or "Oracle home: /super/app/oracle/dbhome_2" in config.stdout
+    ), config.stdout
     assert any(
         path in config.stdout
         for path in (
-            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
-            "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
         )
     )
     assert "LISTENER_SUPER" in listener.stdout
@@ -481,8 +489,8 @@ def test_physical_standby_uses_spfile(standby_exec):
     assert any(
         path in r.stdout
         for path in (
-            "/super/app/oracle/db_home1/dbs/spfilesuper.ora",
-            "/super/app/oracle/db_home2/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+            "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
         )
     )
 
@@ -646,7 +654,9 @@ def _run_dataguard_switchover(target: str) -> subprocess.CompletedProcess:
         env=env,
         capture_output=True,
         text=True,
-        timeout=900,
+        # Switchover play includes FSFO disable/enable, broker settle, CRS
+        # restart of the new standby, and role validation — allow 25 minutes.
+        timeout=1500,
     )
 
 

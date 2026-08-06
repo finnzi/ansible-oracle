@@ -1,0 +1,121 @@
+---
+# playbooks/07-upgrade-dual-db-downtime.yml
+#
+# Non-standby-first Data Guard dual-home upgrade path.
+#
+# Use when the patch bundle is NOT Data Guard Standby-First Installable as a
+# whole (classic case: OJVM+RU combo). Apply the combo together here / dual-home;
+# do not SF the RU alone then OJVM later. Pure SF-eligible DB RU zips use
+# playbooks/07-patch-standbyfirst.yml.
+#
+# Workflow:
+#   1. Prepare target homes on ALL DG hosts first:
+#        playbooks/07-upgrade-dual-db-prepare.yml is standalone-only; for DG
+#        prepare both homes with oracle_patch_switch_enabled=false via
+#        standby-first media selection or explicit extra homes. This playbook
+#        readiness stage documents the required order.
+#   2. Planned downtime cutover switches Restart homes on standby then primary
+#      without claiming standby-first eligibility.
+#
+# Default is readiness/safety only. Destructive execution requires:
+#   -e oracle_upgrade_downtime_execute=true
+#   -e oracle_upgrade_downtime_confirm=DOWN_TIME_DUAL_HOME_UPGRADE
+
+- name: Non-standby-first dual-home upgrade downtime readiness
+  hosts: oracle_db_hosts
+  become: true
+  gather_facts: false
+  vars:
+    oracle_upgrade_downtime_execute: false
+    oracle_upgrade_downtime_confirm: ""
+    oracle_upgrade_downtime_confirm_required: DOWN_TIME_DUAL_HOME_UPGRADE
+    oracle_patch_dual_home_suffix: >-
+      {{
+        oracle_patch_dual_home_suffix
+        if (oracle_patch_dual_home_suffix is defined and oracle_patch_dual_home_suffix | length > 0)
+        else 'dbhome_2'
+      }}
+  tasks:
+    - name: Resolve Data Guard instances for downtime upgrade
+      ansible.builtin.set_fact:
+        _upgrade_downtime_dg_targets: >-
+          {%- set out = [] -%}
+          {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+          {%- for inst in instances -%}
+            {%- if inst.dataguard | default(false) | bool -%}
+              {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
+              {%- set target_path = inst.oracle_base ~ '/' ~ oracle_patch_dual_home_suffix -%}
+              {%- set _ = out.append({
+                'name': inst.name,
+                'restart_db_name': inst.db_unique_name | default(inst.name),
+                'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+                'target_home_path': target_path
+              }) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ out }}
+
+    - name: Read standby-first eligibility for configured upgrade zip
+      patch_standbyfirst_info:
+        zip: >-
+          {{
+            oracle_stage_dir ~ '/' ~
+            (oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip'))
+          }}
+      register: _upgrade_downtime_sf
+      when: _upgrade_downtime_dg_targets | length > 0
+
+    - name: Report non-standby-first downtime readiness
+      ansible.builtin.debug:
+        msg:
+          host: "{{ inventory_hostname }}"
+          dg_targets: "{{ _upgrade_downtime_dg_targets }}"
+          upgrade_zip: "{{ oracle_patch_files.db_ru_upgrade_zip | default('p39618649_190000_Linux-x86-64.zip') }}"
+          standby_first_eligible: "{{ _upgrade_downtime_sf.eligible | default('n/a') }}"
+          reason: "{{ _upgrade_downtime_sf.reason | default('n/a') }}"
+          guidance: >-
+            If the whole bundle is ineligible because of OJVM (typical combo),
+            apply OJVM+RU together via dual-home/downtime — do not SF the DB RU
+            alone then apply OJVM later. Use playbooks/07-patch-standbyfirst.yml
+            only for fully SF-eligible zips (or intentional component-only SF
+            with oracle_patch_standbyfirst_allow_component_only=true). This
+            downtime playbook is for non-SF bundles when a planned dual-site
+            dual-home restart window is acceptable.
+          execute: "{{ oracle_upgrade_downtime_execute | bool }}"
+      when: not oracle_upgrade_downtime_execute | bool
+
+    - name: Fail when no Data Guard targets are present for downtime upgrade
+      ansible.builtin.fail:
+        msg: >-
+          No Data Guard instances were resolved. For standalone upgrades use
+          playbooks/07-upgrade-dual-db-prepare.yml and
+          playbooks/07-upgrade-dual-db-cutover.yml.
+      when:
+        - oracle_upgrade_downtime_execute | bool
+        - _upgrade_downtime_dg_targets | length == 0
+
+    - name: Fail when downtime confirmation is missing
+      ansible.builtin.fail:
+        msg: >-
+          Refusing non-standby-first dual-home downtime cutover. Set
+          oracle_upgrade_downtime_execute=true and
+          oracle_upgrade_downtime_confirm={{ oracle_upgrade_downtime_confirm_required }}.
+          Required order: prepare target homes on every DG host first, then
+          switch standby Restart home, then primary Restart home, then datapatch
+          on the primary. This path does not perform broker switchover as a
+          substitute for standby-first eligibility.
+      when:
+        - oracle_upgrade_downtime_execute | bool
+        - oracle_upgrade_downtime_confirm != oracle_upgrade_downtime_confirm_required
+
+    - name: Fail — DG downtime cutover remains a readiness scaffold only
+      ansible.builtin.fail:
+        msg: >-
+          Confirmation accepted, but coordinated multi-host non-standby-first
+          dual-home cutover execution is intentionally not automated (readiness
+          scaffold only). Prepare both homes offline, then switch Restart homes
+          during a maintenance window following Oracle's non-standby-first
+          procedure. Prefer standby-first with component path
+          {{ oracle_upgrade_db_ru_component_path | default('39618649/39472050') }}
+          when the DB RU is eligible.
+      when: oracle_upgrade_downtime_execute | bool

@@ -138,6 +138,8 @@
       {{ oracle_patch_apply_component_path | default('') | default('none', true) }}.
       Expected patch IDs:
       {{ _patch_expected_ids | join(',') }}.
+      Policy: whole-zip SF only when every component is SF; OJVM+RU combos use
+      dual-home/downtime together, not SF RU then OJVM later.
 
 - name: Verify OPatch upgrade zip is staged
   ansible.builtin.stat:
@@ -146,26 +148,42 @@
   failed_when: not _opatch_zip.stat.exists
 
 # ── Resolve DB-home patch targets ──────────────────────────────────────
+# Prefer oracle_patch_instances when the caller supplied a filtered list
+# (avoids extra-var oracle_instances clobbering include_role params).
 - name: Resolve inventory DB patch targets
   ansible.builtin.set_fact:
     _patch_inventory_targets: >-
       {%- set out=[] -%}
-      {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+      {%- set raw_instances = (
+            oracle_patch_instances
+            if (oracle_patch_instances | default([]) | length > 0)
+            else (oracle_instances | default([]))
+          ) -%}
+      {%- set instances = raw_instances | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
       {%- for inst in instances -%}
         {%- set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) -%}
         {%- set target_suffix = oracle_patch_dual_home_suffix if (oracle_patch_dual_home_suffix | length > 0) else current_home.suffix -%}
         {%- set target_home_path = oracle_patch_dual_home_path if (oracle_patch_dual_home_path | length > 0) else inst.oracle_base ~ '/' ~ target_suffix -%}
         {%- set resolved_home_path = target_home_path if oracle_patch_mode == 'oop_dual' else inst.oracle_base ~ '/' ~ current_home.suffix -%}
         {%- set resolved_suffix = target_home_path.rsplit('/', 1)[1] if (oracle_patch_mode == 'oop_dual' and oracle_patch_dual_home_path | length > 0) else (target_suffix if oracle_patch_mode == 'oop_dual' else current_home.suffix) -%}
+        {%- set data_dir = (inst.dirs.data | default('')) -%}
+        {%- set db_unique = inst.db_unique_name | default(inst.name) -%}
+        {%- set param_dir = (
+          (data_dir ~ '/' ~ db_unique)
+          if (data_dir | length > 0)
+          else (inst.oracle_base ~ '/parameter_files/' ~ db_unique)
+        ) -%}
         {%- set _ = out.append({
           'name': inst.name,
-          'restart_db_name': inst.db_unique_name | default(inst.name),
+          'restart_db_name': db_unique,
           'service_name': inst.service_name | default(inst.name ~ '_svc'),
           'dataguard': inst.dataguard | default(false) | bool,
           'oracle_base': inst.oracle_base,
           'home_suffix': resolved_suffix,
           'home_path': resolved_home_path,
           'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+          'data_dir': data_dir,
+          'parameter_file_dir': param_dir,
           'source': 'inventory'
         }) -%}
       {%- endfor -%}
@@ -232,7 +250,12 @@
   ansible.builtin.set_fact:
     _patch_inventory_grid_targets: >-
       {%- set out=[] -%}
-      {%- set instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
+      {%- set raw_instances = (
+            oracle_patch_instances
+            if (oracle_patch_instances | default([]) | length > 0)
+            else (oracle_instances | default([]))
+          ) -%}
+      {%- set instances = raw_instances | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false) -%}
       {%- for inst in instances -%}
         {%- if inst.gi_homes is defined and inst.gi_base is defined -%}
           {%- set current_home = (inst.gi_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.gi_homes[0]) -%}
@@ -343,7 +366,9 @@
     msg: >-
       oracle_patch_mode=oop_dual requires inventory-backed DB targets so the
       role can safely resolve Restart database names and target homes.
-      Configure oracle_instances or use inplace mode for brownfield-only homes.
+      Configure oracle_instances / oracle_patch_instances or use inplace mode
+      for brownfield-only homes.
+
   when:
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
@@ -372,16 +397,31 @@
       {%- set missing = [] -%}
       {%- for result in _patch_lspatches.results | default([]) -%}
         {%- set installed_patch_ids = [] -%}
+        {%- set installed_db_ru_ids = [] -%}
         {%- for line in result.stdout_lines | default([]) -%}
           {%- set candidate = line.split(';', 1)[0] | trim -%}
           {%- if candidate is match('^[0-9]+$') -%}
             {%- set _ = installed_patch_ids.append(candidate) -%}
+            {%- if 'Database Release Update' in line -%}
+              {%- set _ = installed_db_ru_ids.append(candidate) -%}
+            {%- endif -%}
           {%- endif -%}
         {%- endfor -%}
         {%- set missing_ids = [] -%}
         {%- for patch_id in _patch_expected_ids -%}
           {%- if patch_id not in installed_patch_ids -%}
-            {%- set _ = missing_ids.append(patch_id) -%}
+            {# Dual-home / brownfield: OPatch drops an older RU ID once a later
+               Database RU is applied. Treat the expected RU as satisfied only
+               when an installed Database RU has a higher numeric patch id
+               (newer RU). An older installed RU must NOT satisfy a newer
+               expected upgrade target. #}
+            {%- set newer_db_rus = installed_db_ru_ids
+              | map('int')
+              | select('>', (patch_id | int))
+              | list -%}
+            {%- if newer_db_rus | length == 0 -%}
+              {%- set _ = missing_ids.append(patch_id) -%}
+            {%- endif -%}
           {%- endif -%}
         {%- endfor -%}
         {%- if missing_ids | length > 0 -%}
@@ -465,8 +505,22 @@
   when:
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
+    - oracle_patch_switch_enabled | default(true) | bool
     - (_patch_dual_switch_targets | default([]) | length) > 0
     - not oracle_patch_apply_enabled | bool
+
+- name: Report dual-home switch deferred (prepare-only)
+  ansible.builtin.debug:
+    msg: >-
+      oracle_patch_switch_enabled=false: {{
+        _patch_dual_switch_targets | default([]) | length
+      }} Restart home switch(es) are deferred. Target home(s) were still
+      inventory-checked/patched; run the planned cutover playbook to switch.
+  when:
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - not (oracle_patch_switch_enabled | default(true) | bool)
+    - (_patch_dual_switch_targets | default([]) | length) > 0
 
 - name: Fail when dual-home switch would need Data Guard orchestration
   ansible.builtin.fail:
@@ -477,6 +531,7 @@
   when:
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
+    - oracle_patch_switch_enabled | default(true) | bool
     - (_patch_dual_switch_targets | default([]) | selectattr('dataguard', 'equalto', true) | list | length) > 0
     - not oracle_patch_allow_dataguard_dual_home_switch | default(false) | bool
 
@@ -593,6 +648,8 @@
 - name: Apply Oracle home patch with opatchauto
   ansible.builtin.shell: |
     set -o pipefail
+    # opatchauto refuses to run with CWD in / or /root
+    cd {{ item.home_path | quote }}
     {{ item.home_path }}/OPatch/opatchauto apply {{ _patch_apply_dir.stdout | trim | quote }} -oh {{ item.home_path | quote }}
   args: { executable: /bin/bash }
   register: _patch_opatchauto
@@ -628,6 +685,7 @@
     label: "{{ item.restart_db_name }} -> {{ item.home_path }}"
   when:
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
@@ -649,6 +707,42 @@
     label: "{{ item.restart_db_name }} -> {{ item.home_path }}"
   when:
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
+# spfile/orapw must NOT live only under $OH/dbs for dual-home work; clean
+# rebuilds delete that tree. Prefer durable data-dir path, mirror under new
+# home dbs/, rewrite Restart metadata. Script lives in files/ to avoid YAML
+# embedding large shell blocks.
+- name: Relocate spfile and password file to durable path for dual-home switch
+  ansible.builtin.script: >
+    relocate_spfile_for_dual_home.sh
+    {{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+    {{ item.restart_db_name | quote }}
+    {{ item.home_path | quote }}
+    {{ (item.restart_home_path | default(item.current_home_path | default(''))) | quote }}
+    {{ item.name | quote }}
+    {{ item.oracle_base | quote }}
+    {{ (item.data_dir | default('')) | quote }}
+    {{ (item.parameter_file_dir | default('')) | quote }}
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_migrate_spfile
+  changed_when: "'CHANGED' in (_patch_dual_migrate_spfile.stdout | default(''))"
+  failed_when: >-
+    _patch_dual_migrate_spfile.rc != 0 or
+    'SPFILE_MISSING' in (_patch_dual_migrate_spfile.stdout | default('')) or
+    'SPFILE_MISSING' in (_patch_dual_migrate_spfile.stderr | default(''))
+  loop: "{{ _patch_dual_switch_targets | default([]) }}"
+  loop_control:
+    label: "{{ item.restart_db_name }} -> durable param dir + {{ item.home_path }}/dbs"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
@@ -673,6 +767,7 @@
     label: "LISTENER_{{ item.name | upper }} -> {{ item.home_path }}"
   when:
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
@@ -695,6 +790,7 @@
     label: "{{ item.restart_db_name }}"
   when:
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
@@ -747,6 +843,7 @@
     label: "{{ item.restart_db_name }}"
   when:
     - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
     - oracle_patch_allow_dataguard_dual_home_switch | default(false) | bool
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
@@ -780,5 +877,10 @@
   when:
     - oracle_patch_apply_enabled | bool
     - oracle_patch_run_datapatch | bool
-    - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
     - oracle_patch_target == 'db'
+    # Prepare-only dual-home leaves the DB on the old home; datapatch waits for cutover.
+    - not (
+        oracle_patch_mode == 'oop_dual' and
+        not (oracle_patch_switch_enabled | default(true) | bool)
+      )
+    - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)

@@ -185,9 +185,13 @@ def test_multi_instance_example_maps_every_listener_hostname_to_a_lab_vip():
 def test_multi_instance_smoke_is_primary_host_super_duper_fluff():
     smoke = yaml.safe_load(MULTI_INSTANCE_SMOKE.read_text(encoding="utf-8"))
     instances = smoke["oracle_instances"]
+    # Smoke intentionally omits oracle_instance_overrides: extra-var overrides
+    # would replace group_vars for every host and pin the standby to primary
+    # role. primary.yml / standby.yml supply per-group DG shape at runtime.
+    assert "oracle_instance_overrides" not in smoke
     resolved = oracle_instances_filter.oracle_apply_instance_overrides(
         instances,
-        smoke["oracle_instance_overrides"],
+        {},
         require_dataguard=False,
     )
     by_name = {inst["name"]: inst for inst in resolved}
@@ -198,8 +202,15 @@ def test_multi_instance_smoke_is_primary_host_super_duper_fluff():
     assert smoke["oracle_db_manage_apply_instance_overrides_require_dataguard"] is False
     assert smoke["oracle_restart_apply_instance_overrides_require_dataguard"] is False
     assert smoke["oracle_service_apply_instance_overrides_require_dataguard"] is False
+    # Shape is fully declared on the instance list (dataguard:true for super).
     assert by_name["super"]["dataguard"] is True
-    assert by_name["super"]["listener_vip"] == "superdc1.domain.is"
+    assert by_name["super"]["listener_vip"] == "superdb.domain.is"
+    assert {svc["name"] for svc in by_name["super"]["services"]} >= {
+        "super_svc",
+        "super_pri",
+        "super_stb",
+        "super_tac",
+    }
     assert by_name["duper"]["dataguard"] is False
     assert by_name["duper"]["listener_vip"] == "duperdb.domain.is"
     assert by_name["duper"]["listener_port"] == 1522

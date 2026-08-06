@@ -64,23 +64,34 @@ priming and bidirectional movement of both role services.
 | Multiple DB instances per machine (`super`, `duper`, `fluff`) | Proven | Live multi-instance primary host proof with Restart/service ownership. |
 | Tunable memory and DB settings | Proven | `oracle_instances[*].memory` drives `sga_target` and `pga_aggregate_target`; `oracle_instances[*].parameters` supports additional validated `ALTER SYSTEM` settings; live `super`, `duper`, and `fluff` tests verify configured values from `v$parameter`. |
 | Idempotent playbooks | Proven | Site, create/register smoke, patch, Grid, and switchback paths have live idempotence checks where non-destructive. |
-| Oracle DB homes like `/super/app/oracle/db_home1`, `/super/app/oracle/db_home2` | Proven | Current and target homes installed/patched/switched for standalone `fluff`; inventory supports suffix and explicit path homes. |
+| Oracle DB homes like `/super/app/oracle/dbhome_1`, `/super/app/oracle/dbhome_2` | Proven | Current and target homes installed/patched/switched for standalone `fluff`; inventory supports suffix and explicit path homes. |
 | Oracle Grid homes like `/grid/19c/gi_home1` | Proven | Grid home installed and patched at `/grid/19c/gi_home1`; brownfield discovery exists. |
 | Register each database with Oracle Restart | Proven | Live `srvctl config database` tests verify `super`, `super_sby`, `duper`, and `fluff` registration names, homes, spfiles, roles, start options, services, and instances. |
 | Dedicated client service to current primary | Proven | `super_svc` is verified live as running only on the current Data Guard primary before and after manual/automatic switchovers; standalone services are tested for `duper` and `fluff`. |
 | Tests for Restart, Data Guard, switchover, patching, lab preflight | Proven | Pytest suite covers OS, install, instance, Restart, Data Guard, observer, patching, failover readiness, multi-instance, and lab tooling. |
 | Dedicated patch playbooks | Proven | `07-patch.yml`, `07-patch-grid.yml`, `07-patch-dual-db.yml`, `07-patch-dual-db-switchback.yml`, `07-patch-standbyfirst.yml`, and `07-patch-standbyfirst-media.yml`. |
+| Dual-home upgrade prepare + planned cutover | Proven for standalone | Live: prepare patched `duper` `dbhome_2` to 19.32 without switching; cutover switched Restart/listener and ran datapatch. `scripts/run-dual-db-upgrade.sh` helper + confirmation gates. |
+| Single central oraInventory at `/home/oracle/oraInventory` | Proven | Greenfield site install wrote `/etc/oraInst.loc` → `/home/oracle/oraInventory`; live tests and installs used it. |
+| DB home naming `dbhome_1` / `dbhome_2` | Proven | Live homes under `/super|duper|fluff/app/oracle/dbhome_*`; site pytest 210 passed. |
+| Oracle home version detection | Proven | `library/oracle_home_facts.py` live on prepared homes (must run as `oracle`); unit tests cover 19.31/19.32 shapes. |
+| Non-standby-first DG dual-home downtime path | Partial | `07-upgrade-dual-db-downtime.yml` readiness + confirmation gate; full multi-host execute still deferred in favor of eligible RU standby-first. |
 | Single-home patching | Proven | Current-home DB/Grid patch inventory/apply paths converge idempotently. |
-| Dual-home DB patching and Oracle home switching | Proven for standalone | `fluff` live switch to `/fluff/app/oracle/db_home2` and switchback to `/fluff/app/oracle/db_home1`; Data Guard dual-home switches are routed to standby-first orchestration. |
+| Dual-home DB patching and Oracle home switching | Proven for standalone | `fluff` live switch to `/fluff/app/oracle/dbhome_2` and switchback to `/fluff/app/oracle/dbhome_1`; Data Guard dual-home switches are routed to standby-first orchestration. |
 | Greenfield and brownfield patching | Proven for inventory/discovery paths | Inventory-installed homes and Restart-discovered brownfield-style targets are reported with concrete names and home paths in the live readiness run; `/etc/oratab`, `/etc/oracle/olr.loc`, and explicit extra homes are supported. Destructive brownfield execution requires explicit names/mappings. |
 | Standby-first Data Guard patching when release notes allow | Proven | The staged combo is correctly rejected as a whole because of OJVM, while eligible DB RU component `39062931/39034528` was applied live through the confirmed standby-first flow: current standby target home patched/switched, broker switchover, datapatch on promoted primary, old primary patched/switched as new standby, Maximum Availability validated, and post-apply readiness passed. |
 | Automatically read standby-first support from release notes | Proven | `library/patch_standbyfirst_info.py` parses README wording and staged zip directories; tests cover eligible, ineligible, corrupt, and current staged media. |
-| Switch Oracle homes old-to-new | Proven | Standalone switch/switchback proven live; Data Guard old-to-new switching proven live through confirmed standby-first apply with both `super` and `super_sby` running from `/super/app/oracle/db_home2`. |
+| Switch Oracle homes old-to-new | Proven | Standalone switch/switchback proven live; Data Guard old-to-new switching proven live through confirmed standby-first apply with both `super` and `super_sby` running from `/super/app/oracle/dbhome_2`. |
 
 ## Remaining Completion Gate
 
-No current lab completion gate remains for the requested Oracle 19c / OL9
-scope. Oracle Linux 10 remains partial only to the extent that Oracle 19c
+Live 19.32 dual-home prepare+cutover is proven on standalone `duper`. Optional
+follow-ups:
+
+1. Standby-first readiness/apply for 19.32 DB RU component `39618649/39472050`.
+2. Full multi-host non–standby-first downtime cutover automation.
+   (Lab root disks default to `250G` via `LAB_ROOT_DISK_SIZE` for dual-home RU headroom.)
+
+Oracle Linux 10 remains partial only to the extent that Oracle 19c
 certification/support for OL10 is an external product-support boundary.
 
 ## Latest Verification
@@ -92,7 +103,7 @@ certification/support for OL10 is an external product-support boundary.
   `scripts/run-standbyfirst-apply.sh --execute --confirm PATCH_STANDBY_FIRST
   --expected-primary super_sby --expected-standby super --no-restore-primary`
   completed with `failed=0` after resuming the intentionally interrupted lab
-  state. The play installed/patched/switched `super` to `db_home2`, switched
+  state. The play installed/patched/switched `super` to `dbhome_2`, switched
   over to `super`, ran datapatch and validated `DBA_REGISTRY_SQLPATCH`, verified
   `super_sby` target-home patch inventory, reconciled listeners/broker members,
   validated `MaxAvailability`, and the helper postcheck passed with
@@ -137,7 +148,7 @@ certification/support for OL10 is an external product-support boundary.
   `172 passed, 9 skipped`.
 - Live safety proof for the final standby-first command shape without
   `PATCH_STANDBY_FIRST`: pytest verified the staged-component command with
-  `oracle_patch_dual_home_suffix=db_home2`,
+  `oracle_patch_dual_home_suffix=dbhome_2`,
   `oracle_patch_standbyfirst_execute=true`, and
   `oracle_patch_standbyfirst_restore_primary=true` refuses before broker
   discovery, target-home installation, patching, switchover, datapatch, or

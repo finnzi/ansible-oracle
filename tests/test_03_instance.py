@@ -26,7 +26,7 @@ def _current_super_home(lab_exec) -> str:
     )
     if r.returncode == 0 and r.stdout.strip():
         return r.stdout.strip().splitlines()[-1]
-    return "/super/app/oracle/db_home1"
+    return "/super/app/oracle/dbhome_1"
 
 
 def _run_super_sql(lab_exec, sql: str, timeout: int = 60):
@@ -148,6 +148,11 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "Assign dedicated listener VIPs to the guest interface" in network_tasks
     assert "Remove unmanaged lab listener VIPs from the guest interface" in network_tasks
     assert "nmcli is required to remove stale listener VIPs" in network_tasks
+    # Partial network runs (oracle_network_instances) must not strip other
+    # instances' VIPs (e.g. superdc1 during dual-home prepare for duper/fluff).
+    assert "Resolve host-retained listener VIPs from full inventory" in network_tasks
+    assert "_net_retain_vips" in network_tasks
+    assert "(oracle_network_instances | default([])) | length == 0" in network_tasks
     assert "ip addr del \"$ip/$prefix\" dev \"$iface\"" in network_tasks
     assert " -ipv4.addresses \"$ip/$prefix\"" in network_tasks
     assert "nmcli is required to persist listener VIP" in network_tasks

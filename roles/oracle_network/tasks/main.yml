@@ -10,19 +10,68 @@
 # The listener is started with lsnrctl here for the very first boot; once
 # Oracle Restart takes ownership (oracle_restart_manage), it owns reloads.
 
-- name: Resolve current ORACLE_HOME and listener VIP per instance
+- name: Fail when network home selection is invalid
+  ansible.builtin.fail:
+    msg: >-
+      oracle_network_home_selection={{ oracle_network_home_selection }} is
+      invalid. Supported values are current and selected.
+  when: oracle_network_home_selection | default('current') not in ['current', 'selected']
+
+# Resolve which VIPs this host must keep even when the role is invoked with a
+# filtered oracle_network_instances list (dual-home prepare for standalones).
+# Cleanup must not strip Data Guard superdc* VIPs just because super was
+# filtered out of this run — that breaks redo transport / FSFO probes.
+- name: Resolve host-retained listener VIPs from full inventory
+  ansible.builtin.set_fact:
+    _net_retain_vips: >-
+      {%- set out = [] -%}
+      {%- set dg_mode = oracle_network_dataguard_enabled | default(false) | bool -%}
+      {%- set require_dg = false if dg_mode else true -%}
+      {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
+        {%- set include_inst = ('standby' not in group_names or (raw_inst.dataguard | default(false) | bool)) -%}
+        {%- if include_inst -%}
+          {%- set listener_name = (raw_inst.listener_vip | default(raw_inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (raw_inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
+          {%- for entry in (oracle_lab_listener_vips | default([])) -%}
+            {%- if listener_name in (entry.names | default('') | string).split() and (entry.ip | default('') | length > 0) -%}
+              {%- if entry.ip not in out -%}
+                {%- set _ = out.append(entry.ip) -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Resolve ORACLE_HOME and listener VIP per instance/home
   ansible.builtin.set_fact:
     _net_instances: >-
       {%- set out = [] -%}
       {%- set dg_mode = oracle_network_dataguard_enabled | default(false) | bool -%}
       {%- set require_dg = false if dg_mode else true -%}
-      {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
+      {%- set selection = oracle_network_home_selection | default('current') -%}
+      {%- set selected_suffixes = oracle_network_home_suffixes | default([]) -%}
+      {%- set raw_instances = (
+            oracle_network_instances
+            if (oracle_network_instances | default([]) | length > 0)
+            else (oracle_instances | default([]))
+          ) -%}
+      {%- for raw_inst in (raw_instances | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
         {%- set inst = raw_inst -%}
         {# Primary hosts may mix standalone and Data Guard databases. Standby
            hosts only need listeners for the Data Guard instances they host. #}
         {%- set include_inst = ('standby' not in group_names or (inst.dataguard | default(false) | bool)) -%}
         {%- if include_inst -%}
-          {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
+          {%- set homes = [] -%}
+          {%- if selection == 'selected' -%}
+            {%- for home in inst.db_homes | default([]) -%}
+              {%- if home.suffix in selected_suffixes -%}
+                {%- set _ = homes.append(home) -%}
+              {%- endif -%}
+            {%- endfor -%}
+          {%- else -%}
+            {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
+            {%- set _ = homes.append(current_home) -%}
+          {%- endif -%}
           {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
           {%- set vip = namespace(ip='') -%}
           {%- for entry in (oracle_lab_listener_vips | default([])) -%}
@@ -30,11 +79,13 @@
               {%- set vip.ip = entry.ip -%}
             {%- endif -%}
           {%- endfor -%}
-          {%- set _ = out.append(inst | combine({
-            '_home': current_home.suffix,
-            '_net': listener_name,
-            '_vip': vip.ip,
-            '_port': (inst.listener_port | default(1521))})) -%}
+          {%- for home in homes -%}
+            {%- set _ = out.append(inst | combine({
+              '_home': home.suffix,
+              '_net': listener_name,
+              '_vip': vip.ip,
+              '_port': (inst.listener_port | default(1521))})) -%}
+          {%- endfor -%}
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
@@ -101,7 +152,13 @@
       iface="$(ip -o route show default | awk '{print $5; exit}')"
     fi
 
-    desired=" {{ _net_instances | selectattr('_vip', 'defined') | map(attribute='_vip') | reject('equalto', '') | unique | join(' ') }} "
+    # Retain VIPs for every inventory instance on this host (not only the
+    # filtered oracle_network_instances subset for this run). Union with the
+    # current work list so assign targets are never cleaned mid-play.
+    desired=" {{ (
+      (_net_retain_vips | default([]))
+      + (_net_instances | default([]) | selectattr('_vip', 'defined') | map(attribute='_vip') | reject('equalto', '') | list)
+    ) | unique | join(' ') }} "
     managed="{{ oracle_lab_listener_vips | default([]) | map(attribute='ip') | unique | join(' ') }}"
     prefix="{{ oracle_network_listener_vip_prefix }}"
     persist="{{ '1' if (oracle_network_persist_listener_vips | bool) else '0' }}"
@@ -145,7 +202,12 @@
   args: { executable: /bin/bash }
   register: _listener_vip_cleanup
   changed_when: "'CHANGED' in (_listener_vip_cleanup.stdout | default(''))"
-  when: oracle_lab_listener_vips | length > 0
+  when:
+    - oracle_lab_listener_vips | length > 0
+    # Filtered runs (oracle_network_instances set) must never strip VIPs for
+    # instances not in this work list. Extra-var oracle_instances may also omit
+    # them (e2e standalone dual-home vars), so skip cleanup entirely then.
+    - (oracle_network_instances | default([])) | length == 0
 
 - name: Assign dedicated listener VIPs to the guest interface
   ansible.builtin.shell: |

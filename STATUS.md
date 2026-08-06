@@ -1,6 +1,15 @@
 # Status - ansible-oracle
 
-Last updated after the KVM/Data Guard lab proof.
+Last updated after greenfield lab rebuild and live dual-home upgrade proof:
+
+- Central inventory `/home/oracle/oraInventory` + `dbhome_1`/`dbhome_2` naming
+- Full `site.yml` converge: **210 passed, 6 skipped**
+- Standalone prepare: `duper` `dbhome_2` patched to **19.32** (`39472050`)
+  while Restart stayed on `dbhome_1` (19.31)
+- Planned cutover: Restart + listener switched to `dbhome_2`, datapatch ran
+- Disk space: default lab root disk is now `250G` (`LAB_ROOT_DISK_SIZE`) so
+  multi-instance dual-home + 19.32 RU workspace fits; live 19.32 proof used
+  `duper` on the prior 120G disks
 
 Native client availability verification on 2026-07-11 added role-based
 `super_pri` and `super_stb` services, two-site Oracle Client aliases, and a
@@ -141,9 +150,9 @@ The supported lab path is now KVM/libvirt:
 - Live KVM multi-instance creation on `superdb1`:
   - Existing Data Guard primary `super` stayed `PRIMARY|READ WRITE` with
     `MAXIMUM AVAILABILITY` protection mode and level.
-  - Standalone `duper` was installed under `/duper/app/oracle/db_home1`, created
+  - Standalone `duper` was installed under `/duper/app/oracle/dbhome_1`, created
     by DBCA under `/duper`, and registered in `/etc/oratab`.
-  - Standalone `fluff` was installed under `/fluff/app/oracle/db_home1`, created
+  - Standalone `fluff` was installed under `/fluff/app/oracle/dbhome_1`, created
     by DBCA under `/fluff`, and registered in `/etc/oratab`.
   - `duperdb.domain.is` maps to `192.168.87.22` inside the guest, the VIP is
     assigned alongside `superdc1.domain.is` / `192.168.87.31`.
@@ -226,10 +235,10 @@ The supported lab path is now KVM/libvirt:
     Guard are not reported as standalone install candidates.
     A confirmed live switchback rehearsal has also been run for Restart-
     discovered standalone `fluff`: the playbook installed and patched
-    `/fluff/app/oracle/db_home2`, switched the database and `LISTENER_FLUFF`
+    `/fluff/app/oracle/dbhome_2`, switched the database and `LISTENER_FLUFF`
     to that target home, accepted idempotent no-op datapatch output, validated
     Restart on the target, switched both resources back to
-    `/fluff/app/oracle/db_home1`, restarted `fluff`, and validated the original
+    `/fluff/app/oracle/dbhome_1`, restarted `fluff`, and validated the original
     home again while `super` remained `PRIMARY|READ WRITE` in
     `MAXIMUM AVAILABILITY`.
   - `playbooks/07-patch-standbyfirst.yml` supports Data Guard standby-first
@@ -248,7 +257,7 @@ The supported lab path is now KVM/libvirt:
     selected with `oracle_patch_apply_component_path`. The eligible DB RU
     component `39062931/39034528` has been applied live through the guarded
     standby-first helper: both Data Guard members were switched to
-    `/super/app/oracle/db_home2`, datapatch ran on the promoted primary, SQL
+    `/super/app/oracle/dbhome_2`, datapatch ran on the promoted primary, SQL
     patch registry was validated, Maximum Availability was preserved, and the
     standby remained `READ ONLY WITH APPLY`.
     The readiness-only path has also been run live: it resolved

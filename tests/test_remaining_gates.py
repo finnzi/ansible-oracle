@@ -18,7 +18,7 @@ def test_remaining_gates_documents_standbyfirst_media_and_apply_flow():
     assert "playbooks/07-patch-standbyfirst.yml" in runbook
     assert "-e oracle_patch_zip=/u01/stage/<eligible-standby-first-db-ru.zip>" in runbook
     assert "-e oracle_patch_apply_component_path=39062931/39034528" in runbook
-    assert "oracle_patch_dual_home_suffix=db_home2" in runbook
+    assert "oracle_patch_dual_home_suffix=dbhome_2" in runbook
     assert "oracle_patch_standbyfirst_execute=true" in runbook
     assert "oracle_patch_standbyfirst_restore_primary=true" in runbook
     assert "oracle_patch_standbyfirst_confirm=PATCH_STANDBY_FIRST" in runbook
@@ -85,7 +85,8 @@ def test_remaining_gates_safe_check_script_dry_run():
     assert "playbooks/07-patch-standbyfirst-media.yml" in result.stdout
     assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
     assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
-    assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
+    assert "oracle_patch_standbyfirst_allow_component_only=true" in result.stdout
+    assert "oracle_patch_dual_home_suffix=dbhome_2" in result.stdout
     assert "oracle_patch_standbyfirst_expected_primary=super" in result.stdout
     assert "oracle_patch_standbyfirst_expected_standby=super_sby" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" not in result.stdout
@@ -140,7 +141,7 @@ def test_remaining_gates_safe_check_script_can_prove_confirmation_gate():
 
     assert result.returncode == 0, result.stderr
     assert "Standby-first missing-confirmation refusal" in result.stdout
-    assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
+    assert "oracle_patch_dual_home_suffix=dbhome_2" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" in result.stdout
     assert "oracle_patch_standbyfirst_restore_primary=true" in result.stdout
     assert "PATCH_STANDBY_FIRST" not in result.stdout
@@ -223,7 +224,8 @@ def test_standbyfirst_apply_helper_dry_run_prints_preflight_and_final_apply():
     assert "playbooks/07-patch-standbyfirst.yml" in result.stdout
     assert "oracle_patch_zip=/u01/stage/p39062931_190000_Linux-x86-64.zip" in result.stdout
     assert "oracle_patch_apply_component_path=39062931/39034528" in result.stdout
-    assert "oracle_patch_dual_home_suffix=db_home2" in result.stdout
+    assert "oracle_patch_standbyfirst_allow_component_only=true" in result.stdout
+    assert "oracle_patch_dual_home_suffix=dbhome_2" in result.stdout
     assert "oracle_patch_standbyfirst_expected_primary=super" in result.stdout
     assert "oracle_patch_standbyfirst_expected_standby=super_sby" in result.stdout
     assert "oracle_patch_standbyfirst_execute=true" in result.stdout
