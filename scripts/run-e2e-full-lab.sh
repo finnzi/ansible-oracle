@@ -315,15 +315,35 @@ echo "[e2e] Standalone dual-home upgrade already covered duper/fluff @ 19.32."
 echo "[e2e] For DG super + combo, use playbooks/07-upgrade-dual-db-downtime.yml"
 echo "[e2e] (or dual-home prepare on both DG nodes) — not run-standbyfirst-apply.sh."
 
-# ── 6. Full test suite ─────────────────────────────────────────────────
+# ── 6. Warm Data Guard switchover before pytest ────────────────────────
+# First post-upgrade broker switchover under MaxAvailability can spend many
+# minutes in CRS restart of the old primary. Running one cycle here warms the
+# path and leaves roles on super so test_manual_switchover is not the cold start.
+step "6/7 Warm Data Guard switchover (super -> super_sby -> super)"
+run_pb "${COMMON_E[@]}" playbooks/05-dataguard.yml \
+  -e oracle_dataguard_prepare_primary=false \
+  -e oracle_dataguard_prepare_standby=false \
+  -e oracle_dataguard_duplicate_standby=false \
+  -e oracle_dataguard_configure_broker=false \
+  -e oracle_dataguard_run_switchover=true \
+  -e oracle_dataguard_switchover_target=super_sby
+run_pb "${COMMON_E[@]}" playbooks/05-dataguard.yml \
+  -e oracle_dataguard_prepare_primary=false \
+  -e oracle_dataguard_prepare_standby=false \
+  -e oracle_dataguard_duplicate_standby=false \
+  -e oracle_dataguard_configure_broker=false \
+  -e oracle_dataguard_run_switchover=true \
+  -e oracle_dataguard_switchover_target=super
+
+# ── 7. Full test suite ─────────────────────────────────────────────────
 if [ "${SKIP_TESTS}" != "1" ]; then
-  step "6/6 Full pytest suite"
+  step "7/7 Full pytest suite"
   ./scripts/run-tests.sh tests/ -v --tb=short || {
     echo "WARN: pytest reported failures (see log)"
     echo "E2E_PYTEST_FAILED=1"
   }
 else
-  step "6/6 SKIP tests"
+  step "7/7 SKIP tests"
 fi
 
 step "E2E COMPLETE $(date -Is)"

@@ -518,7 +518,12 @@ def test_dual_home_switchback_target_installed_and_original_restored(lab_exec):
     )
     patch_result = lab_exec(f"su - oracle -c {shlex.quote(target_patch)}", timeout=180)
     assert patch_result.returncode == 0, patch_result.stdout + patch_result.stderr
-    assert EXPECTED_DB_RU in patch_result.stdout
+    # Baseline dual-home switchback leaves the unused home at the lab baseline RU.
+    # Full e2e upgrades both homes to the upgrade RU (19.32); accept either.
+    upgrade_ru = os.environ.get("ORACLE_TEST_UPGRADE_DB_RU_PATCH_ID", "39472050")
+    assert (
+        EXPECTED_DB_RU in patch_result.stdout or upgrade_ru in patch_result.stdout
+    ), patch_result.stdout
     assert "OPatch succeeded" in patch_result.stdout
 
     db_home = lab_exec(

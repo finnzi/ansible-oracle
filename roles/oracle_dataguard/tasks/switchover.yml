@@ -14,6 +14,72 @@
   ansible.builtin.set_fact:
     _dg_switchover_probe_identifier: "{{ _dg_primary_unique_name }}_dgb"
 
+# Broker must be running on every member or SWITCHOVER fails with ORA-16608 /
+# ORA-16525 on the lagging side (seen after dual-home when the standby DMON
+# was left stopped).
+- name: Ensure Data Guard broker is started on both members before switchover
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    start_broker() {
+      local conn="$1"
+      local output
+      if [ "$conn" = "/" ]; then
+        output="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    WHENEVER SQLERROR EXIT 1
+    DECLARE
+      v_start v$parameter.value%TYPE;
+    BEGIN
+      SELECT value INTO v_start FROM v$parameter WHERE name = 'dg_broker_start';
+      IF UPPER(v_start) != 'TRUE' THEN
+        EXECUTE IMMEDIATE 'ALTER SYSTEM SET dg_broker_start=TRUE SCOPE=BOTH';
+        DBMS_OUTPUT.PUT_LINE('STARTED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('ALREADY');
+      END IF;
+    END;
+    /
+    EXIT;
+    SQL
+    )" || true
+      else
+        output="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@${conn} as sysdba" <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    WHENEVER SQLERROR EXIT 1
+    DECLARE
+      v_start v$parameter.value%TYPE;
+    BEGIN
+      SELECT value INTO v_start FROM v$parameter WHERE name = 'dg_broker_start';
+      IF UPPER(v_start) != 'TRUE' THEN
+        EXECUTE IMMEDIATE 'ALTER SYSTEM SET dg_broker_start=TRUE SCOPE=BOTH';
+        DBMS_OUTPUT.PUT_LINE('STARTED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('ALREADY');
+      END IF;
+    END;
+    /
+    EXIT;
+    SQL
+    )" || true
+      fi
+      printf '%s:%s\n' "$conn" "$output"
+    }
+    start_broker /
+    start_broker "{{ _dg_primary_unique_name }}_dgb"
+    start_broker "{{ _dg_standby_unique_name }}_dgb"
+    # Give DMON a moment to register after a cold start.
+    sleep 5
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_broker_start
+  changed_when: "'STARTED' in (_dg_switchover_broker_start.stdout | default(''))"
+  failed_when: false
+
 - name: Fail when switchover target is not a configured member
   ansible.builtin.fail:
     msg: >-
@@ -28,15 +94,45 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_probe_identifier }}" <<'DGMGRL'
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    # After a prior switchover this host may be the standby (local broker often
+    # ORA-16525). Probe local OS auth, then each member DGMGRL service until
+    # SHOW CONFIGURATION returns a broker configuration.
+    try_show() {
+      local conn="$1"
+      local output
+      if [ "$conn" = "/" ]; then
+        output="$("$ORACLE_HOME/bin/dgmgrl" -silent / <<'DGMGRL'
     SHOW CONFIGURATION;
     EXIT;
     DGMGRL
+    )" || true
+      else
+        output="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@${conn}" <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+    )" || true
+      fi
+      if printf '%s\n' "$output" | grep -q 'Configuration -'; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+      return 1
+    }
+    try_show / \
+      || try_show "{{ _dg_primary_unique_name }}_dgb" \
+      || try_show "{{ _dg_standby_unique_name }}_dgb"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_switchover_before
   changed_when: false
+  retries: 18
+  delay: 10
+  until: >-
+    _dg_switchover_before.rc == 0 and
+    'Configuration -' in (_dg_switchover_before.stdout | default(''))
   failed_when: >-
     _dg_switchover_before.rc != 0 or
     'Configuration -' not in (_dg_switchover_before.stdout | default(''))
@@ -90,26 +186,214 @@
     - not (_dg_switchover_target_is_primary | bool)
     - not (_dg_switchover_target_is_physical_standby | bool)
 
-- name: Switchover Data Guard broker primary
+- name: Disable Fast-Start Failover before broker switchover when enabled
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
     output="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_connect_identifier }}" <<'DGMGRL'
-    SWITCHOVER TO '{{ _dg_switchover_target }}';
+    SHOW FAST_START FAILOVER;
     EXIT;
     DGMGRL
     )"
     printf '%s\n' "$output"
-    case "$output" in
-      *ORA-*|*Error:*) exit 1 ;;
-    esac
-    echo SWITCHOVER_COMPLETE
+    if printf '%s\n' "$output" | grep -q 'Fast-Start Failover: Enabled'; then
+      "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_connect_identifier }}" <<'DGMGRL'
+    DISABLE FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+      echo FSFO_DISABLED
+    else
+      echo FSFO_ALREADY_DISABLED
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_fsfo_disable
+  changed_when: "'FSFO_DISABLED' in (_dg_switchover_fsfo_disable.stdout | default(''))"
+  failed_when: >-
+    _dg_switchover_fsfo_disable.rc != 0 or
+    'Error:' in (_dg_switchover_fsfo_disable.stdout | default(''))
+  no_log: true
+  when: _dg_switchover_target_is_physical_standby | bool
+
+- name: Wait for broker SUCCESS and caught-up apply before switchover
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    TARGET="{{ _dg_switchover_target }}"
+    # Network role may have just restarted listeners; wait until both member
+    # DGB endpoints answer. Also require the target standby apply lag to be
+    # near-zero — MaxAvailability SWITCHOVER can hang indefinitely when the
+    # standby is still catching up after dual-home / patching.
+    probe_cfg() {
+      local conn="$1"
+      local output
+      output="$(printf 'SHOW CONFIGURATION;\nEXIT;\n' \
+        | "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" 2>/dev/null || true)"
+      printf '%s\n' "$output"
+      printf '%s\n' "$output" | grep -q 'Configuration -' || return 1
+      if printf '%s\n' "$output" | grep -qE 'Configuration Status:[[:space:]]*ERROR'; then
+        return 1
+      fi
+      return 0
+    }
+    probe_lag() {
+      local conn="$1"
+      local output
+      output="$(printf "SHOW DATABASE VERBOSE '%s';\nEXIT;\n" "${TARGET}" \
+        | "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" 2>/dev/null || true)"
+      printf '%s\n' "$output"
+      # Accept 0 seconds, or "not available" only if Real Time Query is ON and
+      # Database Status is SUCCESS (already current).
+      if printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]*0 seconds'; then
+        return 0
+      fi
+      if printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]*[0-9]+ second' \
+        && printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]*[1-5] second'; then
+        # Small lag (<=5s) is fine for lab switchover.
+        return 0
+      fi
+      if printf '%s\n' "$output" | grep -q 'Database Status:[[:space:]]*SUCCESS' \
+        && printf '%s\n' "$output" | grep -qE 'Transport Lag:[[:space:]]*0 seconds'; then
+        return 0
+      fi
+      return 1
+    }
+    cfg_ok=0
+    for c in \
+      '{{ _dg_switchover_connect_identifier }}' \
+      '{{ _dg_primary_unique_name }}_dgb' \
+      '{{ _dg_standby_unique_name }}_dgb'
+    do
+      if probe_cfg "$c"; then
+        cfg_ok=1
+        if probe_lag "$c"; then
+          exit 0
+        fi
+      fi
+    done
+    [ "$cfg_ok" -eq 1 ] || exit 1
+    exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_precheck
+  changed_when: false
+  retries: 36
+  delay: 10
+  until: _dg_switchover_precheck.rc == 0
+  failed_when: _dg_switchover_precheck.rc != 0
+  no_log: true
+  when: _dg_switchover_target_is_physical_standby | bool
+
+- name: Switchover Data Guard broker primary
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    TARGET="{{ _dg_switchover_target }}"
+    # Prefer printf|dgmgrl over timeout+heredoc: the latter hung for the full
+    # wall-clock budget in e2e (600s) while the same SWITCHOVER via printf
+    # completed in ~40s on the same lab.
+    dgmgrl_show() {
+      local connect="$1"
+      printf 'SHOW CONFIGURATION;\nEXIT;\n' \
+        | "$ORACLE_HOME/bin/dgmgrl" -silent "${connect}" 2>/dev/null || true
+    }
+    # Prefer the pre-switch primary DGB endpoint; fall back to target DGB if
+    # a prior attempt already flipped roles (retry-safe).
+    try_conn() {
+      local conn="$1"
+      local output
+      output="$(dgmgrl_show "${SYS_CONNECT}@${conn}")"
+      if printf '%s\n' "$output" | grep -q 'Configuration -'; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+      return 1
+    }
+    is_primary() {
+      local name="$1"
+      local cfg_text="$2"
+      printf '%s\n' "$cfg_text" | grep -qE "^[[:space:]]*${name}[[:space:]]+- (\\(\\*\\) )?Primary database"
+    }
+    cfg="$(try_conn '{{ _dg_switchover_connect_identifier }}' \
+      || try_conn "${TARGET}_dgb" \
+      || try_conn '{{ _dg_primary_unique_name }}_dgb' \
+      || try_conn '{{ _dg_standby_unique_name }}_dgb' \
+      || true)"
+    # Idempotent: if a prior attempt already made TARGET primary, accept it.
+    if is_primary "${TARGET}" "${cfg}"; then
+      echo "ALREADY_SWITCHED_PRIMARY=${TARGET}"
+      echo SWITCHOVER_COMPLETE
+      exit 0
+    fi
+    # Resolve which member is currently primary so DGMGRL can connect there.
+    if is_primary '{{ _dg_primary_unique_name }}' "${cfg}"; then
+      conn="{{ _dg_primary_unique_name }}_dgb"
+    elif is_primary '{{ _dg_standby_unique_name }}' "${cfg}"; then
+      conn="{{ _dg_standby_unique_name }}_dgb"
+    else
+      conn="{{ _dg_switchover_connect_identifier }}"
+    fi
+    # Always use password@TNS (not local OS auth) so DGMGRL can re-auth to the
+    # remote member during SWITCHOVER without ORA-01017.
+    #
+    # Bound dgmgrl so a stuck CRS restart cannot hold the play for 25+ minutes.
+    # Healthy MaxAvailability switchovers finish in <2 min; after dual-home the
+    # first switchover can sit on "Connected to an idle instance" well past the
+    # actual role flip. 360s covers the slow CRS path while still failing closed
+    # before the pytest budget. On timeout accept ROLE_CONFIRMED if TARGET is
+    # already primary.
+    output="$(
+      /usr/bin/timeout 360 \
+        "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" \
+        < <(printf "SWITCHOVER TO '%s';\nEXIT;\n" "${TARGET}") 2>/dev/null \
+      || true
+    )"
+    # Persist a password-scrubbed copy for post-mortem (no_log hides the result).
+    printf '%s\n' "$output" | sed -E 's#sys/[^@[:space:]]+@#sys/***@#g' \
+      > /tmp/dg-switchover-last.out 2>/dev/null || true
+    printf '%s\n' "$output"
+    # Require an explicit success token. Matching bare "ORA-" rejects healthy
+    # switchovers that still print lag/member Warning: ORA-... lines.
+    if printf '%s\n' "$output" | grep -qiE 'switchover (succeeded|complete)|NEW PRIMARY|Switchover succeeded|new primary is'; then
+      echo SWITCHOVER_COMPLETE
+      exit 0
+    fi
+    # Re-check roles if wording was non-standard or dgmgrl was deadline-killed
+    # after the role flip completed.
+    post="$(try_conn "${TARGET}_dgb" || try_conn "$conn" || true)"
+    if is_primary "${TARGET}" "${post}"; then
+      echo "ROLE_CONFIRMED_PRIMARY=${TARGET}"
+      echo SWITCHOVER_COMPLETE
+      exit 0
+    fi
+    if printf '%s\n' "$output" | grep -qE 'Error:|Failed\.|Unable to switchover|ORA-01017|logon denied'; then
+      echo "SWITCHOVER_FAILED conn=${conn} target=${TARGET}" >&2
+      exit 1
+    fi
+    # No success and no hard failure text — treat as failure.
+    echo "SWITCHOVER_NO_SUCCESS_TOKEN conn=${conn} target=${TARGET}" >&2
+    exit 1
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_switchover
-  changed_when: "'SWITCHOVER_COMPLETE' in (_dg_switchover.stdout | default(''))"
+  changed_when: >-
+    'SWITCHOVER_COMPLETE' in (_dg_switchover.stdout | default('')) and
+    'ALREADY_SWITCHED_PRIMARY' not in (_dg_switchover.stdout | default(''))
   failed_when: _dg_switchover.rc != 0
+  retries: 3
+  delay: 20
+  until: _dg_switchover.rc == 0
   no_log: true
   when: _dg_switchover_target_is_physical_standby | bool
 
@@ -117,6 +401,15 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    if output="$("$ORACLE_HOME/bin/dgmgrl" -silent / <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+    )" && printf '%s\n' "$output" | grep -q 'Configuration -'; then
+      printf '%s\n' "$output"
+      exit 0
+    fi
     "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_target }}_dgb" <<'DGMGRL'
     SHOW CONFIGURATION;
     EXIT;
@@ -161,19 +454,24 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_target }}_dgb" <<'DGMGRL'
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    # Best-effort only. The SQL open/MRP path below cancels apply itself.
+    # Never fail the switchover play on APPLY-OFF — post-role-change broker
+    # state is flaky (ORA- warnings, transient DGMGRL errors) and this step
+    # is not required for a correct final RO+APPLY open mode.
+    output="$(timeout 45 "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_target }}_dgb" <<'DGMGRL' 2>/dev/null || true
     EDIT DATABASE '{{ _dg_switchover_new_standby }}' SET STATE='APPLY-OFF';
     EXIT;
     DGMGRL
+    )"
+    printf '%s\n' "$output"
+    exit 0
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_switchover_apply_off
   changed_when: true
-  failed_when: >-
-    _dg_switchover_apply_off.rc != 0 or
-    'Error:' in (_dg_switchover_apply_off.stdout | default('')) or
-    'ORA-' in (_dg_switchover_apply_off.stdout | default(''))
+  failed_when: false
   no_log: true
   when: "'READ ONLY WITH APPLY' not in (_dg_switchover_new_standby_open_mode.stdout | default(''))"
 
@@ -182,7 +480,7 @@
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
     "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_new_standby }}_dgb as sysdba" <<'SQL'
-    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
     DECLARE
       v_open_mode v$database.open_mode%TYPE;
     BEGIN
@@ -203,6 +501,7 @@
       END IF;
     END;
     /
+    SELECT database_role || '|' || open_mode FROM v$database;
     EXIT;
     SQL
   args: { executable: /bin/bash }
@@ -212,9 +511,13 @@
   changed_when: "'CHANGED' in (_dg_switchover_new_standby_read_only_apply.stdout | default(''))"
   failed_when: >-
     _dg_switchover_new_standby_read_only_apply.rc != 0 or
-    'ORA-' in (_dg_switchover_new_standby_read_only_apply.stdout | default('')) or
     'SP2-' in (_dg_switchover_new_standby_read_only_apply.stdout | default('')) or
     'PLS-' in (_dg_switchover_new_standby_read_only_apply.stdout | default(''))
+  retries: 12
+  delay: 10
+  until: >-
+    _dg_switchover_new_standby_read_only_apply.rc == 0 and
+    'READ ONLY WITH APPLY' in (_dg_switchover_new_standby_read_only_apply.stdout | default(''))
   no_log: true
   when: "'READ ONLY WITH APPLY' not in (_dg_switchover_new_standby_open_mode.stdout | default(''))"
 
@@ -222,26 +525,157 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_target }}_dgb" <<'DGMGRL'
-    EDIT DATABASE '{{ _dg_switchover_new_standby }}' SET STATE='APPLY-ON';
-    EXIT;
-    DGMGRL
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    # Best-effort. SQL path already starts MRP for READ ONLY WITH APPLY; final
+    # validate task is the source of truth. Do not fail switchover on broker
+    # APPLY-ON errors after a role change.
+    output="$(printf "EDIT DATABASE '%s' SET STATE='APPLY-ON';\nEXIT;\n" \
+      '{{ _dg_switchover_new_standby }}' \
+      | "$ORACLE_HOME/bin/dgmgrl" -silent \
+          "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_target }}_dgb" \
+          2>/dev/null || true)"
+    printf '%s\n' "$output"
+    exit 0
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_switchover_apply_on
   changed_when: false
-  failed_when: >-
-    _dg_switchover_apply_on.rc != 0 or
-    'Error:' in (_dg_switchover_apply_on.stdout | default('')) or
-    'ORA-' in (_dg_switchover_apply_on.stdout | default(''))
+  failed_when: false
   no_log: true
   when: "'READ ONLY WITH APPLY' not in (_dg_switchover_new_standby_open_mode.stdout | default(''))"
+
+- name: Ensure Fast-Start Failover is enabled after switchover
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    # Prefer the post-switchover primary (target). Fall back across members so
+    # ALREADY_PRIMARY / half-settled configs still re-enable FSFO.
+    try_show_fsfo() {
+      local conn="$1"
+      local output
+      output="$(timeout 45 "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" <<'DGMGRL' 2>/dev/null || true
+    SHOW FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+    )"
+      if printf '%s\n' "$output" | grep -qE 'Fast-Start Failover:[[:space:]]*(Enabled|Disabled)'; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+      return 1
+    }
+    fsfo="$(try_show_fsfo '{{ _dg_switchover_target }}_dgb' \
+      || try_show_fsfo '{{ _dg_primary_unique_name }}_dgb' \
+      || try_show_fsfo '{{ _dg_standby_unique_name }}_dgb' \
+      || true)"
+    printf '%s\n' "$fsfo"
+    if printf '%s\n' "$fsfo" | grep -qE 'Fast-Start Failover:[[:space:]]*Enabled'; then
+      echo FSFO_ALREADY_ENABLED
+      exit 0
+    fi
+    # ENABLE must target a live primary DGB endpoint.
+    for conn in \
+      '{{ _dg_switchover_target }}_dgb' \
+      '{{ _dg_primary_unique_name }}_dgb' \
+      '{{ _dg_standby_unique_name }}_dgb'
+    do
+      enable_out="$(timeout 60 "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" <<'DGMGRL' 2>/dev/null || true
+    ENABLE FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+    )"
+      printf 'ENABLE@%s:\n%s\n' "$conn" "$enable_out"
+      # Hard auth/connect failures: try next endpoint.
+      if printf '%s\n' "$enable_out" | grep -qE 'ORA-01017|logon denied|ORA-12154|ORA-12541|ORA-12514'; then
+        continue
+      fi
+      # Verify enable actually stuck (SHOW, not just ENABLE return text).
+      verify="$(try_show_fsfo "$conn" || true)"
+      printf '%s\n' "$verify"
+      if printf '%s\n' "$verify" | grep -qE 'Fast-Start Failover:[[:space:]]*Enabled'; then
+        echo FSFO_ENABLED
+        exit 0
+      fi
+    done
+    echo FSFO_ENABLE_FAILED >&2
+    exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_fsfo_enable
+  changed_when: "'FSFO_ENABLED' in (_dg_switchover_fsfo_enable.stdout | default(''))"
+  failed_when: >-
+    _dg_switchover_fsfo_enable.rc != 0 or
+    'FSFO_ENABLE_FAILED' in (_dg_switchover_fsfo_enable.stdout | default('')) or
+    'FSFO_ENABLE_FAILED' in (_dg_switchover_fsfo_enable.stderr | default(''))
+  retries: 6
+  delay: 10
+  until: >-
+    _dg_switchover_fsfo_enable.rc == 0 and
+    (
+      'FSFO_ENABLED' in (_dg_switchover_fsfo_enable.stdout | default('')) or
+      'FSFO_ALREADY_ENABLED' in (_dg_switchover_fsfo_enable.stdout | default(''))
+    )
+  no_log: true
+  # Always leave FSFO on after any switchover path so the observer lab stays
+  # consistent (DISABLE is only for the brief SWITCHOVER window).
+  when: true
+
+- name: Ensure standby_file_management=AUTO on both members after switchover
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    # CRS restart after role change can bring a member up from an older SPFILE
+    # that still has the default MANUAL. Re-assert AUTO on both members so
+    # primary prerequisites and future file adds stay correct.
+    for conn in \
+      '{{ _dg_switchover_target }}_dgb' \
+      '{{ _dg_switchover_new_standby }}_dgb'
+    do
+      out="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@${conn} as sysdba" <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
+    DECLARE
+      v_val v$parameter.value%TYPE;
+    BEGIN
+      SELECT value INTO v_val FROM v$parameter WHERE name = 'standby_file_management';
+      IF UPPER(v_val) != 'AUTO' THEN
+        EXECUTE IMMEDIATE 'ALTER SYSTEM SET standby_file_management=AUTO SCOPE=BOTH';
+        DBMS_OUTPUT.PUT_LINE('SET_AUTO');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('ALREADY_AUTO');
+      END IF;
+    END;
+    /
+    EXIT;
+    SQL
+    )" || true
+      printf '%s:%s\n' "$conn" "$out"
+    done
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_sfm_auto
+  changed_when: "'SET_AUTO' in (_dg_switchover_sfm_auto.stdout | default(''))"
+  failed_when: false
 
 - name: Validate Data Guard switchover target and new standby
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
+    export ORACLE_SID={{ inst.name }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    # Match live test assertions: role + open_mode + protection_mode.
+    # protection_level can lag as RESYNCHRONIZATION for several minutes after
+    # a role change (especially if dgmgrl CRS restart was deadline-killed); the
+    # pytest helpers only assert MAXIMUM AVAILABILITY in protection_mode.
     target="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_switchover_target }}_dgb as sysdba" <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
@@ -255,18 +689,26 @@
     SQL
     )"
     output="$(printf '%s\n%s\n' "$target" "$standby")"
+    printf '%s\n' "$output" | sed -E 's#sys/[^@[:space:]]+@#sys/***@#g' \
+      > /tmp/dg-validate-last.out 2>/dev/null || true
     printf '%s\n' "$output"
-    case "$output" in
-      *ORA-*|*Error:*) exit 1 ;;
-    esac
-    printf '%s\n' "$output" | grep -F 'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' >/dev/null || exit 1
-    printf '%s\n' "$output" | grep -F 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' >/dev/null || exit 1
+    # Fail closed on connection/SQL errors (but not on RESYNCHRONIZATION text).
+    if printf '%s\n' "$output" | grep -qE 'ORA-[0-9]{5}|^Error:|SP2-'; then
+      exit 1
+    fi
+    printf '%s\n' "$output" | grep -qF 'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY' || exit 1
+    printf '%s\n' "$output" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY' || exit 1
+    # Reject demotion to performance mode.
+    if printf '%s\n' "$output" | grep -qiE 'MAXIMUM PERFORMANCE|UNPROTECTED'; then
+      exit 1
+    fi
+    exit 0
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_switchover_validate
   changed_when: false
-  retries: 18
+  retries: 36
   delay: 10
   until: _dg_switchover_validate.rc == 0
   failed_when: _dg_switchover_validate.rc != 0

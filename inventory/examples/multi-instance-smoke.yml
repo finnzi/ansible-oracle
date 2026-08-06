@@ -40,6 +40,38 @@ oracle_instances:
     listener_vip: superdb.domain.is
     listener_port: 1521
     service_name: super_svc
+    # Role-based DG services (same shape as inventory/group_vars/all.yml) so
+    # multi-instance e2e / smoke still exercises super_pri / super_stb / super_tac.
+    services:
+      - name: super_svc
+        role: PRIMARY
+        failover_type: SELECT
+        failover_method: BASIC
+        failover_retries: 30
+        failover_delay: 1
+      - name: super_pri
+        role: PRIMARY
+        failover_type: SELECT
+        failover_method: BASIC
+        failover_retries: 30
+        failover_delay: 1
+      - name: super_stb
+        role: PHYSICAL_STANDBY
+        failover_type: NONE
+        failover_method: NONE
+        failover_retries: 0
+        failover_delay: 0
+      - name: super_tac
+        role: PRIMARY
+        failover_type: AUTO
+        failover_method: BASIC
+        failover_retries: 60
+        failover_delay: 1
+        notification: true
+        commit_outcome: true
+        retention: 86400
+        replay_init_time: 300
+        failover_restore: LEVEL1
 
   - name: duper
     oracle_base: /duper/app/oracle

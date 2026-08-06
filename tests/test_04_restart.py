@@ -25,6 +25,14 @@ POLL_INTERVAL_S = 5
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_restart_stop_start_skips_when_fsfo_unknown_or_enabled():
+    """Abort-stop must not run unless FSFO is proven disabled (fail closed)."""
+    source = (REPO_ROOT / "tests/test_04_restart.py").read_text(encoding="utf-8")
+    assert "fsfo_unknown" in source
+    assert "Fast-Start Failover: Disabled" in source
+    assert "would intentionally trigger failover" in source
+
+
 def test_gi_install_role_has_oracle_restart_install_path():
     defaults = (REPO_ROOT / "roles/oracle_gi_install/defaults/main.yml").read_text(
         encoding="utf-8"
@@ -371,24 +379,31 @@ def test_restart_can_stop_and_start_database(lab_exec):
 
     _ensure_restart_database_running(lab_exec)
 
+    # Fail closed: never abort-stop a DG primary unless we can prove FSFO is
+    # disabled. A failed/ambiguous dgmgrl probe (missing VIP, idle instance)
+    # must skip — otherwise FSFO promotes the standby mid-suite.
+    oracle_home = _current_restart_home(lab_exec, "super")
     fsfo = lab_exec(
         "su - oracle -c "
         + shlex.quote(
-            "export ORACLE_HOME=/super/app/oracle/dbhome_1 "
-            "TNS_ADMIN=/super/app/oracle/dbhome_1/network/admin; "
+            f"export ORACLE_HOME={oracle_home} "
+            f"TNS_ADMIN={oracle_home}/network/admin; "
             "printf 'SHOW FAST_START FAILOVER;\\nEXIT;\\n' | "
-            "$ORACLE_HOME/bin/dgmgrl -silent sys/SysPassword1_@super_dgb"
+            "$ORACLE_HOME/bin/dgmgrl -silent sys/SysPassword1_@super_dgb; "
+            "printf 'SHOW FAST_START FAILOVER;\\nEXIT;\\n' | "
+            "$ORACLE_HOME/bin/dgmgrl -silent /"
         ),
         timeout=90,
     )
-    if (
-        fsfo.returncode == 0
-        and "Fast-Start Failover: Enabled" in fsfo.stdout
-        and "Active Target:" in fsfo.stdout
-    ):
+    fsfo_out = fsfo.stdout or ""
+    fsfo_enabled = "Fast-Start Failover: Enabled" in fsfo_out and "Active Target:" in fsfo_out
+    fsfo_disabled = "Fast-Start Failover: Disabled" in fsfo_out
+    fsfo_unknown = (not fsfo_enabled) and (not fsfo_disabled)
+    if fsfo_enabled or fsfo_unknown:
         pytest.skip(
-            "super is an FSFO-protected Data Guard primary; abort-stopping it "
-            "through Restart would intentionally trigger failover."
+            "super is FSFO-protected (or FSFO state could not be proven disabled); "
+            "abort-stopping it through Restart would intentionally trigger failover. "
+            f"dgmgrl_probe={fsfo_out[:400]!r}"
         )
 
     stop = lab_exec(

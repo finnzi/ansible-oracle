@@ -205,6 +205,12 @@ def test_multi_instance_smoke_is_primary_host_super_duper_fluff():
     # Shape is fully declared on the instance list (dataguard:true for super).
     assert by_name["super"]["dataguard"] is True
     assert by_name["super"]["listener_vip"] == "superdb.domain.is"
+    assert {svc["name"] for svc in by_name["super"]["services"]} >= {
+        "super_svc",
+        "super_pri",
+        "super_stb",
+        "super_tac",
+    }
     assert by_name["duper"]["dataguard"] is False
     assert by_name["duper"]["listener_vip"] == "duperdb.domain.is"
     assert by_name["duper"]["listener_port"] == 1522

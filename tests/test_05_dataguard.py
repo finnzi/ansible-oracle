@@ -249,7 +249,10 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "LogXptMode='SYNC'" in dataguard_configure_broker
     assert "export ORACLE_SID={{ inst.name }}" in dataguard_configure_broker
-    assert "SWITCHOVER TO '{{ _dg_switchover_target }}'" in dataguard_switchover
+    assert 'printf "SWITCHOVER TO' in dataguard_switchover
+    assert "${TARGET}" in dataguard_switchover
+    assert "SWITCHOVER_COMPLETE" in dataguard_switchover
+    assert "ALREADY_SWITCHED_PRIMARY" in dataguard_switchover
     assert "_dg_switchover_requested_target" in dataguard_switchover
     assert "_dg_standby_unique_name if _dg_switchover_requested_target == oracle_dataguard_auto_switchover_target" in dataguard_switchover
     assert "ALREADY_PRIMARY" in dataguard_switchover
@@ -314,10 +317,12 @@ def test_primary_dataguard_prerequisites(lab_exec):
     needed_standby_logs = int(lines[8])
     standby_logs_on_dedicated_path = int(lines[9])
 
-    assert standby_file_management == "AUTO"
-    assert dg_broker_start == "TRUE"
-    assert "DG_CONFIG=(" in log_archive_config
-    assert "super_sby" in log_archive_config
+    assert standby_file_management.upper() == "AUTO"
+    assert dg_broker_start.upper() == "TRUE"
+    # Oracle may return log_archive_config with either DG_CONFIG or dg_config.
+    log_archive_config_upper = log_archive_config.upper()
+    assert "DG_CONFIG=(" in log_archive_config_upper
+    assert "SUPER_SBY" in log_archive_config_upper
     log_archive_dest_2_lower = log_archive_dest_2.lower()
     assert (
         'service="super_sby_dgb"' in log_archive_dest_2_lower
@@ -649,7 +654,9 @@ def _run_dataguard_switchover(target: str) -> subprocess.CompletedProcess:
         env=env,
         capture_output=True,
         text=True,
-        timeout=900,
+        # Switchover play includes FSFO disable/enable, broker settle, CRS
+        # restart of the new standby, and role validation — allow 25 minutes.
+        timeout=1500,
     )
 
 
