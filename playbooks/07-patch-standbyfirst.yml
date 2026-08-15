@@ -153,7 +153,7 @@
         _patch_sf_local_unique_name: "{{ _patch_sf_instance.db_unique_name | default(_patch_sf_instance.name) }}"
         _patch_sf_local_dgconnect_identifier: >-
           (DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST={{ _patch_sf_instance.listener_vip }})(PORT={{ _patch_sf_instance.listener_port | default(1521) }}))(CONNECT_DATA=(SERVER=DEDICATED)(SERVICE_NAME={{ _patch_sf_instance.db_unique_name | default(_patch_sf_instance.name) }}_DGMGRL)))
-        _patch_sf_home_path: >-
+        _patch_sf_home_inventory_path: >-
           {{ _patch_sf_instance.oracle_base }}/{{ ((_patch_sf_instance.db_homes | selectattr('current', 'equalto', true) | list | first) | default(_patch_sf_instance.db_homes[0])).suffix }}
         _patch_sf_patch_home_path: >-
           {%- set current_home = (_patch_sf_instance.db_homes | selectattr('current', 'equalto', true) | list | first) | default(_patch_sf_instance.db_homes[0]) -%}
@@ -161,6 +161,18 @@
           {{ oracle_patch_dual_home_path }}{%- elif oracle_patch_dual_home_suffix | default('') | length > 0 -%}
           {{ _patch_sf_instance.oracle_base }}/{{ oracle_patch_dual_home_suffix }}{%- else -%}
           {{ _patch_sf_instance.oracle_base }}/{{ current_home.suffix }}{%- endif -%}
+
+    - name: Resolve runtime ORACLE_HOME from Restart for standby-first
+      ansible.builtin.include_role:
+        name: oracle_common
+        tasks_from: resolve-runtime-home.yml
+      vars:
+        oracle_runtime_home_restart_db: "{{ _patch_sf_local_unique_name }}"
+        oracle_runtime_home_fallback: "{{ _patch_sf_home_inventory_path }}"
+
+    - name: Use Restart-registered ORACLE_HOME for standby-first
+      ansible.builtin.set_fact:
+        _patch_sf_home_path: "{{ _runtime_home_path }}"
 
     - name: Read Data Guard broker roles and protection mode  # noqa: run-once[task]
       ansible.builtin.shell: |
@@ -194,14 +206,14 @@
         _patch_sf_protection_mode: "{{ _patch_sf_broker.stdout | regex_search('PATCH_SF_PROTECTION_MODE=([^\\n]+)', '\\1') | first | default('') }}"
       run_once: true
 
-    - name: Publish standby-first broker facts to static primary hosts  # noqa: run-once[task]
+    - name: Publish standby-first broker facts to Data Guard hosts  # noqa: run-once[task]
       ansible.builtin.set_fact:
         _patch_sf_current_primary: "{{ _patch_sf_current_primary }}"
         _patch_sf_current_standby: "{{ _patch_sf_current_standby }}"
         _patch_sf_protection_mode: "{{ _patch_sf_protection_mode }}"
       delegate_to: "{{ item }}"
       delegate_facts: true
-      loop: "{{ groups.primary | default([]) }}"
+      loop: "{{ groups.oracle_db_hosts | default([]) }}"
       run_once: true
 
     - name: Fail when broker is not in Maximum Availability  # noqa: run-once[task]
@@ -334,6 +346,7 @@
     - role: oracle_db_install
       when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
+        oracle_db_install_instances: "{{ [_patch_sf_instance] }}"
         oracle_db_install_home_selection: selected
         oracle_db_install_home_suffixes: >-
           {{
@@ -408,6 +421,7 @@
     - role: oracle_patch
       when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
+        oracle_patch_instances: "{{ [_patch_sf_instance] }}"
         oracle_patch_target: db
         oracle_patch_mode: >-
           {{
@@ -625,6 +639,7 @@
     - role: oracle_db_install
       when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
+        oracle_db_install_instances: "{{ [_patch_sf_instance] }}"
         oracle_db_install_home_selection: selected
         oracle_db_install_home_suffixes: >-
           {{
@@ -699,6 +714,7 @@
     - role: oracle_patch
       when: oracle_patch_standbyfirst_execute | default(false) | bool
       vars:
+        oracle_patch_instances: "{{ [_patch_sf_instance] }}"
         oracle_patch_target: db
         oracle_patch_mode: >-
           {{

@@ -1,0 +1,40 @@
+---
+# Resolve the ORACLE_HOME that is actually running a Restart database.
+# Prefers srvctl; falls back to oracle_runtime_home_fallback (inventory current).
+# Sets _runtime_home_path.
+
+- name: Probe Restart Oracle home for runtime tools
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+    db={{ oracle_runtime_home_restart_db | quote }}
+    fallback={{ oracle_runtime_home_fallback | quote }}
+    home=""
+    if [ -x "${gi}/bin/srvctl" ] && [ -n "${db}" ]; then
+      home="$("${gi}/bin/srvctl" config database -db "${db}" 2>/dev/null |
+        awk -F': ' '$1 == "Oracle home" {
+          gsub(/^[ \t]+|[ \t]+$/, "", $2)
+          print $2
+          exit
+        }')"
+    fi
+    if [ -n "${home}" ] && [ -x "${home}/bin/sqlplus" ]; then
+      printf '%s\n' "${home}"
+    else
+      printf '%s\n' "${fallback}"
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _runtime_home_probe
+  changed_when: false
+  failed_when: false
+
+- name: Record runtime ORACLE_HOME
+  ansible.builtin.set_fact:
+    _runtime_home_path: >-
+      {{
+        (_runtime_home_probe.stdout | default('') | trim)
+        if ((_runtime_home_probe.stdout | default('') | trim) | length > 0)
+        else oracle_runtime_home_fallback
+      }}

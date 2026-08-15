@@ -37,6 +37,29 @@ except ImportError:  # pragma: no cover
     oracledb = None
 
 
+_AUTH_MODE_ALIASES = {
+    "SYSDBA": "AUTH_MODE_SYSDBA",
+    "SYSOPER": "AUTH_MODE_SYSOPER",
+    "SYSDG": "AUTH_MODE_SYSDGD",
+    "SYSDGD": "AUTH_MODE_SYSDGD",
+    "SYSASM": "AUTH_MODE_SYSASM",
+    "SYSBACKUP": "AUTH_MODE_SYSBKP",
+    "SYSBKP": "AUTH_MODE_SYSBKP",
+    "SYSKM": "AUTH_MODE_SYSKMT",
+    "SYSKMT": "AUTH_MODE_SYSKMT",
+    "SYSRAC": "AUTH_MODE_SYSRAC",
+}
+
+
+def resolve_auth_mode_attr(role):
+    if not role:
+        return None
+    attr = _AUTH_MODE_ALIASES.get(role.strip().upper())
+    if attr is None:
+        raise ValueError(f"Unsupported Oracle authentication role: {role}")
+    return attr
+
+
 def run_sql(host, port, service, user, password, role, sql, script, commit):
     if oracledb is None:
         raise RuntimeError("python-oracledb is not installed on the control node.")
@@ -45,8 +68,9 @@ def run_sql(host, port, service, user, password, role, sql, script, commit):
 
     dsn = oracledb.makedsn(host, port, service_name=service)
     connect_kwargs = {"user": user, "password": password, "dsn": dsn}
-    if role and role.upper() in ("SYSDBA", "SYSOPER", "SYSDG", "SYSASM", "SYSBACKUP"):
-        connect_kwargs["mode"] = getattr(oracledb, f"AUTH_MODE_{role.upper()}")
+    auth_attr = resolve_auth_mode_attr(role)
+    if auth_attr is not None:
+        connect_kwargs["mode"] = getattr(oracledb, auth_attr)
 
     rows_out: list[list] = []
     columns: list[str] = []

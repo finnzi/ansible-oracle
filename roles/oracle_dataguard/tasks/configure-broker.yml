@@ -10,6 +10,18 @@
     _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
     _dg_primary_pwfile: "{{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}"
 
+- name: Resolve runtime ORACLE_HOME from Restart for broker config
+  ansible.builtin.include_role:
+    name: oracle_common
+    tasks_from: resolve-runtime-home.yml
+  vars:
+    oracle_runtime_home_restart_db: "{{ _dg_primary_unique_name }}"
+    oracle_runtime_home_fallback: "{{ _dg_home_path }}"
+
+- name: Use Restart-registered ORACLE_HOME for broker tools
+  ansible.builtin.set_fact:
+    _dg_home_path: "{{ _runtime_home_path }}"
+
 - name: Read Data Guard broker configuration
   ansible.builtin.shell: |
     set -o pipefail
@@ -146,7 +158,34 @@
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
     export ORACLE_SID={{ inst.name }}
-    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    sqlplus_as() {
+      local target="$1"
+      if [ "$target" = "/" ]; then
+        "$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba
+      else
+        "$ORACLE_HOME/bin/sqlplus" -L -S "${SYS_CONNECT}@${target} as sysdba"
+      fi
+    }
+    conn="/"
+    for candidate in \
+      "{{ _dg_primary_unique_name }}_dgb" \
+      "{{ _dg_standby_unique_name }}_dgb" \
+      "/"
+    do
+      role="$(sqlplus_as "$candidate" <<'SQL' || true
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role FROM v$database;
+    EXIT;
+    SQL
+    )"
+      if printf '%s\n' "$role" | grep -qx 'PRIMARY'; then
+        conn="$candidate"
+        break
+      fi
+    done
+    sqlplus_as "$conn" <<'SQL'
     SET SERVEROUTPUT ON
     DECLARE
       v_count PLS_INTEGER;

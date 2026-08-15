@@ -11,7 +11,7 @@
 # the target home is already at oracle_upgrade_release_update (19.32).
 
 - name: Planned dual-home upgrade cutover
-  hosts: oracle_db_hosts
+  hosts: primary
   become: true
   gather_facts: false
   vars:
@@ -48,6 +48,7 @@
               false
             ) | rejectattr('dataguard', 'equalto', true) | list
           }}
+      when: "'standby' not in group_names"
 
     - name: Resolve standalone cutover targets
       ansible.builtin.set_fact:

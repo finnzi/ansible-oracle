@@ -339,8 +339,8 @@ run_pb "${COMMON_E[@]}" playbooks/05-dataguard.yml \
 if [ "${SKIP_TESTS}" != "1" ]; then
   step "7/7 Full pytest suite"
   ./scripts/run-tests.sh tests/ -v --tb=short || {
-    echo "WARN: pytest reported failures (see log)"
-    echo "E2E_PYTEST_FAILED=1"
+    echo "ERROR: pytest reported failures (see log)" >&2
+    exit 1
   }
 else
   step "7/7 SKIP tests"

@@ -4,7 +4,7 @@
 
 - name: Set instance service reconciliation facts
   ansible.builtin.set_fact:
-    _svc_home_path: >-
+    _svc_home_inventory_path: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _svc_restart_db: "{{ inst.db_unique_name | default(inst.name) }}"
     _svc_definitions: >-
@@ -21,6 +21,18 @@
             }
           ], true)
       }}
+
+- name: Resolve runtime ORACLE_HOME from Restart for service reconcile
+  ansible.builtin.include_role:
+    name: oracle_common
+    tasks_from: resolve-runtime-home.yml
+  vars:
+    oracle_runtime_home_restart_db: "{{ _svc_restart_db }}"
+    oracle_runtime_home_fallback: "{{ _svc_home_inventory_path }}"
+
+- name: Use Restart-registered ORACLE_HOME for service reconcile
+  ansible.builtin.set_fact:
+    _svc_home_path: "{{ _runtime_home_path }}"
 
 - name: Read local database role before service reconciliation
   ansible.builtin.shell: |

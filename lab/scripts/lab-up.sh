@@ -66,7 +66,7 @@ ensure_vm() {
     # Enlarge existing root disks when LAB_ROOT_DISK_SIZE increases. qemu-img
     # needs the domain stopped; guest FS expansion is done by oracle_common
     # (playbooks/00-prep-os.yml) via growpart/lvextend/xfs_growfs.
-    lab_ensure_root_disk_size "${short}" "${disk}" || true
+    lab_ensure_root_disk_size "${short}" "${disk}"
   fi
 
   if vm_has_grid_disk "${short}" && ! [ -f "${grid_disk}" ]; then
@@ -78,11 +78,23 @@ ensure_vm() {
     log "Importing VM ${name}"
     virsh_cmd define "$(write_domain_xml "${short}")" >/dev/null
     virsh_cmd start "${name}" >/dev/null
-  elif ! virsh_cmd domstate "${name}" | grep -q running; then
-    log "Starting VM ${name}"
-    virsh_cmd start "${name}" >/dev/null
   else
-    log "VM ${name} already running"
+    state="$(virsh_cmd domstate "${name}" | tr -d '\r')"
+    case "${state}" in
+      running)
+        log "VM ${name} already running"
+        ;;
+      "in shutdown"|dying)
+        log "Waiting for ${name} to finish shutting down before start"
+        wait_for_domain_shutoff "${name}"
+        log "Starting VM ${name}"
+        virsh_cmd start "${name}" >/dev/null
+        ;;
+      *)
+        log "Starting VM ${name}"
+        virsh_cmd start "${name}" >/dev/null
+        ;;
+    esac
   fi
 }
 
@@ -106,7 +118,7 @@ done
 
 log "Generating ${INVENTORY_DIR}/hosts.yml"
 mkdir -p "${INVENTORY_DIR}"
-cp "${INVENTORY_DIR}/hosts.example.yml" "${INVENTORY_DIR}/hosts.yml"
+render_lab_inventory
 
 log "Updating /etc/hosts (standalone listener VIP: superdb.domain.is -> ${IP_SUPERDB})"
 "$(dirname "$0")/update-hosts.sh"

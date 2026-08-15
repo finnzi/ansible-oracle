@@ -45,6 +45,30 @@ except ImportError:  # pragma: no cover — the venv provides this
     oracledb = None
 
 
+_AUTH_MODE_ALIASES = {
+    "SYSDBA": "AUTH_MODE_SYSDBA",
+    "SYSOPER": "AUTH_MODE_SYSOPER",
+    "SYSDG": "AUTH_MODE_SYSDGD",
+    "SYSDGD": "AUTH_MODE_SYSDGD",
+    "SYSASM": "AUTH_MODE_SYSASM",
+    "SYSBACKUP": "AUTH_MODE_SYSBKP",
+    "SYSBKP": "AUTH_MODE_SYSBKP",
+    "SYSKM": "AUTH_MODE_SYSKMT",
+    "SYSKMT": "AUTH_MODE_SYSKMT",
+    "SYSRAC": "AUTH_MODE_SYSRAC",
+}
+
+
+def resolve_auth_mode_attr(role: str) -> str | None:
+    """Map an Oracle privilege name to a python-oracledb AUTH_MODE_* attribute."""
+    if not role:
+        return None
+    attr = _AUTH_MODE_ALIASES.get(role.strip().upper())
+    if attr is None:
+        raise ValueError(f"Unsupported Oracle authentication role: {role}")
+    return attr
+
+
 _QUERIES = {
     # Each query returns a single row, single meaningful column. We coalesce
     # the v$database columns so the query still parses on a non-DG database.
@@ -71,8 +95,9 @@ def gather_facts(host: str, port: int, service: str, user: str, password: str, r
     facts: dict = {"reachable": False}
     # Thin mode by default. SYSDBA needs the role keyword.
     connect_kwargs = {"user": user, "password": password, "dsn": dsn}
-    if role and role.upper() in ("SYSDBA", "SYSOPER", "SYSDG", "SYSASM", "SYSBACKUP"):
-        connect_kwargs["mode"] = getattr(oracledb, f"AUTH_MODE_{role.upper()}")
+    auth_attr = resolve_auth_mode_attr(role)
+    if auth_attr is not None:
+        connect_kwargs["mode"] = getattr(oracledb, auth_attr)
 
     with oracledb.connect(**connect_kwargs) as conn:
         facts["reachable"] = True
@@ -112,6 +137,9 @@ def main() -> None:
             module.params["password"],
             module.params["role"],
         )
+    except (RuntimeError, ValueError, AttributeError) as exc:
+        module.fail_json(msg=str(exc))
+        return
     except Exception as exc:  # noqa: BLE001
         # Connection failures are NOT a module failure — surface as a fact so
         # roles can branch (e.g. "DB not yet created") and tests can assert.

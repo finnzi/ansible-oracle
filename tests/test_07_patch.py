@@ -329,7 +329,7 @@ def test_patch_role_db_apply_contract():
         )
         assert action_pos < guard_pos
     assert "Read Data Guard broker roles and protection mode" in standbyfirst_playbook
-    assert "Publish standby-first broker facts to static primary hosts" in standbyfirst_playbook
+    assert "Publish standby-first broker facts to Data Guard hosts" in standbyfirst_playbook
     assert "Fail when broker is not in Maximum Availability" in standbyfirst_playbook
     assert "Report standby-first execution plan" in standbyfirst_playbook
     assert "target_homes" in standbyfirst_playbook
@@ -587,7 +587,7 @@ def test_dual_home_switchback_target_installed_and_original_restored(lab_exec):
     )
 
 
-def test_patch_playbook_converges_when_ru_already_present():
+def test_patch_playbook_converges_when_ru_already_present(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -616,7 +616,7 @@ def test_patch_playbook_converges_when_ru_already_present():
     )
 
 
-def test_grid_patch_playbook_converges_when_ru_already_present():
+def test_grid_patch_playbook_converges_when_ru_already_present(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -642,7 +642,7 @@ def test_grid_patch_playbook_converges_when_ru_already_present():
     assert '"home_path": "/grid/19c/gi_home1"' in r.stdout
 
 
-def test_dual_home_switch_playbook_converges_when_target_is_current_home():
+def test_dual_home_switch_playbook_converges_when_target_is_current_home(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -665,7 +665,7 @@ def test_dual_home_switch_playbook_converges_when_target_is_current_home():
     assert "changed=0" in r.stdout
 
 
-def test_dual_home_switchback_playbook_resolves_readiness_without_switching():
+def test_dual_home_switchback_playbook_resolves_readiness_without_switching(require_lab):
     inventory_data = yaml.safe_load((REPO_ROOT / "inventory/hosts.yml").read_text())
     groups = inventory_data["all"]["children"]
 
@@ -884,7 +884,7 @@ def test_restart_database_uses_current_oracle_home_after_dual_home_noop(lab_exec
     assert r.stdout.strip() == ORACLE_HOME
 
 
-def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
+def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -927,7 +927,7 @@ def test_standbyfirst_playbook_rejects_current_ojvm_combo_before_patching():
         assert skipped_task not in r.stdout
 
 
-def test_standbyfirst_final_command_without_confirmation_refuses_before_patching():
+def test_standbyfirst_final_command_without_confirmation_refuses_before_patching(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -980,7 +980,7 @@ def test_standbyfirst_final_command_without_confirmation_refuses_before_patching
         assert skipped_task not in r.stdout
 
 
-def test_standbyfirst_readiness_only_validates_dataguard_without_execution():
+def test_standbyfirst_readiness_only_validates_dataguard_without_execution(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -1022,7 +1022,7 @@ def test_standbyfirst_readiness_only_validates_dataguard_without_execution():
     assert "unreachable=0" in r.stdout
 
 
-def test_standbyfirst_media_scan_reports_current_staged_zips():
+def test_standbyfirst_media_scan_reports_current_staged_zips(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -1058,7 +1058,7 @@ def test_standbyfirst_media_scan_reports_current_staged_zips():
     assert "failed=0" in r.stdout
 
 
-def test_standbyfirst_media_scan_can_require_eligible_zip():
+def test_standbyfirst_media_scan_can_require_eligible_zip(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),

@@ -97,7 +97,7 @@ def test_failover_reinstate_playbook_syntax_check():
     assert r.returncode == 0, r.stdout + r.stderr
 
 
-def test_failover_reinstate_readiness_playbook_converges_without_destructive_changes():
+def test_failover_reinstate_readiness_playbook_converges_without_destructive_changes(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),
@@ -128,7 +128,7 @@ def test_failover_reinstate_readiness_playbook_converges_without_destructive_cha
     assert "skipping: [observer1]" in r.stdout
 
 
-def test_failover_reinstate_execute_without_confirmation_refuses_before_destroy():
+def test_failover_reinstate_execute_without_confirmation_refuses_before_destroy(require_lab):
     ansible_playbook = REPO_ROOT / ".venv/bin/ansible-playbook"
     cmd = [
         str(ansible_playbook if ansible_playbook.exists() else "ansible-playbook"),

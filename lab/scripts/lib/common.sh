@@ -105,7 +105,7 @@ lab_ensure_root_disk_size() {
 
   want_mib="$(lab_size_to_mib "${LAB_ROOT_DISK_SIZE}")"
   # qemu-img reports virtual size in bytes on the parenthetical field.
-  have_mib="$(qemu-img info --output=json "${disk}" 2>/dev/null \
+  have_mib="$(qemu-img info --force-share --output=json "${disk}" 2>/dev/null \
     | python3 -c 'import json,sys; print(int(json.load(sys.stdin)["virtual-size"]) // (1024*1024))' \
     2>/dev/null || printf '0\n')"
 
@@ -198,10 +198,56 @@ ssh_opts() {
     "-o" "BatchMode=yes"
 }
 
+ssh_lab() {
+  local host_ip="$1"
+  shift
+  local opts=()
+  mapfile -t opts < <(ssh_opts)
+  ssh "${opts[@]}" "root@${host_ip}" "$@"
+}
+
+wait_for_domain_shutoff() {
+  local name="$1" tries=0 state
+  while true; do
+    state="$(virsh_cmd domstate "${name}" 2>/dev/null | tr -d '\r' || true)"
+    case "${state}" in
+      "shut off"|"") return 0 ;;
+    esac
+    tries=$((tries+1))
+    if [ "${tries}" -ge 60 ]; then
+      warn "${name} did not shut off; destroying"
+      virsh_cmd destroy "${name}" >/dev/null 2>&1 || true
+      return 0
+    fi
+    sleep 2
+  done
+}
+
+render_lab_inventory() {
+  local src dest key
+  src="${INVENTORY_DIR}/hosts.example.yml"
+  dest="${INVENTORY_DIR}/hosts.yml"
+  key="$(ssh_key_file)"
+  python3 - "$src" "$dest" "$(vm_ip superdb1)" "$(vm_ip superdb2)" "$(vm_ip observer)" "$key" <<'PY'
+import sys
+
+src, dest, ip1, ip2, ip3, key = sys.argv[1:]
+text = open(src, encoding="utf-8").read()
+text = text.replace("192.168.87.11", ip1)
+text = text.replace("192.168.87.12", ip2)
+text = text.replace("192.168.87.13", ip3)
+text = text.replace(
+    "ansible_ssh_private_key_file: \"{{ '~/.ssh/lab_oracle' | expanduser }}\"",
+    f"ansible_ssh_private_key_file: {key}",
+)
+open(dest, "w", encoding="utf-8").write(text)
+PY
+}
+
 # Wait until SSH on a VM is accepting connections (used after lab-up).
 wait_for_ssh() {
   local host_ip="$1" tries=0
-  while ! ssh $(ssh_opts) "root@${host_ip}" true 2>/dev/null; do
+  while ! ssh_lab "${host_ip}" true 2>/dev/null; do
     tries=$((tries+1))
     [ "${tries}" -ge 120 ] && { warn "SSH to ${host_ip} did not come up in 10m"; return 1; }
     sleep 5
@@ -213,8 +259,11 @@ wait_for_ssh() {
 # actually complete.
 wait_for_cloud_init() {
   local host_ip="$1"
+  local opts=()
+  mapfile -t opts < <(ssh_opts)
+  # timeout(1) can only exec a real binary, not a bash function.
   if ! timeout "${LAB_CLOUD_INIT_TIMEOUT:-30m}" \
-    ssh $(ssh_opts) "root@${host_ip}" cloud-init status --wait; then
+    ssh "${opts[@]}" "root@${host_ip}" cloud-init status --wait; then
     warn "cloud-init did not complete successfully on ${host_ip}"
     return 1
   fi
