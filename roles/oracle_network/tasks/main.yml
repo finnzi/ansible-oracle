@@ -25,8 +25,7 @@
   ansible.builtin.set_fact:
     _net_retain_vips: >-
       {%- set out = [] -%}
-      {%- set dg_mode = oracle_network_dataguard_enabled | default(false) | bool -%}
-      {%- set require_dg = false if dg_mode else true -%}
+      {%- set require_dg = false -%}
       {%- for raw_inst in ((oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), require_dg)) -%}
         {%- set include_inst = ('standby' not in group_names or (raw_inst.dataguard | default(false) | bool)) -%}
         {%- if include_inst -%}
@@ -38,6 +37,14 @@
               {%- endif -%}
             {%- endif -%}
           {%- endfor -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- for entry in (oracle_lab_listener_vips | default([])) -%}
+        {%- set names = (entry.names | default('') | string) -%}
+        {%- if (entry.ip | default('') | length > 0) and (entry.ip not in out) -%}
+          {%- if ('standby' in group_names and 'dc2' in names) or ('primary' in group_names and 'dc1' in names) -%}
+            {%- set _ = out.append(entry.ip) -%}
+          {%- endif -%}
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
@@ -363,8 +370,7 @@
   changed_when: true
   failed_when: >-
     _lsnr_start.rc != 0 and
-    'TNS-01106' not in (_lsnr_start.stdout | default('')) and
-    'TNS-' in (_lsnr_start.stdout | default(''))
+    'TNS-01106' not in (_lsnr_start.stdout | default(''))
 
 - name: Restart listener where bind inputs changed
   ansible.builtin.shell: |

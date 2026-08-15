@@ -4,8 +4,20 @@
 
 - name: Resolve current ORACLE_HOME for Restart registration
   ansible.builtin.set_fact:
-    _restart_home_path: >-
+    _restart_home_inventory_path: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+
+- name: Resolve runtime ORACLE_HOME from Restart for registration
+  ansible.builtin.include_role:
+    name: oracle_common
+    tasks_from: resolve-runtime-home.yml
+  vars:
+    oracle_runtime_home_restart_db: "{{ inst.db_unique_name | default(inst.name) }}"
+    oracle_runtime_home_fallback: "{{ _restart_home_inventory_path }}"
+
+- name: Use Restart-registered ORACLE_HOME for registration probes
+  ansible.builtin.set_fact:
+    _restart_home_path: "{{ _runtime_home_path }}"
 
 - name: Is this DB already registered with Restart?
   ansible.builtin.shell: |

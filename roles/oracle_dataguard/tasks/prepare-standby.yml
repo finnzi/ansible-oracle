@@ -15,6 +15,18 @@
     _dg_standby_pwfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
 
+- name: Resolve runtime ORACLE_HOME from Restart for standby prep
+  ansible.builtin.include_role:
+    name: oracle_common
+    tasks_from: resolve-runtime-home.yml
+  vars:
+    oracle_runtime_home_restart_db: "{{ _dg_standby_unique_name }}"
+    oracle_runtime_home_fallback: "{{ _dg_home_path }}"
+
+- name: Use Restart-registered ORACLE_HOME for standby prep
+  ansible.builtin.set_fact:
+    _dg_home_path: "{{ _runtime_home_path }}"
+
 - name: Ensure standby audit directory exists
   ansible.builtin.file:
     path: "{{ inst.oracle_base }}/admin/{{ inst.name }}/adump"
@@ -87,7 +99,7 @@
     export ORACLE_SID={{ inst.name }}
     "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
-    SELECT database_role || '|' || open_mode FROM v$database;
+    SELECT database_role || '|' || open_mode || '|' || db_unique_name FROM v$database;
     EXIT;
     SQL
   args: { executable: /bin/bash }
@@ -97,6 +109,24 @@
   changed_when: false
   failed_when: false
   when: _dg_standby_pmon.rc == 0
+
+- name: Record whether this host already has a live Data Guard member
+  ansible.builtin.set_fact:
+    _dg_standby_is_live_member: >-
+      {{
+        (
+          'PHYSICAL STANDBY' in (_dg_standby_role_during_prep.stdout | default(''))
+        ) or (
+          'PRIMARY|' in (_dg_standby_role_during_prep.stdout | default('')) and
+          _dg_standby_unique_name in (_dg_standby_role_during_prep.stdout | default(''))
+        )
+      }}
+  when: _dg_standby_pmon.rc == 0
+
+- name: Default live-member flag when the auxiliary is down
+  ansible.builtin.set_fact:
+    _dg_standby_is_live_member: false
+  when: _dg_standby_pmon.rc != 0
 
 - name: Check registered physical standby before auxiliary startup
   ansible.builtin.shell: |
@@ -118,7 +148,10 @@
     changed=0
 
     if pgrep -x "ora_pmon_{{ inst.name }}" >/dev/null 2>&1 &&
-       ! printf '%s\n' "{{ _dg_standby_role_during_prep.stdout | default('') }}" | grep -F 'PHYSICAL STANDBY' >/dev/null; then
+       ! printf '%s\n' "{{ _dg_standby_role_during_prep.stdout | default('') }}" | grep -F 'PHYSICAL STANDBY' >/dev/null &&
+       ! printf '%s\n' "{{ _dg_standby_role_during_prep.stdout | default('') }}" | grep -F '{{ _dg_standby_unique_name }}' >/dev/null; then
+      # Leftover standalone on the standby host only. Never abort a live
+      # Data Guard member (physical standby or promoted unique-name primary).
       printf 'SHUTDOWN ABORT;\nEXIT;\n' | "$ORACLE_HOME/bin/sqlplus" -S / as sysdba
       changed=1
     fi
@@ -156,6 +189,7 @@
     'PRCR-1001' in (_dg_registered_standby_start.stdout | default('')) or
     'PRCD-1120' in (_dg_registered_standby_start.stdout | default(''))
   when:
+    - not (_dg_standby_is_live_member | default(false) | bool)
     - "'NOT_REGISTERED' not in (_dg_registered_standby_status.stdout | default(''))"
     - _dg_standby_pmon.rc != 0 or 'PHYSICAL STANDBY' not in (_dg_standby_role_during_prep.stdout | default(''))
 
@@ -179,6 +213,7 @@
     'ORA-' in (_dg_standby_restart.stdout | default('')) or
     'SP2-' in (_dg_standby_restart.stdout | default(''))
   when:
+    - not (_dg_standby_is_live_member | default(false) | bool)
     - _dg_standby_pmon.rc == 0
     - _dg_standby_pfile_result.changed | default(false)
     - "'PHYSICAL STANDBY' not in (_dg_standby_role_during_prep.stdout | default(''))"
@@ -205,6 +240,7 @@
     'ORA-' in (_dg_standby_start.stdout | default('')) or
     'SP2-' in (_dg_standby_start.stdout | default(''))
   when:
+    - not (_dg_standby_is_live_member | default(false) | bool)
     - _dg_standby_pmon.rc != 0
     - not (_dg_standby_restart.changed | default(false))
     - >-

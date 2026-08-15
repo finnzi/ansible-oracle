@@ -63,12 +63,12 @@ do
   fi
 done
 
-dest_spfile_durable="${param_dir}/spfile${db}.ora"
-dest_pwfile_durable="${param_dir}/orapw${db}"
-dest_pfile_durable="${param_dir}/init${db}.ora"
-dest_spfile_home="${new_oh}/dbs/spfile${db}.ora"
-dest_pwfile_home="${new_oh}/dbs/orapw${db}"
-dest_pfile_home="${new_oh}/dbs/init${db}.ora"
+dest_spfile_durable="${param_dir}/spfile${sid}.ora"
+dest_pwfile_durable="${param_dir}/orapw${sid}"
+dest_pfile_durable="${param_dir}/init${sid}.ora"
+dest_spfile_home="${new_oh}/dbs/spfile${sid}.ora"
+dest_pwfile_home="${new_oh}/dbs/orapw${sid}"
+dest_pfile_home="${new_oh}/dbs/init${sid}.ora"
 
 copy_if_needed() {
   src="$1"

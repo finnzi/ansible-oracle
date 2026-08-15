@@ -95,7 +95,7 @@
     export ORACLE_SID={{ inst.name }}
     "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
-    SELECT database_role || '|' || open_mode FROM v$database;
+    SELECT database_role || '|' || open_mode || '|' || db_unique_name FROM v$database;
     EXIT;
     SQL
   args: { executable: /bin/bash }
@@ -104,6 +104,18 @@
   register: _dg_standby_role_before
   changed_when: false
   failed_when: false
+
+- name: Record whether duplicate target is already a live Data Guard member
+  ansible.builtin.set_fact:
+    _dg_standby_is_live_member: >-
+      {{
+        (
+          'PHYSICAL STANDBY' in (_dg_standby_role_before.stdout | default(''))
+        ) or (
+          'PRIMARY|' in (_dg_standby_role_before.stdout | default('')) and
+          _dg_standby_unique_name in (_dg_standby_role_before.stdout | default(''))
+        )
+      }}
 
 - name: Run RMAN active duplicate for physical standby
   ansible.builtin.shell: |
@@ -130,7 +142,9 @@
     'RMAN-' in (_dg_duplicate_standby.stdout | default('')) or
     'ORA-' in (_dg_duplicate_standby.stdout | default(''))
   no_log: true
-  when: "'PHYSICAL STANDBY' not in (_dg_standby_role_before.stdout | default(''))"
+  when:
+    - "'PHYSICAL STANDBY' not in (_dg_standby_role_before.stdout | default(''))"
+    - not (_dg_standby_is_live_member | default(false) | bool)
 
 - name: Validate physical standby role after duplicate
   ansible.builtin.shell: |

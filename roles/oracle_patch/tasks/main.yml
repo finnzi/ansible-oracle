@@ -173,6 +173,10 @@
           if (data_dir | length > 0)
           else (inst.oracle_base ~ '/parameter_files/' ~ db_unique)
         ) -%}
+        {%- set modeled = [] -%}
+        {%- for home in inst.db_homes | default([]) -%}
+          {%- set _ = modeled.append(inst.oracle_base ~ '/' ~ home.suffix) -%}
+        {%- endfor -%}
         {%- set _ = out.append({
           'name': inst.name,
           'restart_db_name': db_unique,
@@ -182,6 +186,11 @@
           'home_suffix': resolved_suffix,
           'home_path': resolved_home_path,
           'current_home_path': inst.oracle_base ~ '/' ~ current_home.suffix,
+          'modeled_home_paths': modeled,
+          'explicit_dual_target': (
+            (oracle_patch_dual_home_suffix | default('') | length > 0) or
+            (oracle_patch_dual_home_path | default('') | length > 0)
+          ),
           'data_dir': data_dir,
           'parameter_file_dir': param_dir,
           'source': 'inventory'
@@ -487,8 +496,12 @@
       {%- set out = [] -%}
       {%- for result in _patch_restart_homes.results | default([]) -%}
         {%- set current_home = result.stdout | default('') | trim -%}
+        {%- set modeled = result.item.modeled_home_paths | default([]) -%}
+        {%- set explicit = result.item.explicit_dual_target | default(false) | bool -%}
         {%- if result.rc == 0 and current_home | length > 0 and current_home != result.item.home_path -%}
-          {%- set _ = out.append(result.item | combine({'restart_home_path': current_home})) -%}
+          {%- if explicit or current_home not in modeled -%}
+            {%- set _ = out.append(result.item | combine({'restart_home_path': current_home})) -%}
+          {%- endif -%}
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
@@ -849,23 +862,22 @@
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
 
-- name: Run datapatch for patched DB homes
+- name: Read database role before datapatch
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ item.home_path | quote }}
     export ORACLE_SID={{ item.name | quote }}
-    {{ item.home_path }}/OPatch/datapatch -verbose
+    "$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
-  register: _patch_datapatch
-  changed_when: _patch_datapatch.rc == 0
-  failed_when: >-
-    _patch_datapatch.rc != 0 or
-    (
-      'Patch installation complete' not in (_patch_datapatch.stdout | default('')) and
-      'SQL Patching tool complete' not in (_patch_datapatch.stdout | default(''))
-    )
+  register: _patch_datapatch_roles
+  changed_when: false
+  failed_when: false
   loop: >-
     {{
       ((_patch_missing_targets + (_patch_dual_switch_targets | default([]))) | unique(attribute='home_path'))
@@ -878,9 +890,41 @@
     - oracle_patch_apply_enabled | bool
     - oracle_patch_run_datapatch | bool
     - oracle_patch_target == 'db'
+    - not (
+        oracle_patch_mode == 'oop_dual' and
+        not (oracle_patch_switch_enabled | default(true) | bool)
+      )
+    - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
+
+- name: Run datapatch for patched DB homes
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ item.item.home_path | quote }}
+    export ORACLE_SID={{ item.item.name | quote }}
+    {{ item.item.home_path }}/OPatch/datapatch -verbose
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_datapatch
+  changed_when: _patch_datapatch.rc == 0
+  failed_when: >-
+    _patch_datapatch.rc != 0 or
+    (
+      'Patch installation complete' not in (_patch_datapatch.stdout | default('')) and
+      'SQL Patching tool complete' not in (_patch_datapatch.stdout | default(''))
+    )
+  loop: "{{ _patch_datapatch_roles.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name }}:{{ item.item.home_suffix }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_run_datapatch | bool
+    - oracle_patch_target == 'db'
     # Prepare-only dual-home leaves the DB on the old home; datapatch waits for cutover.
     - not (
         oracle_patch_mode == 'oop_dual' and
         not (oracle_patch_switch_enabled | default(true) | bool)
       )
     - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
+    - not (item.skipped | default(false))
+    - "'PRIMARY|READ WRITE' in (item.stdout | default(''))"

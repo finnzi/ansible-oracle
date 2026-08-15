@@ -340,18 +340,19 @@
         DGMGRL
         )"
         printf '%s\n' "$output"
-        case "$output" in
-          *ORA-*|*Error:*) exit 1 ;;
-        esac
-        printf '%s\n' "$output" | awk '/Primary database/ {print $1; exit}' | grep -Fx {{ observer_dg_primary_unique_name | default('super') | quote }} >/dev/null
+        printf '%s\n' "$output" | grep -qE 'Error:[[:space:]]*ORA-01017|logon denied' && exit 1
+        printf '%s\n' "$output" | awk '/Primary database/ {print $1; exit}' | grep -Fx {{ observer_dg_primary_unique_name | default('super') | quote }} >/dev/null || exit 1
         printf '%s\n' "$output" | grep -E 'Protection Mode:[[:space:]]+MaxAvailability' >/dev/null || exit 1
         printf '%s\n' "$output" | grep -E 'Fast-Start Failover:[[:space:]]+Enabled' >/dev/null || exit 1
         printf '%s\n' "$output" | grep -F 'SUCCESS' >/dev/null || exit 1
-        "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ oracle_failover_target_connect_identifier }} as sysdba" <<'SQL'
+        standby="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ oracle_failover_target_connect_identifier }} as sysdba" <<'SQL'
         SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
         SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
         EXIT;
         SQL
+        )"
+        printf '%s\n' "$standby"
+        printf '%s\n' "$standby" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY' || exit 1
       args: { executable: /bin/bash }
       become: true
       become_user: "{{ oracle_user }}"
@@ -362,5 +363,7 @@
         'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY' not in (_failover_final_validate.stdout | default(''))
       retries: "{{ oracle_failover_wait_retries | default(60) }}"
       delay: "{{ oracle_failover_wait_delay | default(10) }}"
-      until: _failover_final_validate.rc == 0
+      until: >-
+        _failover_final_validate.rc == 0 and
+        'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY' in (_failover_final_validate.stdout | default(''))
       no_log: true

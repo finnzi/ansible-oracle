@@ -224,6 +224,13 @@
             | rejectattr('dataguard', 'equalto', true)
             | list
           }}
+        _dual_switchback_standalone_instances: >-
+          {{
+            (oracle_instances | default([]))
+            | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), false)
+            | rejectattr('dataguard', 'equalto', true)
+            | list
+          }}
 
     - name: Report resolved dual-home switchback targets
       ansible.builtin.debug:
@@ -570,6 +577,7 @@
       ansible.builtin.include_role:
         name: oracle_db_install
       vars:
+        oracle_db_install_instances: "{{ _dual_switchback_standalone_instances }}"
         oracle_db_install_home_selection: selected
         oracle_db_install_home_suffixes: >-
           {{
@@ -614,6 +622,7 @@
       ansible.builtin.include_role:
         name: oracle_patch
       vars:
+        oracle_patch_instances: "{{ _dual_switchback_standalone_instances }}"
         oracle_patch_target: db
         oracle_patch_mode: oop_dual
         oracle_patch_apply_enabled: true

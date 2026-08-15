@@ -430,19 +430,28 @@
     set -o pipefail
     export ORACLE_HOME={{ observer_client_home }}
     export TNS_ADMIN={{ observer_config_dir }}
-    fsfo="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ observer_dg_connect_identifier }}" <<'DGMGRL'
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    fsfo=""
+    for conn in \
+      "{{ observer_dg_connect_identifier }}" \
+      "{{ observer_dg_standby_connect_identifier | default('super_sby_dgb') }}"
+    do
+      candidate="$("$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" <<'DGMGRL'
     SHOW FAST_START FAILOVER;
     SHOW CONFIGURATION;
     EXIT;
     DGMGRL
-    )"
+    )" || true
+      if printf '%s\n' "$candidate" | grep -qE 'Fast-Start Failover:[[:space:]]+Enabled'; then
+        fsfo="$candidate"
+        break
+      fi
+    done
     printf '%s\n' "$fsfo"
-    case "$fsfo" in
-      *ORA-*|*Error:*) exit 1 ;;
-    esac
+    printf '%s\n' "$fsfo" | grep -qE 'Error:[[:space:]]*ORA-01017|logon denied' && exit 1
     printf '%s\n' "$fsfo" | grep -E 'Fast-Start Failover:[[:space:]]+Enabled' >/dev/null || exit 1
     printf '%s\n' "$fsfo" | grep -F 'Protection Mode:    MaxAvailability' >/dev/null || exit 1
-    printf '%s\n' "$fsfo" | grep -F 'Active Target:      {{ observer_dg_standby_unique_name }}' >/dev/null || exit 1
+    printf '%s\n' "$fsfo" | grep -E "Active Target:[[:space:]]+({{ observer_dg_standby_unique_name }}|{{ observer_dg_primary_unique_name }})" >/dev/null || exit 1
     printf '%s\n' "$fsfo" | grep -E '^[[:space:]]*Observer:[[:space:]]+[^()]' >/dev/null || exit 1
     printf '%s\n' "$fsfo" | grep -F 'SUCCESS' >/dev/null || exit 1
   args: { executable: /bin/bash }

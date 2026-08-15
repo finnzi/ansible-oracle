@@ -18,7 +18,7 @@
 # Data Guard: use standby-first or the downtime playbook, not this prepare.
 
 - name: Prepare standalone dual-home upgrade target
-  hosts: oracle_db_hosts
+  hosts: primary
   become: true
   vars:
     oracle_upgrade_prepare_force_rebuild: false
@@ -52,6 +52,7 @@
               false
             ) | rejectattr('dataguard', 'equalto', true) | list
           }}
+      when: "'standby' not in group_names"
 
     - name: Report Data Guard instances skipped by standalone prepare
       ansible.builtin.debug:
@@ -277,7 +278,7 @@
         - _upgrade_prepare_standalone_instances | length > 0
 
 - name: Report prepared dual-home upgrade versions
-  hosts: oracle_db_hosts
+  hosts: primary
   become: true
   gather_facts: false
   tasks:

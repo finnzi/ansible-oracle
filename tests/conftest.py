@@ -116,6 +116,17 @@ def _ssh_runner(host: str, user: str, key: str):
 
 
 @pytest.fixture(scope="session")
+def require_lab():
+    """Skip live ansible-playbook tests when the KVM lab is not reachable."""
+    _run = _ssh_runner(SSH_HOST, SSH_USER, SSH_KEY)
+    probe = _run("true")
+    if probe.returncode != 0:
+        pytest.skip(
+            f"KVM lab unreachable; skipping live playbook test. {probe.stderr}"
+        )
+
+
+@pytest.fixture(scope="session")
 def lab_exec():
     """Run a shell command on the primary lab VM over SSH."""
     _run = _ssh_runner(SSH_HOST, SSH_USER, SSH_KEY)

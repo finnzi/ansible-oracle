@@ -4,7 +4,7 @@
 
 - name: Resolve current ORACLE_HOME for Data Guard primary prep
   ansible.builtin.set_fact:
-    _dg_home_path: >-
+    _dg_home_inventory_path: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dg_redo_dir: "{{ inst.dirs.redo }}"
     _dg_listener_host: "{{ inst.listener_vip }}"
@@ -14,6 +14,18 @@
       SERVICE={{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}_dgb
       SYNC AFFIRM VALID_FOR=(ONLINE_LOGFILES,PRIMARY_ROLE)
       DB_UNIQUE_NAME={{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}
+
+- name: Resolve runtime ORACLE_HOME from Restart for primary prep
+  ansible.builtin.include_role:
+    name: oracle_common
+    tasks_from: resolve-runtime-home.yml
+  vars:
+    oracle_runtime_home_restart_db: "{{ inst.db_unique_name | default(inst.name) }}"
+    oracle_runtime_home_fallback: "{{ _dg_home_inventory_path }}"
+
+- name: Use Restart-registered ORACLE_HOME for primary prep
+  ansible.builtin.set_fact:
+    _dg_home_path: "{{ _runtime_home_path }}"
 
 - name: Read primary Data Guard prerequisites
   ansible.builtin.shell: |

@@ -21,6 +21,7 @@ for svc in superdb1 superdb2 observer; do
     if virsh_cmd domstate "${name}" 2>/dev/null | grep -q running; then
       log "Shutting down ${name}"
       virsh_cmd shutdown "${name}" >/dev/null || true
+      wait_for_domain_shutoff "${name}"
     fi
     if [ "${PURGE}" = true ]; then
       log "Undefining ${name}"

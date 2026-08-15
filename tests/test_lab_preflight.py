@@ -167,11 +167,16 @@ def test_default_lab_state_dir_is_libvirt_readable_var_tmp():
 
 def test_lab_up_waits_for_cloud_init_after_ssh():
     script = (REPO_ROOT / "lab/scripts/lab-up.sh").read_text(encoding="utf-8")
+    common = (REPO_ROOT / "lab/scripts/lib/common.sh").read_text(encoding="utf-8")
 
     assert script.index('wait_for_ssh "$(vm_ip "${svc}")"') < script.index(
         'wait_for_cloud_init "$(vm_ip "${svc}")"'
     )
     assert "cloud-init complete" in script
+    # timeout(1) cannot exec a bash function.
+    assert "timeout" in common.split("wait_for_cloud_init()")[1].split("path_world_accessible")[0]
+    assert 'ssh "${opts[@]}" "root@${host_ip}" cloud-init status --wait' in common
+    assert "timeout" in common and 'timeout "${LAB_CLOUD_INIT_TIMEOUT:-30m}" \\\n    ssh_lab' not in common
 
 
 def test_preflight_state_dir_fails_for_private_home_like_parent(tmp_path: Path):

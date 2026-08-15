@@ -4,11 +4,24 @@
 
 - name: Resolve current ORACLE_HOME for Data Guard switchover
   ansible.builtin.set_fact:
-    _dg_home_path: >-
+    _dg_home_inventory_path: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dg_primary_unique_name: "{{ inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
     _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
     _dg_switchover_requested_target: "{{ oracle_dataguard_switchover_target }}"
+    _dg_switchover_fsfo_was_enabled: false
+
+- name: Resolve runtime ORACLE_HOME from Restart for switchover
+  ansible.builtin.include_role:
+    name: oracle_common
+    tasks_from: resolve-runtime-home.yml
+  vars:
+    oracle_runtime_home_restart_db: "{{ inst.db_unique_name | default(inst.name) }}"
+    oracle_runtime_home_fallback: "{{ _dg_home_inventory_path }}"
+
+- name: Use Restart-registered ORACLE_HOME for switchover tools
+  ansible.builtin.set_fact:
+    _dg_home_path: "{{ _runtime_home_path }}"
 
 - name: Resolve Data Guard switchover probe endpoint
   ansible.builtin.set_fact:
@@ -29,7 +42,7 @@
       local output
       if [ "$conn" = "/" ]; then
         output="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
-    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
     WHENEVER SQLERROR EXIT 1
     DECLARE
       v_start v$parameter.value%TYPE;
@@ -48,7 +61,7 @@
     )" || true
       else
         output="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@${conn} as sysdba" <<'SQL'
-    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
     WHENEVER SQLERROR EXIT 1
     DECLARE
       v_start v$parameter.value%TYPE;
@@ -78,7 +91,9 @@
   become_user: "{{ oracle_user }}"
   register: _dg_switchover_broker_start
   changed_when: "'STARTED' in (_dg_switchover_broker_start.stdout | default(''))"
-  failed_when: false
+  failed_when: >-
+    'STARTED' not in (_dg_switchover_broker_start.stdout | default('')) and
+    'ALREADY' not in (_dg_switchover_broker_start.stdout | default(''))
 
 - name: Fail when switchover target is not a configured member
   ansible.builtin.fail:
@@ -217,6 +232,14 @@
   no_log: true
   when: _dg_switchover_target_is_physical_standby | bool
 
+- name: Record whether FSFO was enabled before switchover
+  ansible.builtin.set_fact:
+    _dg_switchover_fsfo_was_enabled: >-
+      {{ 'FSFO_DISABLED' in (_dg_switchover_fsfo_disable.stdout | default('')) }}
+  when:
+    - _dg_switchover_fsfo_disable is defined
+    - not (_dg_switchover_fsfo_disable.skipped | default(false))
+
 - name: Wait for broker SUCCESS and caught-up apply before switchover
   ansible.builtin.shell: |
     set -o pipefail
@@ -253,9 +276,9 @@
       if printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]*0 seconds'; then
         return 0
       fi
-      if printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]*[0-9]+ second' \
-        && printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]*[1-5] second'; then
-        # Small lag (<=5s) is fine for lab switchover.
+      if printf '%s\n' "$output" | grep -qE 'Apply Lag:[[:space:]]+[1-5] seconds?([^0-9]|$)'; then
+        # Small lag (<=5s) is fine for lab switchover. Require a word boundary
+        # so "15 seconds" / "51 seconds" are not treated as caught-up.
         return 0
       fi
       if printf '%s\n' "$output" | grep -q 'Database Status:[[:space:]]*SUCCESS' \
@@ -621,9 +644,8 @@
       'FSFO_ALREADY_ENABLED' in (_dg_switchover_fsfo_enable.stdout | default(''))
     )
   no_log: true
-  # Always leave FSFO on after any switchover path so the observer lab stays
-  # consistent (DISABLE is only for the brief SWITCHOVER window).
-  when: true
+  # Re-enable only if this play disabled FSFO for the switchover window.
+  when: _dg_switchover_fsfo_was_enabled | default(false) | bool
 
 - name: Ensure standby_file_management=AUTO on both members after switchover
   ansible.builtin.shell: |
