@@ -338,7 +338,8 @@ run_pb "${COMMON_E[@]}" playbooks/05-dataguard.yml \
 # ── 7. Full test suite ─────────────────────────────────────────────────
 if [ "${SKIP_TESTS}" != "1" ]; then
   step "7/7 Full pytest suite"
-  ./scripts/run-tests.sh tests/ -v --tb=short || {
+  export ORACLE_TEST_REQUIRE_LAB=1
+  ./scripts/run-tests.sh tests/ -v --tb=short --require-lab || {
     echo "ERROR: pytest reported failures (see log)" >&2
     exit 1
   }

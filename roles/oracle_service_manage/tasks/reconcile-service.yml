@@ -119,25 +119,118 @@
     - oracle_restart_available | bool
     - _srvctl_config_svc.rc != 0
 
+- name: Reconcile existing Restart service contract
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          oracle_gi_home ~ '/bin/srvctl', 'modify', 'service',
+          '-db', _svc_restart_db,
+          '-service', _svc_name,
+          '-role', _svc_role,
+          '-policy', 'AUTOMATIC',
+          '-failovertype', _svc_failover_type,
+          '-failovermethod', _svc_failover_method,
+          '-failoverretry', svc.failover_retries | default(30) | string,
+          '-failoverdelay', svc.failover_delay | default(1) | string,
+          '-notification', svc.notification | default(true) | ternary('TRUE', 'FALSE')
+        ]
+        + (['-commit_outcome', svc.commit_outcome | ternary('TRUE', 'FALSE')]
+           if svc.commit_outcome is defined else [])
+        + (['-retention', svc.retention | string]
+           if svc.retention is defined else [])
+        + (['-replay_init_time', svc.replay_init_time | string]
+           if svc.replay_init_time is defined else [])
+        + (['-failover_restore', svc.failover_restore]
+           if svc.failover_restore is defined else [])
+      }}
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_modify_svc
+  # srvctl modify is the reconcile write; report changed only when the
+  # inspected contract did not already match so idempotent runs stay quiet.
+  changed_when: >-
+    ('Service role: ' ~ _svc_role) not in (_srvctl_config_svc.stdout | default(''))
+    or 'Management policy: AUTOMATIC' not in (_srvctl_config_svc.stdout | default(''))
+    or ('Failover type: ' ~ _svc_failover_type) not in (_srvctl_config_svc.stdout | default(''))
+    or ('Failover method: ' ~ _svc_failover_method) not in (_srvctl_config_svc.stdout | default(''))
+  when:
+    - oracle_restart_available | bool
+    - _srvctl_config_svc.rc == 0
+
+- name: Re-inspect Restart service configuration after add or reconcile
+  ansible.builtin.command:
+    argv:
+      - "{{ oracle_gi_home }}/bin/srvctl"
+      - config
+      - service
+      - -db
+      - "{{ _svc_restart_db }}"
+      - -service
+      - "{{ _svc_name }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_config_after
+  changed_when: false
+  when:
+    - oracle_restart_available | bool
+    - >-
+      (
+        _srvctl_add_svc is defined
+        and not (_srvctl_add_svc.skipped | default(false))
+      )
+      or
+      (
+        _srvctl_modify_svc is defined
+        and not (_srvctl_modify_svc.skipped | default(false))
+      )
+
+- name: Use refreshed Restart service configuration
+  ansible.builtin.set_fact:
+    _srvctl_config_svc: "{{ _srvctl_config_after }}"
+  when:
+    - _srvctl_config_after is defined
+    - not (_srvctl_config_after.skipped | default(false))
+
 - name: Validate existing Restart service contract
   ansible.builtin.assert:
     that:
       - "('Service role: ' ~ _svc_role) in _srvctl_config_svc.stdout"
       - "('Failover type: ' ~ _svc_failover_type) in _srvctl_config_svc.stdout"
       - "('Failover method: ' ~ _svc_failover_method) in _srvctl_config_svc.stdout"
+      - "'Management policy: AUTOMATIC' in _srvctl_config_svc.stdout"
+      - >-
+        ('AQ HA notifications: ' ~ (svc.notification | default(true) | ternary('true', 'false'))) in _srvctl_config_svc.stdout
+        or
+        ('Notification: ' ~ (svc.notification | default(true) | ternary('TRUE', 'FALSE'))) in _srvctl_config_svc.stdout
+        or
+        ('Notification: ' ~ (svc.notification | default(true) | ternary('true', 'false'))) in _srvctl_config_svc.stdout
+      - >-
+        ('TAF failover retries: ' ~ (svc.failover_retries | default(30) | string)) in _srvctl_config_svc.stdout
+        or
+        ('Failover retries: ' ~ (svc.failover_retries | default(30) | string)) in _srvctl_config_svc.stdout
+      - >-
+        ('TAF failover delay: ' ~ (svc.failover_delay | default(1) | string)) in _srvctl_config_svc.stdout
+        or
+        ('Failover delay: ' ~ (svc.failover_delay | default(1) | string)) in _srvctl_config_svc.stdout
       - >-
         svc.commit_outcome is not defined or
         ('Commit Outcome: ' ~ (svc.commit_outcome | ternary('true', 'false'))) in _srvctl_config_svc.stdout
+      - >-
+        svc.retention is not defined or
+        ('Retention: ' ~ (svc.retention | string)) in _srvctl_config_svc.stdout
+      - >-
+        svc.replay_init_time is not defined or
+        ('Replay Initiation Time: ' ~ (svc.replay_init_time | string)) in _srvctl_config_svc.stdout
       - >-
         svc.failover_restore is not defined or
         ('Failover restore: ' ~ svc.failover_restore) in _srvctl_config_svc.stdout
     fail_msg: >-
       Existing service {{ _svc_name }} on {{ _svc_restart_db }} does not match
-      the requested role/failover contract. Remove it explicitly or reconcile
-      it with srvctl modify service before rerunning Ansible.
+      the requested Restart service contract after srvctl modify service.
   when:
     - oracle_restart_available | bool
-    - _srvctl_config_svc.rc == 0
+    - (_srvctl_config_svc.rc | default(1)) == 0
 
 - name: Check standby-role service priming marker
   ansible.builtin.stat:

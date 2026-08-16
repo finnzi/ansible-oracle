@@ -26,6 +26,42 @@
     loop_var: top_path
     label: "{{ top_path }}"
 
+- name: Check free space for instance data/archive/flashback/redo directories
+  ansible.builtin.shell: |
+    set -o pipefail
+    dest={{ dir_path | quote }}
+    while [ ! -e "$dest" ] && [ "$dest" != "/" ]; do
+      dest=$(dirname -- "$dest")
+    done
+    df -Pm "$dest" | awk 'NR==2 {print $4}'
+  args: { executable: /bin/bash }
+  register: _storage_free_mb
+  changed_when: false
+  loop: >-
+    {%- set paths = [] -%}
+    {%- for inst in (oracle_instances | default([])) -%}
+      {%- for kind, path in (inst.dirs | default({})).items() -%}
+        {%- set _ = paths.append(path) -%}
+      {%- endfor -%}
+    {%- endfor -%}
+    {{ paths | unique | list }}
+  loop_control:
+    loop_var: dir_path
+    label: "{{ dir_path }}"
+
+- name: Fail when an instance directory filesystem has too little free space
+  ansible.builtin.fail:
+    msg: >-
+      Instance directory {{ item.dir_path }} needs at least
+      {{ oracle_storage_min_free_mb | default(2048) }} MB free;
+      only {{ item.stdout | trim }} MB is available.
+  when: >-
+    (item.stdout | default('0') | trim | int)
+    < (oracle_storage_min_free_mb | default(2048) | int)
+  loop: "{{ _storage_free_mb.results | default([]) }}"
+  loop_control:
+    label: "{{ item.dir_path }}"
+
 # Simpler, readable, debuggable: a nested loop.
 - name: Create instance data/archive/flashback/redo directories
   ansible.builtin.file:

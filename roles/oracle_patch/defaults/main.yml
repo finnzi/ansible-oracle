@@ -91,6 +91,10 @@ oracle_patch_switch_enabled: true
 # changes are explicitly orchestrated around DB-home switches.
 oracle_patch_allow_dataguard_dual_home_switch: false
 
+# Generic 07-patch.yml / 07-patch-grid.yml must not apply to primary and
+# standby in the same play. Split those playbooks instead of setting this.
+oracle_patch_allow_dataguard_concurrent: false
+
 # The dedicated standby-first playbook refuses non-eligible patch bundles by
 # default. Keep this true unless following a vendor-documented special path.
 oracle_patch_standbyfirst_require_eligible: true

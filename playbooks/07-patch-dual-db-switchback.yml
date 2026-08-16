@@ -723,8 +723,7 @@
       changed_when: _dual_switchback_start_discovered_target.rc == 0
       failed_when: >-
         _dual_switchback_start_discovered_target.rc != 0 and
-        'already running' not in (_dual_switchback_start_discovered_target.stdout | default('') | lower) and
-        'PRCR-1079' not in (_dual_switchback_start_discovered_target.stdout | default(''))
+        'already running' not in (_dual_switchback_start_discovered_target.stdout | default('') | lower)
       loop: "{{ _dual_switchback_standalone_targets | selectattr('source', 'equalto', 'restart') | list }}"
       loop_control:
         label: "{{ item.restart_db_name }}"
@@ -846,8 +845,7 @@
       changed_when: _dual_switchback_start_original.rc == 0
       failed_when: >-
         _dual_switchback_start_original.rc != 0 and
-        'already running' not in (_dual_switchback_start_original.stdout | default('') | lower) and
-        'PRCR-1079' not in (_dual_switchback_start_original.stdout | default(''))
+        'already running' not in (_dual_switchback_start_original.stdout | default('') | lower)
       loop: "{{ _dual_switchback_standalone_targets }}"
       loop_control:
         label: "{{ item.restart_db_name }}"

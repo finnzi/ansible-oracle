@@ -116,56 +116,66 @@
       changed_when: _failover_destroy_primary.rc == 0
       when: oracle_failover_reinstate_execute | bool
 
-    - name: Wait for FSFO to promote target standby
-      ansible.builtin.shell: |
-        set -o pipefail
-        export ORACLE_HOME={{ observer_client_home }}
-        export TNS_ADMIN={{ oracle_failover_observer_config_dir }}
-        output="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ oracle_failover_target_connect_identifier }}" <<'DGMGRL'
-        SHOW CONFIGURATION;
-        EXIT;
-        DGMGRL
-        )"
-        printf '%s\n' "$output"
-        printf '%s\n' "$output" | awk '/Primary database/ {print $1; exit}' | grep -Fx {{ oracle_failover_target | quote }} >/dev/null
-      args: { executable: /bin/bash }
-      become: true
-      become_user: "{{ oracle_user }}"
-      register: _failover_promoted
-      changed_when: false
-      retries: "{{ oracle_failover_wait_retries }}"
-      delay: "{{ oracle_failover_wait_delay }}"
-      until: _failover_promoted.rc == 0
+    # Restart the destroyed primary even if promotion validation fails so the
+    # rehearsal cannot leave that VM powered off.
+    - name: Recover old primary VM after FSFO promotion attempt
       when: oracle_failover_reinstate_execute | bool
-      no_log: true
-
-    - name: Start old primary VM for broker reinstate
-      ansible.builtin.command:
-        argv:
-          - virsh
-          - --connect
-          - "{{ oracle_failover_virsh_uri }}"
-          - start
-          - "{{ oracle_failover_primary_vm }}"
-      delegate_to: localhost
-      become: false
-      register: _failover_start_primary
-      changed_when: _failover_start_primary.rc == 0
-      failed_when: >-
-        _failover_start_primary.rc != 0 and
-        'already active' not in (_failover_start_primary.stderr | default('') | lower) and
-        'already running' not in (_failover_start_primary.stderr | default('') | lower)
-      when: oracle_failover_reinstate_execute | bool
-
-    - name: Wait for old primary VM SSH after restart
-      ansible.builtin.wait_for:
-        host: "{{ oracle_failover_primary_ssh_host }}"
-        port: 22
-        delay: 5
-        timeout: 900
-      delegate_to: localhost
-      become: false
-      when: oracle_failover_reinstate_execute | bool
+      block:
+        - name: Wait for FSFO to promote target standby
+          ansible.builtin.shell: |
+            set -o pipefail
+            export ORACLE_HOME={{ observer_client_home }}
+            export TNS_ADMIN={{ oracle_failover_observer_config_dir }}
+            output="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ oracle_failover_target_connect_identifier }}" <<'DGMGRL'
+            SHOW CONFIGURATION;
+            EXIT;
+            DGMGRL
+            )"
+            printf '%s\n' "$output"
+            printf '%s\n' "$output" | awk '/Primary database/ {print $1; exit}' | grep -Fx {{ oracle_failover_target | quote }} >/dev/null
+          args: { executable: /bin/bash }
+          become: true
+          become_user: "{{ oracle_user }}"
+          register: _failover_promoted
+          changed_when: false
+          retries: "{{ oracle_failover_wait_retries }}"
+          delay: "{{ oracle_failover_wait_delay }}"
+          until: _failover_promoted.rc == 0
+          when: oracle_failover_reinstate_execute | bool
+          no_log: true
+      always:
+        - name: Start old primary VM for broker reinstate
+          ansible.builtin.command:
+            argv:
+              - virsh
+              - --connect
+              - "{{ oracle_failover_virsh_uri }}"
+              - start
+              - "{{ oracle_failover_primary_vm }}"
+          delegate_to: localhost
+          become: false
+          register: _failover_start_primary
+          changed_when: _failover_start_primary.rc == 0
+          failed_when: >-
+            _failover_start_primary.rc != 0 and
+            'already active' not in (_failover_start_primary.stderr | default('') | lower) and
+            'already running' not in (_failover_start_primary.stderr | default('') | lower)
+          when:
+            - oracle_failover_reinstate_execute | bool
+            - _failover_destroy_primary is defined
+            - not (_failover_destroy_primary.skipped | default(false))
+        - name: Wait for old primary VM SSH after restart
+          ansible.builtin.wait_for:
+            host: "{{ oracle_failover_primary_ssh_host }}"
+            port: 22
+            delay: 5
+            timeout: 900
+          delegate_to: localhost
+          become: false
+          when:
+            - oracle_failover_reinstate_execute | bool
+            - _failover_destroy_primary is defined
+            - not (_failover_destroy_primary.skipped | default(false))
 
     - name: Restore lab host aliases on old primary after VM restart
       ansible.builtin.blockinfile:

@@ -3,9 +3,21 @@
 # Detection (standby-first eligibility) runs against the staged RU zip. DB-home
 # patch inventory is converged by default; opatchauto/datapatch only run when
 # oracle_patch_apply_enabled=true and the expected patch ID is missing.
+#
+# Apply is serialized standby-then-primary so a generic run cannot stop both
+# Data Guard sites in the same Ansible batch. The role also refuses apply when
+# a single play still includes both sites (hosts: oracle_db_hosts).
 
-- name: Converge Oracle DB home patch inventory
-  hosts: oracle_db_hosts
+- name: Converge Oracle DB home patch inventory (standby first)
+  hosts: standby
+  serial: 1
+  become: true
+  roles:
+    - role: oracle_patch
+
+- name: Converge Oracle DB home patch inventory (primary after standby)
+  hosts: primary
+  serial: 1
   become: true
   roles:
     - role: oracle_patch

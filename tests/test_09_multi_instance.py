@@ -235,7 +235,7 @@ SELECT 'LOG_ARCHIVE_DEST_1|' || value
     assert facts["LOG_ARCHIVE_DEST_1"] == f"LOCATION=/{name}/a01"
     assert int(facts["ONLINE_REDO_GROUPS"]) > 0
     assert facts["ONLINE_REDO_GROUPS_WITH_R01"] == facts["ONLINE_REDO_GROUPS"]
-    assert facts["ONLINE_REDO_MEMBERS_IN_R01"] == facts["ONLINE_REDO_MEMBERS"]
+    assert int(facts["ONLINE_REDO_MEMBERS_IN_R01"]) >= int(facts["ONLINE_REDO_GROUPS"])
 
 
 @pytest.mark.parametrize(

@@ -91,13 +91,21 @@ copy_if_needed() {
 if [ -n "$src_spfile" ]; then
   case "$src_spfile" in
     */init*.ora)
-      copy_if_needed "$src_spfile" "$dest_pfile_durable" || true
-      copy_if_needed "$src_spfile" "$dest_pfile_home" || true
+      copy_if_needed "$src_spfile" "$dest_pfile_durable"
+      copy_if_needed "$src_spfile" "$dest_pfile_home"
+      [ -f "$dest_pfile_durable" ] || {
+        echo "PFILE_COPY_FAILED dest=$dest_pfile_durable" >&2
+        exit 1
+      }
       echo "PFILE_COPIED src=$src_spfile durable=$dest_pfile_durable home=$dest_pfile_home"
       ;;
     *)
-      copy_if_needed "$src_spfile" "$dest_spfile_durable" || true
-      copy_if_needed "$src_spfile" "$dest_spfile_home" || true
+      copy_if_needed "$src_spfile" "$dest_spfile_durable"
+      copy_if_needed "$src_spfile" "$dest_spfile_home"
+      if [ ! -f "$dest_spfile_durable" ]; then
+        echo "SPFILE_COPY_FAILED dest=$dest_spfile_durable" >&2
+        exit 1
+      fi
       "${gi}/bin/srvctl" modify database -db "$db" -spfile "$dest_spfile_durable"
       echo "SPFILE_DURABLE src=$src_spfile dest=$dest_spfile_durable mirror=$dest_spfile_home"
       ;;
@@ -108,9 +116,13 @@ else
 fi
 
 if [ -n "$src_pwfile" ]; then
-  copy_if_needed "$src_pwfile" "$dest_pwfile_durable" || true
-  copy_if_needed "$src_pwfile" "$dest_pwfile_home" || true
-  "${gi}/bin/srvctl" modify database -db "$db" -pwfile "$dest_pwfile_durable" 2>/dev/null || true
+  copy_if_needed "$src_pwfile" "$dest_pwfile_durable"
+  copy_if_needed "$src_pwfile" "$dest_pwfile_home"
+  if [ ! -f "$dest_pwfile_durable" ]; then
+    echo "PWFILE_COPY_FAILED dest=$dest_pwfile_durable" >&2
+    exit 1
+  fi
+  "${gi}/bin/srvctl" modify database -db "$db" -pwfile "$dest_pwfile_durable"
   echo "PWFILE_DURABLE src=$src_pwfile dest=$dest_pwfile_durable mirror=$dest_pwfile_home"
 else
   echo "PWFILE_MISSING (continuing; local OS auth may still work)"

@@ -92,6 +92,7 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_dual_home_path: \"\"" in defaults
     assert "oracle_patch_switch_enabled: true" in defaults
     assert "oracle_patch_allow_dataguard_dual_home_switch: false" in defaults
+    assert "oracle_patch_allow_dataguard_concurrent: false" in defaults
     assert "oracle_patch_run_datapatch: true" in defaults
     assert "oracle_patch_standbyfirst_require_eligible: true" in defaults
     assert "oracle_patch_dual_home_restart" not in defaults
@@ -121,6 +122,7 @@ def test_patch_role_db_apply_contract():
     assert "installed_patch_ids" in tasks
     assert "Fail when patches are missing but apply is disabled" in tasks
     assert "Fail when standby-first orchestration is requested in per-host role" in tasks
+    assert "Fail when generic apply would patch both Data Guard sites in one play" in tasks
     assert "playbooks/07-patch-standbyfirst.yml" in tasks
     assert "Apply Oracle home patch with opatchauto" in tasks
     assert "Read Restart database home for dual-home DB targets" in tasks
@@ -131,6 +133,11 @@ def test_patch_role_db_apply_contract():
     assert "oracle_patch_switch_enabled | default(true) | bool" in tasks
     assert "Switch Restart database to dual-home target" in tasks
     assert "Start DBs after dual-home Restart switch" in tasks
+    start_dbs = tasks.split("Start DBs after dual-home Restart switch", 1)[1].split(
+        "- name:", 1
+    )[0]
+    assert "PRCR-1079" not in start_dbs
+    assert "Probe database is open after dual-home Restart switch" in tasks
     assert "Reopen Data Guard standby read-only with apply after dual-home switch" in tasks
     assert (
         "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION"
@@ -142,9 +149,26 @@ def test_patch_role_db_apply_contract():
     assert "Run datapatch for patched DB homes" in tasks
     assert "oracle_patch_run_datapatch | bool" in tasks
     assert "SQL Patching tool complete" in tasks
-    assert "Converge Oracle DB home patch inventory" in playbook
-    assert "Converge Oracle Grid home patch inventory" in grid_playbook
+    assert "Converge Oracle DB home patch inventory (standby first)" in playbook
+    assert "Converge Oracle DB home patch inventory (primary after standby)" in playbook
+    assert playbook.index("hosts: standby") < playbook.index("hosts: primary")
+    assert playbook.count("serial: 1") == 2
+    assert playbook.index(
+        "Converge Oracle DB home patch inventory (standby first)"
+    ) < playbook.index("Converge Oracle DB home patch inventory (primary after standby)")
+    assert "Converge Oracle Grid home patch inventory (standby first)" in grid_playbook
+    assert "Converge Oracle Grid home patch inventory (primary after standby)" in grid_playbook
+    assert grid_playbook.index("hosts: standby") < grid_playbook.index("hosts: primary")
+    assert grid_playbook.count("serial: 1") == 2
     assert "oracle_patch_target: grid" in grid_playbook
+    relocate = (
+        REPO_ROOT / "roles/oracle_patch/files/relocate_spfile_for_dual_home.sh"
+    ).read_text(encoding="utf-8")
+    assert "copy_if_needed" in relocate
+    assert not any(
+        "copy_if_needed" in line and "|| true" in line
+        for line in relocate.splitlines()
+    )
     assert "Converge Oracle DB dual-home patch switch" in dual_playbook
     assert "Install Oracle DB dual-home target" in dual_playbook
     assert "Fail before installing target homes for Data Guard dual-home switch" in dual_playbook

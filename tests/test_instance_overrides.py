@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -78,6 +79,18 @@ def test_string_false_disables_dataguard_requirement_for_cli_extra_vars():
     assert resolved[0]["dg_role"] == "standby"
 
 
+def test_unrecognized_boolean_string_is_rejected():
+    instances = [{"name": "super", "dataguard": "flase"}]
+
+    try:
+        oracle_instances_filter.oracle_apply_instance_overrides(instances, {})
+    except ValueError as exc:
+        assert "Unrecognized boolean string" in str(exc)
+        assert "flase" in str(exc)
+    else:
+        raise AssertionError("expected ValueError for dataguard=flase")
+
+
 def test_string_true_keeps_overrides_dormant_for_standalone_instances():
     instances = [{"name": "super", "dataguard": False}]
     overrides = {"super": {"dataguard": True, "dg_role": "standby"}}
@@ -89,6 +102,28 @@ def test_string_true_keeps_overrides_dormant_for_standalone_instances():
     assert resolved[0] == {"name": "super", "dataguard": False}
 
 
+def test_dataguard_string_booleans_and_typos():
+    true_resolved = oracle_instances_filter.oracle_apply_instance_overrides(
+        [{"name": "super", "dataguard": "true", "listener_vip": "superdb.domain.is"}],
+        {"super": {"listener_vip": "superdc1.domain.is"}},
+    )
+    assert true_resolved[0]["dataguard"] is True
+    assert true_resolved[0]["listener_vip"] == "superdc1.domain.is"
+
+    false_resolved = oracle_instances_filter.oracle_apply_instance_overrides(
+        [{"name": "super", "dataguard": "false", "listener_vip": "superdb.domain.is"}],
+        {"super": {"listener_vip": "superdc1.domain.is"}},
+    )
+    assert false_resolved[0]["dataguard"] is False
+    assert false_resolved[0]["listener_vip"] == "superdb.domain.is"
+
+    with pytest.raises(ValueError, match="Unrecognized boolean string"):
+        oracle_instances_filter.oracle_apply_instance_overrides(
+            [{"name": "super", "dataguard": "flase"}],
+            {},
+        )
+
+
 def test_overrides_do_not_mutate_source_instances():
     instances = [{"name": "super", "dataguard": True}]
     overrides = {"super": {"listener_vip": "superdc1.domain.is"}}
@@ -96,6 +131,33 @@ def test_overrides_do_not_mutate_source_instances():
     oracle_instances_filter.oracle_apply_instance_overrides(instances, overrides)
 
     assert "listener_vip" not in instances[0]
+
+
+def test_deinstall_path_guard_rejects_parent_of_live_trees():
+    path_spec = importlib.util.spec_from_file_location(
+        "oracle_paths_filter",
+        REPO_ROOT / "filter_plugins/oracle_paths.py",
+    )
+    assert path_spec is not None and path_spec.loader is not None
+    oracle_paths = importlib.util.module_from_spec(path_spec)
+    path_spec.loader.exec_module(oracle_paths)
+
+    protected = [
+        "/super/app/oracle/dbhome_1",
+        "/super/app/oracle",
+        "/super/d01",
+        "/super/a01",
+        "/super/f01",
+        "/super/r01",
+    ]
+    assert "/super/d01" in oracle_paths.oracle_deinstall_conflicts("/super", protected)
+    assert "/super/app/oracle/dbhome_1" in oracle_paths.oracle_deinstall_conflicts(
+        "/super/app/oracle", protected
+    )
+    assert oracle_paths.oracle_deinstall_conflicts(
+        "/super/app/oracle/dbhome_2", protected
+    ) == []
+    assert oracle_paths.oracle_deinstall_conflicts("/", protected) == ["/"]
 
 
 def test_ansible_config_loads_filter_plugins():

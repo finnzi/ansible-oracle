@@ -10,6 +10,9 @@ oracle_user: oracle
 oracle_group: oinstall
 oracle_instances: []
 oracle_db_manage_apply_instance_overrides_require_dataguard: true
+# Opt-in: drop redo members outside inst.dirs.redo after adding a dedicated
+# member. Default false keeps multiplexing (dedicated + existing members).
+oracle_db_manage_drop_nondedicated_redo: false
 
 oracle_lab_sys_password:    "SysPassword1_"
 oracle_lab_system_password: "SysPassword1_"

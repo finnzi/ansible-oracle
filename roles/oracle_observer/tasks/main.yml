@@ -10,6 +10,7 @@
     _observer_stage_dir: "{{ observer_stage_dir }}"
     _observer_client_image_dir: "{{ observer_stage_dir }}/client"
     _observer_response_file: "{{ observer_stage_dir }}/client_install.rsp"
+    _oracle_observer_wanted: "{{ (oracle_observer_enabled | default(false) | bool) or (observer_enabled | default(false) | bool) }}"
 
 - name: Verify the client installer zip is staged
   ansible.builtin.stat:
@@ -288,6 +289,16 @@
   no_log: true
   when: oracle_observer_install_client | bool
 
+- name: Stop and disable FSFO observer service when not wanted
+  ansible.builtin.systemd_service:
+    name: "{{ observer_service_name }}.service"
+    enabled: false
+    state: stopped
+  failed_when: false
+  when:
+    - oracle_observer_install_client | bool
+    - not (_oracle_observer_wanted | bool)
+
 - name: Ensure FSFO observer runtime directories exist
   ansible.builtin.file:
     path: "{{ item }}"
@@ -300,7 +311,7 @@
     - "{{ observer_log_dir }}"
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Write FSFO observer environment file
   ansible.builtin.template:
@@ -313,7 +324,7 @@
   no_log: true
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Write FSFO observer start wrapper
   ansible.builtin.template:
@@ -325,7 +336,7 @@
   register: _observer_start_wrapper
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Write FSFO observer stop wrapper
   ansible.builtin.template:
@@ -337,7 +348,7 @@
   register: _observer_stop_wrapper
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Write FSFO observer systemd unit
   ansible.builtin.template:
@@ -349,7 +360,7 @@
   register: _observer_unit
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Read FSFO status before convergence
   ansible.builtin.shell: |
@@ -374,7 +385,7 @@
   no_log: true
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Configure Fast-Start Failover target and threshold
   ansible.builtin.shell: |
@@ -402,7 +413,7 @@
   no_log: true
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Enable and start FSFO observer service
   ansible.builtin.systemd_service:
@@ -423,7 +434,7 @@
     daemon_reload: true
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Validate Fast-Start Failover observer status
   ansible.builtin.shell: |
@@ -466,7 +477,7 @@
   no_log: true
   when:
     - oracle_observer_install_client | bool
-    - oracle_observer_enabled | bool
+    - _oracle_observer_wanted | bool
 
 - name: Probe observer process
   ansible.builtin.shell: |

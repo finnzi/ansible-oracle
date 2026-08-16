@@ -160,7 +160,9 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "ip addr add" in network_tasks
     assert "register: _guest_hosts" in network_tasks
     assert "Restart listener where bind inputs changed" in network_tasks
-    assert "_listener_vip_assign.changed" in network_tasks
+    assert "vip_changed" in network_tasks
+    assert "_home_is_current" in network_tasks
+    assert "oracle_network_manage_listener" in network_tasks
     assert "'TNS-01106' not in (_lsnr_start.stdout | default(''))" in network_tasks
     assert "Probe firewalld state" in network_tasks
     assert "firewall-cmd --add-port={{ inst._port }}/tcp" in network_tasks
@@ -173,6 +175,12 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "_svc_manage_current_role" in service_tasks
     assert "_svc_restart_db" in service_tasks
     assert "Add role-based service to Oracle Restart" in service_tasks
+    assert "Reconcile existing Restart service contract" in service_tasks
+    assert "'modify', 'service'" in service_tasks
+    assert "register: _srvctl_config_after" in service_tasks
+    assert "Use refreshed Restart service configuration" in service_tasks
+    assert "(_srvctl_config_svc.rc | default(1)) == 0" in service_tasks
+    assert "Management policy: AUTOMATIC" in service_tasks
     assert "SERVICE_REGISTERED_FOR_{{ _svc_role }}_ROLE" in service_tasks
     assert "Enable and start matching role-based service" in service_tasks
     assert "srvctl\" enable service" in service_tasks
@@ -195,6 +203,11 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     )
     assert "ALTER DATABASE DROP LOGFILE MEMBER" in instance_tasks
     assert "member NOT LIKE '{{ inst.dirs.redo }}/%'" in instance_tasks
+    assert "oracle_db_manage_drop_nondedicated_redo: false" in manage_defaults
+    assert (
+        "oracle_db_manage_drop_nondedicated_redo | default(false) | bool"
+        in instance_tasks
+    )
     assert "ALTER DATABASE FLASHBACK ON" in instance_tasks
     assert "ALTER DATABASE FLASHBACK OFF" in instance_tasks
     assert "and (inst.flashback | default(false))" not in instance_tasks
@@ -344,7 +357,7 @@ SELECT 'LOG_ARCHIVE_DEST_1|' || value
     assert facts["LOG_ARCHIVE_DEST_1"] == "LOCATION=/super/a01"
     assert int(facts["ONLINE_REDO_GROUPS"]) > 0
     assert facts["ONLINE_REDO_GROUPS_WITH_R01"] == facts["ONLINE_REDO_GROUPS"]
-    assert facts["ONLINE_REDO_MEMBERS_IN_R01"] == facts["ONLINE_REDO_MEMBERS"]
+    assert int(facts["ONLINE_REDO_MEMBERS_IN_R01"]) >= int(facts["ONLINE_REDO_GROUPS"])
 
 
 def test_archivelog_mode_matches_desired(db_connection):

@@ -49,6 +49,21 @@ def test_failover_reinstate_playbook_contract():
     assert "Wait for FSFO to promote target standby" in playbook
     assert "Start old primary VM for broker reinstate" in playbook
     assert "Wait for old primary VM SSH after restart" in playbook
+    assert "\n      block:\n" in playbook
+    assert "\n      always:\n" in playbook
+    destroy_at = playbook.index("Destroy current primary VM to trigger FSFO")
+    block_at = playbook.index("\n      block:\n", destroy_at)
+    wait_promote_at = playbook.index("Wait for FSFO to promote target standby", destroy_at)
+    always_at = playbook.index("\n      always:\n", destroy_at)
+    start_vm_at = playbook.index("Start old primary VM for broker reinstate")
+    wait_ssh_at = playbook.index("Wait for old primary VM SSH after restart")
+    restore_hosts_at = playbook.index(
+        "Restore lab host aliases on old primary after VM restart"
+    )
+    confirm_at = playbook.index("Fail when destructive rehearsal confirmation is missing")
+    assert confirm_at < destroy_at < block_at < wait_promote_at < always_at
+    assert always_at < start_vm_at < wait_ssh_at < restore_hosts_at
+    assert "Start old primary VM for broker reinstate" not in playbook[:destroy_at]
     assert "Restore lab host aliases on old primary after VM restart" in playbook
     assert "oracle_failover_lab_host_map_mode: dataguard" in playbook
     assert "Wait for old primary Oracle Restart after VM restart" in playbook

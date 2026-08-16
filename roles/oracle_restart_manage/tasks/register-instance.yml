@@ -158,7 +158,7 @@
       start_rc=$?
       printf '%s\n' "$start_output"
       if [ "$start_rc" -ne 0 ] &&
-         ! printf '%s\n' "$start_output" | grep -Eiq 'already running|PRCR-1079'; then
+         ! printf '%s\n' "$start_output" | grep -Eiq 'already running'; then
         return "$start_rc"
       fi
       printf '%s_STARTED\n' "$label"

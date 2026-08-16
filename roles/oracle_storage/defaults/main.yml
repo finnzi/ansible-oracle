@@ -26,3 +26,7 @@ oracle_instances_default:
 
 # When inventory defines oracle_instances, it wins.
 oracle_instances: "{{ oracle_instances_default }}"
+
+# Minimum free space (MB) on each instance data/archive/flashback/redo
+# filesystem. Not a dedicated-mount requirement; lab paths may live under /.
+oracle_storage_min_free_mb: 2048

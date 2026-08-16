@@ -472,6 +472,33 @@
     - oracle_patch_target == 'db'
     - oracle_patch_use_standbyfirst | default(false) | bool
 
+- name: Fail when generic apply would patch both Data Guard sites in one play
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to apply {{ oracle_patch_target }} patches while both primary
+      ({{ groups['primary'] | default([]) | intersect(ansible_play_hosts_all) | join(',') }})
+      and standby
+      ({{ groups['standby'] | default([]) | intersect(ansible_play_hosts_all) | join(',') }})
+      are in this play. Concurrent opatchauto can stop both Data Guard sites.
+      Use playbooks/07-patch.yml or playbooks/07-patch-grid.yml (standby then
+      primary, serial: 1), playbooks/07-patch-standbyfirst.yml for eligible
+      DB RU components, or playbooks/07-upgrade-dual-db-downtime.yml for combo
+      downtime. Override only with oracle_patch_allow_dataguard_concurrent=true.
+  when:
+    - oracle_patch_apply_enabled | bool
+    - not (oracle_patch_allow_dataguard_concurrent | default(false) | bool)
+    - _patch_missing_targets | length > 0
+    - (groups['primary'] | default([]) | intersect(ansible_play_hosts_all) | length) > 0
+    - (groups['standby'] | default([]) | intersect(ansible_play_hosts_all) | length) > 0
+    - >-
+      oracle_patch_target == 'grid'
+      or (
+        (_patch_inventory_targets | default([])
+         | selectattr('dataguard', 'defined')
+         | selectattr('dataguard', 'equalto', true)
+         | list | length) > 0
+      )
+
 - name: Read Restart database home for dual-home DB targets
   ansible.builtin.shell: |
     set -o pipefail
@@ -796,8 +823,46 @@
   changed_when: _patch_dual_start.rc == 0
   failed_when: >-
     _patch_dual_start.rc != 0 and
-    'already running' not in (_patch_dual_start.stdout | default('') | lower) and
-    'PRCR-1079' not in (_patch_dual_start.stdout | default(''))
+    'already running' not in (_patch_dual_start.stdout | default('') | lower)
+  loop: "{{ _patch_dual_switch_targets | default([]) }}"
+  loop_control:
+    label: "{{ item.restart_db_name }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_switch_enabled | default(true) | bool
+    - oracle_patch_mode == 'oop_dual'
+    - oracle_patch_target == 'db'
+    - (_patch_dual_switch_targets | default([]) | length) > 0
+
+- name: Probe database is open after dual-home Restart switch
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    status="$("${gi}/bin/srvctl" status database -db {{ item.restart_db_name | quote }})"
+    printf '%s\n' "$status"
+    printf '%s\n' "$status" | grep -Eiq 'is running' || exit 1
+    export ORACLE_HOME={{ item.home_path | quote }}
+    export ORACLE_SID={{ item.name | quote }}
+    open="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT status || '|' || database_role || '|' || open_mode FROM v$instance, v$database;
+    EXIT;
+    SQL
+    )"
+    printf '%s\n' "$open"
+    printf '%s\n' "$open" | grep -qE 'ORA-|SP2-' && exit 1
+    # Standalone cutover must be OPEN. A physical standby may come up MOUNTED
+    # and is reopened READ ONLY WITH APPLY by the next task.
+    printf '%s\n' "$open" | grep -qE '^(OPEN|MOUNTED)\|' || exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_open
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: _patch_dual_open.rc == 0
+  failed_when: _patch_dual_open.rc != 0
   loop: "{{ _patch_dual_switch_targets | default([]) }}"
   loop_control:
     label: "{{ item.restart_db_name }}"

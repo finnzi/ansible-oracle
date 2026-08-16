@@ -185,6 +185,15 @@
         break
       fi
     done
+    unique="$(sqlplus_as "$conn" <<'SQL' || true
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT sys_context('USERENV', 'DB_UNIQUE_NAME') FROM dual;
+    EXIT;
+    SQL
+    )"
+    unique="$(printf '%s\n' "$unique" | awk 'NF {print; exit}')"
+    printf 'LIVE_PRIMARY_CONN=%s\n' "$conn"
+    printf 'LIVE_PRIMARY_UNIQUE=%s\n' "$unique"
     sqlplus_as "$conn" <<'SQL'
     SET SERVEROUTPUT ON
     DECLARE
@@ -222,20 +231,97 @@
 # A SYSDG grant updates the Oracle password file. Data Guard redo replicates
 # the database user but not that file, so an observer can authenticate to the
 # primary yet fail when it checks the standby unless both copies are aligned.
-- name: Read primary password file after observer account update
+# After switchover the inventory-primary host may be the live standby; copy
+# from the live primary unique name, never from a hardcoded inventory path.
+- name: Resolve live primary unique name after observer account update
+  ansible.builtin.set_fact:
+    _dg_live_primary_unique: >-
+      {{
+        (
+          _dg_observer_user.stdout_lines | default([])
+          | select('match', '^LIVE_PRIMARY_UNIQUE=.+')
+          | list
+          | first
+          | default('LIVE_PRIMARY_UNIQUE=' ~ _dg_primary_unique_name)
+        ).split('=', 1)[1]
+      }}
+
+- name: Resolve live password-file hosts from broker roles
+  ansible.builtin.set_fact:
+    _dg_pwfile_source_host: >-
+      {{
+        groups['primary'] | first
+        if (_dg_live_primary_unique | trim) == (_dg_primary_unique_name | string)
+        else groups['standby'] | first
+      }}
+    _dg_pwfile_dest_host: >-
+      {{
+        groups['standby'] | first
+        if (_dg_live_primary_unique | trim) == (_dg_primary_unique_name | string)
+        else groups['primary'] | first
+      }}
+    _dg_pwfile_dest_unique: >-
+      {{
+        _dg_standby_unique_name
+        if (_dg_live_primary_unique | trim) == (_dg_primary_unique_name | string)
+        else _dg_primary_unique_name
+      }}
+
+- name: Discover live primary password file path
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    db={{ _dg_live_primary_unique | trim | quote }}
+    path="$("${gi}/bin/srvctl" config database -db "$db" 2>/dev/null |
+      awk -F': ' '$1 == "Password file" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    if [ -z "$path" ] || [ ! -f "$path" ]; then
+      path={{ _dg_primary_pwfile | quote }}
+    fi
+    if [ ! -f "$path" ]; then
+      echo "PWFILE_MISSING path=${path}" >&2
+      exit 1
+    fi
+    printf '%s\n' "$path"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  delegate_to: "{{ _dg_pwfile_source_host }}"
+  register: _dg_live_primary_pwfile_path
+  changed_when: false
+
+- name: Discover live standby password file destination
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    db={{ _dg_pwfile_dest_unique | quote }}
+    path="$("${gi}/bin/srvctl" config database -db "$db" 2>/dev/null |
+      awk -F': ' '$1 == "Password file" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    if [ -z "$path" ]; then
+      path={{ _dg_primary_pwfile | quote }}
+    fi
+    printf '%s\n' "$path"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  delegate_to: "{{ _dg_pwfile_dest_host }}"
+  register: _dg_live_standby_pwfile_path
+  changed_when: false
+
+- name: Read live primary password file after observer account update
   ansible.builtin.slurp:
-    src: "{{ _dg_primary_pwfile }}"
+    src: "{{ _dg_live_primary_pwfile_path.stdout | trim }}"
+  delegate_to: "{{ _dg_pwfile_source_host }}"
   register: _dg_primary_pwfile_contents
   no_log: true
 
 - name: Synchronize primary password file to the standby
   ansible.builtin.copy:
-    dest: "{{ _dg_primary_pwfile }}"
+    dest: "{{ _dg_live_standby_pwfile_path.stdout | trim }}"
     content: "{{ _dg_primary_pwfile_contents.content | b64decode }}"
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0640"
-  delegate_to: "{{ groups['standby'] | first }}"
+  delegate_to: "{{ _dg_pwfile_dest_host }}"
   register: _dg_standby_pwfile_sync
   no_log: true
 

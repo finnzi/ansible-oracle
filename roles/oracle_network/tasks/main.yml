@@ -86,9 +86,11 @@
               {%- set vip.ip = entry.ip -%}
             {%- endif -%}
           {%- endfor -%}
+          {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
           {%- for home in homes -%}
             {%- set _ = out.append(inst | combine({
               '_home': home.suffix,
+              '_home_is_current': (home.suffix == current_home.suffix),
               '_net': listener_name,
               '_vip': vip.ip,
               '_port': (inst.listener_port | default(1521))})) -%}
@@ -336,6 +338,8 @@
 
 # ── Bring the listener up idempotently ────────────────────────────────
 # Check status; if down, start it; if up and .ora changed, reload.
+# Never control a listener from a non-current (unused dual-home) path, and
+# never bounce every listener because an aggregate host-map/VIP flag changed.
 - name: Check listener status (LISTENER_<INSTANCE>)
   ansible.builtin.shell: |
     set -o pipefail
@@ -348,6 +352,9 @@
   loop_control: { loop_var: inst, label: "{{ inst.name }}" }
   register: _lsnr_status
   changed_when: false
+  when:
+    - oracle_network_manage_listener | default(true) | bool
+    - inst._home_is_current | default(true) | bool
 
 - name: Start listener where it is down
   ansible.builtin.shell: |
@@ -360,7 +367,8 @@
   loop: >-
     {%- set down = [] -%}
     {%- for r in (_lsnr_status.results | default([])) -%}
-      {%- if r.inst is defined and ('TNS-' in (r.stdout | default('')) or 'no listener' in (r.stdout | default('') | lower) or (r.rc | default(0)) != 0) -%}
+      {%- if r.skipped | default(false) -%}
+      {%- elif r.inst is defined and (r.inst._home_is_current | default(true) | bool) and ('TNS-' in (r.stdout | default('')) or 'no listener' in (r.stdout | default('') | lower) or (r.rc | default(0)) != 0) -%}
         {%- set _ = down.append({'inst': r.inst}) -%}
       {%- endif -%}
     {%- endfor -%}
@@ -371,6 +379,8 @@
   failed_when: >-
     _lsnr_start.rc != 0 and
     'TNS-01106' not in (_lsnr_start.stdout | default(''))
+  when:
+    - oracle_network_manage_listener | default(true) | bool
 
 - name: Restart listener where bind inputs changed
   ansible.builtin.shell: |
@@ -384,14 +394,23 @@
   loop: >-
     {%- set restart = [] -%}
     {%- for r in (_lsnr_status.results | default([])) -%}
-      {%- set listener_changed = namespace(value=false) -%}
-      {%- for t in (_listener_ora.results | default([])) -%}
-        {%- if t.inst is defined and r.inst is defined and t.inst.name == r.inst.name and (t.changed | default(false)) -%}
-          {%- set listener_changed.value = true -%}
+      {%- if r.skipped | default(false) or not (r.inst is defined) or not (r.inst._home_is_current | default(true) | bool) -%}
+      {%- else -%}
+        {%- set listener_changed = namespace(value=false) -%}
+        {%- set vip_changed = namespace(value=false) -%}
+        {%- for t in (_listener_ora.results | default([])) -%}
+          {%- if t.inst is defined and t.inst.name == r.inst.name and t.inst._home | default('') == r.inst._home | default('') and (t.changed | default(false)) -%}
+            {%- set listener_changed.value = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- for v in (_listener_vip_assign.results | default([])) -%}
+          {%- if v.inst is defined and v.inst.name == r.inst.name and (v.changed | default(false)) -%}
+            {%- set vip_changed.value = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if (r.rc | default(1)) == 0 and 'TNS-' not in (r.stdout | default('')) and 'no listener' not in (r.stdout | default('') | lower) and (listener_changed.value or vip_changed.value) -%}
+          {%- set _ = restart.append({'inst': r.inst}) -%}
         {%- endif -%}
-      {%- endfor -%}
-      {%- if r.inst is defined and (r.rc | default(1)) == 0 and 'TNS-' not in (r.stdout | default('')) and 'no listener' not in (r.stdout | default('') | lower) and ((_guest_hosts.changed | default(false)) or (_listener_vip_assign.changed | default(false)) or listener_changed.value) -%}
-        {%- set _ = restart.append({'inst': r.inst}) -%}
       {%- endif -%}
     {%- endfor -%}
     {{ restart }}
@@ -400,6 +419,8 @@
   changed_when: true
   failed_when: >-
     _lsnr_restart.rc != 0 or 'TNS-' in (_lsnr_restart.stdout | default(''))
+  when:
+    - oracle_network_manage_listener | default(true) | bool
 
 - name: Reload listener where it is up and .ora changed
   ansible.builtin.shell: |
@@ -412,7 +433,8 @@
   loop: >-
     {%- set reload = [] -%}
     {%- for r in (_lsnr_status.results | default([])) -%}
-      {%- if r.inst is defined and (r.rc | default(1)) == 0 and 'TNS-' not in (r.stdout | default('')) and 'no listener' not in (r.stdout | default('') | lower) -%}
+      {%- if r.skipped | default(false) -%}
+      {%- elif r.inst is defined and (r.inst._home_is_current | default(true) | bool) and (r.rc | default(1)) == 0 and 'TNS-' not in (r.stdout | default('')) and 'no listener' not in (r.stdout | default('') | lower) -%}
         {%- set _ = reload.append({'inst': r.inst}) -%}
       {%- endif -%}
     {%- endfor -%}
@@ -421,3 +443,5 @@
   register: _lsnr_reload
   changed_when: false
   failed_when: false
+  when:
+    - oracle_network_manage_listener | default(true) | bool

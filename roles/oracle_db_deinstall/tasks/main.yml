@@ -38,6 +38,22 @@
           {%- if param_dir | length == 0 and data_dir | length > 0 -%}
             {%- set param_dir = data_dir ~ '/' ~ (item.restart_db_name | default(inst_name) if item is not string else inst_name) -%}
           {%- endif -%}
+          {%- set current_home = (
+            '' if item is string
+            else (item.current_home_path | default(''))
+          ) -%}
+          {%- set archive_dir = (
+            '' if item is string
+            else (item.archive_dir | default(item.dirs.archive if item.dirs is defined else '') | default(''))
+          ) -%}
+          {%- set flashback_dir = (
+            '' if item is string
+            else (item.flashback_dir | default(item.dirs.flashback if item.dirs is defined else '') | default(''))
+          ) -%}
+          {%- set redo_dir = (
+            '' if item is string
+            else (item.redo_dir | default(item.dirs.redo if item.dirs is defined else '') | default(''))
+          ) -%}
           {%- set _ = out.append({
             'home_path': home_path,
             'oracle_base': (parent if item is string else item.oracle_base | default(parent)),
@@ -48,7 +64,11 @@
               else item.restart_db_name | default(inst_name)
             ),
             'data_dir': data_dir,
-            'parameter_file_dir': param_dir
+            'archive_dir': archive_dir,
+            'flashback_dir': flashback_dir,
+            'redo_dir': redo_dir,
+            'parameter_file_dir': param_dir,
+            'current_home_path': current_home
           }) -%}
         {%- endif -%}
       {%- endfor -%}
@@ -178,6 +198,38 @@
     label: "{{ item.home_path }}"
   when: >-
     item.home_path in (_deinstall_restart_home_paths | default([]))
+
+- name: Collect protected paths for deinstall ancestor guard
+  ansible.builtin.set_fact:
+    _deinstall_protected_paths: >-
+      {%- set out = (_deinstall_restart_home_paths | default([])) -%}
+      {%- for item in _deinstall_targets -%}
+        {%- for key in [
+          'current_home_path', 'oracle_base', 'data_dir', 'archive_dir',
+          'flashback_dir', 'redo_dir', 'parameter_file_dir'
+        ] -%}
+          {%- set path = item[key] | default('') -%}
+          {%- if path | length > 0 and path not in out -%}
+            {%- set _ = out.append(path) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Fail when a deinstall target is an ancestor of a live Oracle tree
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall {{ item.home_path }} because recursively removing
+      that path would also delete protected Oracle trees
+      ({{ item.home_path | oracle_deinstall_conflicts(_deinstall_protected_paths) | join(', ') }}).
+      Dual-home prepare only removes an unused home leaf such as
+      {{ item.oracle_base }}/dbhome_2, never a parent like /super or
+      {{ item.oracle_base }}.
+  loop: "{{ _deinstall_targets }}"
+  loop_control:
+    label: "{{ item.home_path }}"
+  when: >-
+    (item.home_path | oracle_deinstall_conflicts(_deinstall_protected_paths) | length) > 0
 
 - name: Stat deinstall target homes
   ansible.builtin.stat:
