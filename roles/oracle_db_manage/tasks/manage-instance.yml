@@ -56,7 +56,7 @@
     dest: "{{ _dbca_response_file }}"
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
-    mode: "0644"
+    mode: "0600"
   when: not _instance_exists
 
 - name: Run DBCA -createDatabase (slow — many minutes)
@@ -454,4 +454,4 @@
     'ORA-' in (_redo_member_cleanup.stdout | default('')) or
     'SP2-' in (_redo_member_cleanup.stdout | default('')) or
     'PLS-' in (_redo_member_cleanup.stdout | default(''))
-  when: _db_reconcile_writable | default(false)
+  when: (_db_reconcile_writable | default(false)) and (oracle_db_manage_drop_nondedicated_redo | default(false) | bool)

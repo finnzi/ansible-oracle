@@ -226,3 +226,35 @@
       loop_control:
         label: "{{ item.restart_db_name }} -> {{ item.target_home_path }}"
       when: oracle_upgrade_cutover_execute | bool
+
+    - name: Validate database is open after cutover
+      ansible.builtin.shell: |
+        set -o pipefail
+        gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+        status="$("${gi}/bin/srvctl" status database -db {{ item.restart_db_name | quote }})"
+        printf '%s\n' "$status"
+        printf '%s\n' "$status" | grep -Eiq 'is running' || exit 1
+        export ORACLE_HOME={{ item.target_home_path | quote }}
+        export ORACLE_SID={{ item.sid_name | quote }}
+        open="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+        SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+        SELECT status || '|' || database_role || '|' || open_mode FROM v$instance, v$database;
+        EXIT;
+        SQL
+        )"
+        printf '%s\n' "$open"
+        printf '%s\n' "$open" | grep -qE 'ORA-|SP2-' && exit 1
+        printf '%s\n' "$open" | grep -qE '^OPEN\|PRIMARY\|READ WRITE$' || exit 1
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _upgrade_cutover_open
+      changed_when: false
+      retries: 12
+      delay: 10
+      until: _upgrade_cutover_open.rc == 0
+      failed_when: _upgrade_cutover_open.rc != 0
+      loop: "{{ _upgrade_cutover_targets }}"
+      loop_control:
+        label: "{{ item.restart_db_name }} open"
+      when: oracle_upgrade_cutover_execute | bool

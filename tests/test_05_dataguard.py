@@ -99,6 +99,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     dataguard_switchover = (
         REPO_ROOT / "roles/oracle_dataguard/tasks/switchover.yml"
     ).read_text(encoding="utf-8")
+    dataguard_switchover += (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/switchover-execute.yml"
+    ).read_text(encoding="utf-8")
     dataguard_playbook = (
         REPO_ROOT / "playbooks/05-dataguard.yml"
     ).read_text(encoding="utf-8")
@@ -234,6 +237,14 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "oracle_dataguard_observer_password:" in dataguard_defaults
     assert "Ensure observer SYSDG account exists on the primary" in dataguard_configure_broker
     assert "Synchronize primary password file to the standby" in dataguard_configure_broker
+    assert "LIVE_PRIMARY_UNIQUE" in dataguard_configure_broker
+    assert "_dg_pwfile_source_host" in dataguard_configure_broker
+    assert "_dg_pwfile_dest_host" in dataguard_configure_broker
+    assert 'delegate_to: "{{ _dg_pwfile_source_host }}"' in dataguard_configure_broker
+    assert 'delegate_to: "{{ _dg_pwfile_dest_host }}"' in dataguard_configure_broker
+    assert dataguard_configure_broker.index("_dg_pwfile_source_host") < (
+        dataguard_configure_broker.index("Synchronize primary password file to the standby")
+    )
     assert "Add missing standby to existing Data Guard broker configuration" in dataguard_configure_broker
     assert "_dg_standby_unique_name not in (_dg_broker_show_before.stdout | default(''))" in dataguard_configure_broker
     assert "GRANT SYSDG TO" in dataguard_configure_broker

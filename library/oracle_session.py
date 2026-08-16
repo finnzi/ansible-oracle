@@ -106,6 +106,8 @@ def main() -> None:
         supports_check_mode=True,
         mutually_exclusive=[("sql", "script")],
     )
+    if module.check_mode:
+        module.exit_json(changed=False, skipped=True, msg="check mode: SQL not executed")
     try:
         columns, rows = run_sql(
             module.params["host"],

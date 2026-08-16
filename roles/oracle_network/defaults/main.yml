@@ -30,6 +30,12 @@ oracle_network_open_firewall: false
 oracle_network_home_selection: current
 oracle_network_home_suffixes: []
 
+# When false, write listener/tnsnames/sqlnet into the selected homes but do
+# not start, stop, or reload any live listener. Dual-home prepare uses this
+# so a newly rendered unused-home listener.ora cannot bounce the runtime
+# listener from the target home.
+oracle_network_manage_listener: true
+
 # Default listener shape; overridden per-instance in inventory.
 listener_name_template: "LISTENER_{% raw %}{{ inst.name | upper }}{% endraw %}"
 listener_port: 1521

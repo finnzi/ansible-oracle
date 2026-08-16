@@ -11,7 +11,7 @@
       [ -z "$key" ] && continue
       sysctl -w "$key=$val" >/dev/null 2>&1 || rc=1
     done < <(grep -vE '^\s*#|^\s*$' /etc/sysctl.d/99-oracle.conf | awk -F' = ' '{print $1" "$2}')
-    exit 0
+    exit "$rc"
   args:
     executable: /bin/bash
   changed_when: true

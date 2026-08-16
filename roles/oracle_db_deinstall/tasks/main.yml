@@ -38,6 +38,22 @@
           {%- if param_dir | length == 0 and data_dir | length > 0 -%}
             {%- set param_dir = data_dir ~ '/' ~ (item.restart_db_name | default(inst_name) if item is not string else inst_name) -%}
           {%- endif -%}
+          {%- set current_home = (
+            '' if item is string
+            else (item.current_home_path | default(''))
+          ) -%}
+          {%- set archive_dir = (
+            '' if item is string
+            else (item.archive_dir | default(item.dirs.archive if item.dirs is defined else '') | default(''))
+          ) -%}
+          {%- set flashback_dir = (
+            '' if item is string
+            else (item.flashback_dir | default(item.dirs.flashback if item.dirs is defined else '') | default(''))
+          ) -%}
+          {%- set redo_dir = (
+            '' if item is string
+            else (item.redo_dir | default(item.dirs.redo if item.dirs is defined else '') | default(''))
+          ) -%}
           {%- set _ = out.append({
             'home_path': home_path,
             'oracle_base': (parent if item is string else item.oracle_base | default(parent)),
@@ -48,7 +64,11 @@
               else item.restart_db_name | default(inst_name)
             ),
             'data_dir': data_dir,
-            'parameter_file_dir': param_dir
+            'archive_dir': archive_dir,
+            'flashback_dir': flashback_dir,
+            'redo_dir': redo_dir,
+            'parameter_file_dir': param_dir,
+            'current_home_path': current_home
           }) -%}
         {%- endif -%}
       {%- endfor -%}
@@ -178,6 +198,120 @@
     label: "{{ item.home_path }}"
   when: >-
     item.home_path in (_deinstall_restart_home_paths | default([]))
+
+- name: Collect approved Oracle bases and protected deinstall paths
+  ansible.builtin.set_fact:
+    _deinstall_approved_bases: >-
+      {%- set out = [] -%}
+      {%- for inst in (oracle_instances | default([])) -%}
+        {%- if inst.oracle_base | default('') | length > 0 and inst.oracle_base not in out -%}
+          {%- set _ = out.append(inst.oracle_base) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+    _deinstall_protected_paths: >-
+      {%- set out = (_deinstall_restart_home_paths | default([])) -%}
+      {%- for item in _deinstall_targets -%}
+        {%- for key in [
+          'current_home_path', 'data_dir', 'archive_dir',
+          'flashback_dir', 'redo_dir', 'parameter_file_dir'
+        ] -%}
+          {%- set path = item[key] | default('') -%}
+          {%- if path | length > 0 and path not in out -%}
+            {%- set _ = out.append(path) -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {%- for extra in [
+        oracle_gi_home | default('/grid/19c/gi_home1'),
+        oracle_inventory_loc | default('/home/oracle/oraInventory'),
+        oracle_stage_dir | default('/u01/stage'),
+        '/home/' ~ (oracle_user | default('oracle')),
+        '/etc',
+        '/grid'
+      ] -%}
+        {%- if extra | length > 0 and extra not in out -%}
+          {%- set _ = out.append(extra) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {%- for inst in (oracle_instances | default([])) -%}
+        {%- if inst.gi_base | default('') | length > 0 and inst.gi_base not in out -%}
+          {%- set _ = out.append(inst.gi_base) -%}
+        {%- endif -%}
+        {%- for home in inst.gi_homes | default([]) -%}
+          {%- set gi_path = (inst.gi_base | default('/grid')) ~ '/' ~ home.suffix -%}
+          {%- if gi_path not in out -%}
+            {%- set _ = out.append(gi_path) -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {%- if inst.oracle_base | default('') | length > 0 -%}
+          {%- set stage = inst.oracle_base ~ '/.stage_' ~ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default({'suffix': ''})).suffix -%}
+          {%- if stage | length > 0 and stage not in out -%}
+            {%- set _ = out.append(stage) -%}
+          {%- endif -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out }}
+
+- name: Resolve deinstall target real paths and reject symlinks
+  ansible.builtin.shell: |
+    set -o pipefail
+    target={{ item.home_path | quote }}
+    if [ -L "$target" ]; then
+      printf 'SYMLINK_LEAF:%s -> %s\n' "$target" "$(readlink -- "$target")" >&2
+      exit 1
+    fi
+    probe="$target"
+    while [ "$probe" != "/" ]; do
+      if [ -L "$probe" ]; then
+        printf 'SYMLINK_ANCESTOR:%s -> %s\n' "$probe" "$(readlink -- "$probe")" >&2
+        exit 1
+      fi
+      probe="$(dirname -- "$probe")"
+    done
+    realpath -m -- "$target"
+  args: { executable: /bin/bash }
+  become: true
+  register: _deinstall_realpaths
+  changed_when: false
+  failed_when: >-
+    _deinstall_realpaths.rc != 0 or
+    (_deinstall_realpaths.stdout | default('') | trim | length) == 0
+  loop: "{{ _deinstall_targets }}"
+  loop_control:
+    label: "{{ item.home_path }}"
+
+- name: Fail when a deinstall target is not an allowlisted Oracle home leaf
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall {{ item.item.home_path }}
+      (realpath {{ item.stdout | trim }}). Dual-home deinstall only removes a
+      real, non-symlink leaf beneath an approved Oracle base such as
+      {{ item.item.oracle_base }}/dbhome_2. Approved bases:
+      {{ _deinstall_approved_bases | join(', ') }}.
+  loop: "{{ _deinstall_realpaths.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.home_path }}"
+  when: >-
+    not (
+      (item.stdout | default('') | trim)
+      | oracle_deinstall_is_allowlisted_leaf(_deinstall_approved_bases)
+    )
+
+- name: Fail when a deinstall target overlaps a live Oracle tree
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to deinstall {{ item.item.home_path }}
+      (realpath {{ item.stdout | trim }}) because it overlaps protected Oracle
+      trees ({{ (item.stdout | trim) | oracle_deinstall_conflicts(_deinstall_protected_paths) | join(', ') }}).
+      Dual-home prepare only removes an unused home leaf such as
+      {{ item.item.oracle_base }}/dbhome_2, never an active DB/Grid home,
+      data/archive/FRA/redo, inventory, staging, user-home, or /etc path.
+  loop: "{{ _deinstall_realpaths.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.home_path }}"
+  when: >-
+    ((item.stdout | default('') | trim) | oracle_deinstall_conflicts(_deinstall_protected_paths) | length) > 0
 
 - name: Stat deinstall target homes
   ansible.builtin.stat:

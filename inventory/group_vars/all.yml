@@ -31,6 +31,10 @@ oracle_inventory_enforce_single: true
 # Role default is false so non-lab hosts keep VG headroom unless they opt in.
 oracle_common_grow_root: true
 
+# Lab guest data/archive/FRA/redo paths live on the root filesystem. Production
+# inventories must leave the role default (true) so missing mounts fail closed.
+oracle_storage_require_dedicated_mounts: false
+
 # The KVM lab opts into repairing/recovering an already-installed Restart stack
 # even when the slow Grid installer itself is disabled.
 oracle_gi_repair_existing_enabled: true

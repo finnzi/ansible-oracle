@@ -31,6 +31,8 @@ def test_client_availability_contract_is_wired():
     assert "name: super_stb" in inventory
     assert "-failovertype" in service
     assert "-failoverretry" in service
+    assert "'modify', 'service'" in service
+    assert "Management policy: AUTOMATIC" in service
     assert "Service role: " in service
     assert "Prime standby-role service for broker role transitions" in service
     assert "srvctl\" stop service" in service

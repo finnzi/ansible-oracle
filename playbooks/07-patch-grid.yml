@@ -1,9 +1,38 @@
 ---
 # playbooks/07-patch-grid.yml - Oracle Grid home patching.
 # Converges the current Oracle Restart/Grid home against the staged GI RU.
+# Apply is serialized standby-then-primary so GI patching cannot stop both
+# Data Guard sites in the same Ansible batch. A fail-closed availability gate
+# sits between the plays so a failed or unhealthy standby cannot proceed into
+# primary maintenance.
 
-- name: Converge Oracle Grid home patch inventory
-  hosts: oracle_db_hosts
+- name: Converge Oracle Grid home patch inventory (standby first)
+  hosts: standby
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  roles:
+    - role: oracle_patch
+      vars:
+        oracle_patch_target: grid
+
+- name: Refuse primary Grid patch unless standby Restart is available
+  hosts: standby
+  serial: 1
+  any_errors_fatal: true
+  become: true
+  tasks:
+    - name: Assert standby Restart remains available before primary maintenance
+      ansible.builtin.include_role:
+        name: oracle_patch
+        tasks_from: assert-site-ready.yml
+      vars:
+        oracle_patch_target: grid
+
+- name: Converge Oracle Grid home patch inventory (primary after standby)
+  hosts: primary
+  serial: 1
+  any_errors_fatal: true
   become: true
   roles:
     - role: oracle_patch

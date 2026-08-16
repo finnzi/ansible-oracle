@@ -26,3 +26,12 @@ oracle_instances_default:
 
 # When inventory defines oracle_instances, it wins.
 oracle_instances: "{{ oracle_instances_default }}"
+
+# Minimum free space (MB) on each instance data/archive/flashback/redo
+# filesystem. Not a dedicated-mount requirement; lab paths may live under /.
+oracle_storage_min_free_mb: 2048
+
+# Production must have dedicated mounts for data/archive/FRA/redo before any
+# directory is created. Lab inventory sets this false because those paths may
+# live on the guest root filesystem.
+oracle_storage_require_dedicated_mounts: true

@@ -31,6 +31,16 @@ OBSERVER_SSH_HOST = _env("ORACLE_TEST_OBSERVER_SSH_HOST", "192.168.87.13")
 SSH_KEY = _env("ORACLE_TEST_SSH_KEY", os.path.expanduser("~/.ssh/lab_oracle"))
 
 
+def pytest_addoption(parser):
+    """Opt-in: fail (do not skip) when the KVM lab is unreachable."""
+    parser.addoption(
+        "--require-lab",
+        action="store_true",
+        default=False,
+        help="Fail instead of skip when the KVM lab is unreachable.",
+    )
+
+
 def pytest_configure(config):
     """Register markers used by the suite and make library/ importable."""
     config.addinivalue_line("markers", "slice: part of the vertical slice (must pass)")
@@ -42,14 +52,36 @@ def pytest_configure(config):
         sys.path.insert(0, lib)
 
 
+def _lab_required(config=None) -> bool:
+    """True when the acceptance suite must fail closed if the lab is down."""
+    if config is not None and bool(config.getoption("--require-lab", default=False)):
+        return True
+    return os.environ.get("ORACLE_TEST_REQUIRE_LAB", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def _skip_or_fail(message, request=None):
+    """Skip when the lab is optional; fail when --require-lab / env demands it."""
+    config = request.config if request is not None else None
+    if _lab_required(config):
+        pytest.fail(message)
+    pytest.skip(message)
+
+
 # ── Connection fixtures ────────────────────────────────────────────────
 @pytest.fixture(scope="session")
-def oracledb():
-    """Return the oracledb module, skipping if unavailable."""
+def oracledb(request):
+    """Return the oracledb module, failing closed in acceptance mode."""
     try:
         import oracledb  # noqa: F401
     except ImportError:
-        pytest.skip("python-oracledb not installed; run ./scripts/bootstrap-venv.sh")
+        _skip_or_fail(
+            "python-oracledb not installed; run ./scripts/bootstrap-venv.sh",
+            request,
+        )
     return oracledb
 
 
@@ -66,12 +98,13 @@ def db_conn_kwargs():
 
 
 @pytest.fixture
-def db_connection(oracledb, db_conn_kwargs):
+def db_connection(oracledb, db_conn_kwargs, request):
     """A live Oracle connection to the client service. Skips if unreachable."""
     if not _port_open(db_conn_kwargs["host"], db_conn_kwargs["port"]):
-        pytest.skip(
+        _skip_or_fail(
             f"Listener not reachable at {db_conn_kwargs['host']}:{db_conn_kwargs['port']} "
-            "— bring the lab up (lab/scripts/lab-up.sh) and run site.yml first."
+            "— bring the lab up (lab/scripts/lab-up.sh) and run site.yml first.",
+            request,
         )
     dsn = oracledb.makedsn(
         db_conn_kwargs["host"], db_conn_kwargs["port"],
@@ -85,7 +118,7 @@ def db_connection(oracledb, db_conn_kwargs):
             mode=oracledb.AUTH_MODE_SYSDBA,
         )
     except Exception as exc:
-        pytest.skip(f"Could not connect to Oracle: {exc}")
+        _skip_or_fail(f"Could not connect to Oracle: {exc}", request)
     yield conn
     try:
         conn.close()
@@ -116,48 +149,54 @@ def _ssh_runner(host: str, user: str, key: str):
 
 
 @pytest.fixture(scope="session")
-def require_lab():
+def require_lab(request):
     """Skip live ansible-playbook tests when the KVM lab is not reachable."""
     _run = _ssh_runner(SSH_HOST, SSH_USER, SSH_KEY)
     probe = _run("true")
     if probe.returncode != 0:
-        pytest.skip(
-            f"KVM lab unreachable; skipping live playbook test. {probe.stderr}"
+        _skip_or_fail(
+            f"KVM lab unreachable; skipping live playbook test. {probe.stderr}",
+            request,
         )
 
 
 @pytest.fixture(scope="session")
-def lab_exec():
+def lab_exec(request):
     """Run a shell command on the primary lab VM over SSH."""
     _run = _ssh_runner(SSH_HOST, SSH_USER, SSH_KEY)
     probe = _run("true")
     if probe.returncode != 0:
-        pytest.skip(f"SSH to {SSH_USER}@{SSH_HOST} failed; is the KVM lab up? {probe.stderr}")
-    return _run
-
-
-@pytest.fixture(scope="session")
-def standby_exec():
-    """Run a shell command on the standby-candidate lab VM over SSH."""
-    _run = _ssh_runner(STANDBY_SSH_HOST, SSH_USER, SSH_KEY)
-    probe = _run("true")
-    if probe.returncode != 0:
-        pytest.skip(
-            f"SSH to {SSH_USER}@{STANDBY_SSH_HOST} failed; is the KVM lab up? "
-            f"{probe.stderr}"
+        _skip_or_fail(
+            f"SSH to {SSH_USER}@{SSH_HOST} failed; is the KVM lab up? {probe.stderr}",
+            request,
         )
     return _run
 
 
 @pytest.fixture(scope="session")
-def observer_exec():
+def standby_exec(request):
+    """Run a shell command on the standby-candidate lab VM over SSH."""
+    _run = _ssh_runner(STANDBY_SSH_HOST, SSH_USER, SSH_KEY)
+    probe = _run("true")
+    if probe.returncode != 0:
+        _skip_or_fail(
+            f"SSH to {SSH_USER}@{STANDBY_SSH_HOST} failed; is the KVM lab up? "
+            f"{probe.stderr}",
+            request,
+        )
+    return _run
+
+
+@pytest.fixture(scope="session")
+def observer_exec(request):
     """Run a shell command on the observer lab VM over SSH."""
     _run = _ssh_runner(OBSERVER_SSH_HOST, SSH_USER, SSH_KEY)
     probe = _run("true")
     if probe.returncode != 0:
-        pytest.skip(
+        _skip_or_fail(
             f"SSH to {SSH_USER}@{OBSERVER_SSH_HOST} failed; is the KVM lab up? "
-            f"{probe.stderr}"
+            f"{probe.stderr}",
+            request,
         )
     return _run
 

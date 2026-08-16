@@ -190,12 +190,15 @@ def _ensure_restart_service_running(lab_exec):
     ), start.stdout
 
 
-def test_srvctl_status_or_honest_gap(lab_exec):
-    """Either srvctl reports super ONLINE, or we honestly record Restart absent."""
+def test_srvctl_status_or_honest_gap(lab_exec, request):
+    """Restart must own super when the lab is required; otherwise record the gap."""
     if not _restart_installed(lab_exec):
-        pytest.skip(
+        from conftest import _skip_or_fail
+
+        _skip_or_fail(
             "Oracle Restart is not installed in this lab. The DB still runs under "
-            "sqlplus/lsnrctl; Restart registration tests require a Grid home."
+            "sqlplus/lsnrctl; Restart registration tests require a Grid home.",
+            request,
         )
 
     _ensure_restart_database_running(lab_exec)
@@ -320,10 +323,15 @@ def test_restart_database_registration_details(
     assert f"Database instance: {instance}" in config.stdout
 
 
-def test_restart_systemd_unit_starts_stack_after_monitor(lab_exec):
+def test_restart_systemd_unit_starts_stack_after_monitor(lab_exec, request):
     """The native unit must launch the stack as well as the init monitor."""
     if not _restart_installed(lab_exec):
-        pytest.skip("Oracle Restart not installed; skipping systemd unit test.")
+        from conftest import _skip_or_fail
+
+        _skip_or_fail(
+            "Oracle Restart not installed; systemd unit test requires Restart.",
+            request,
+        )
 
     unit = lab_exec("systemctl cat oracle-ohasd.service")
     assert unit.returncode == 0, unit.stdout + unit.stderr
@@ -372,10 +380,15 @@ def test_standby_recovers_after_ohasd_unit_restart(standby_exec):
 
 
 @pytest.mark.slow
-def test_restart_can_stop_and_start_database(lab_exec):
+def test_restart_can_stop_and_start_database(lab_exec, request):
     """Restart must own the database enough to stop, start, and restore SQL."""
     if not _restart_installed(lab_exec):
-        pytest.skip("Oracle Restart not installed; skipping auto-restart test.")
+        from conftest import _skip_or_fail
+
+        _skip_or_fail(
+            "Oracle Restart not installed; auto-restart test requires Restart.",
+            request,
+        )
 
     _ensure_restart_database_running(lab_exec)
 

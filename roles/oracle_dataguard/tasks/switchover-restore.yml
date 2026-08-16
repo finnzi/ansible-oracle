@@ -1,0 +1,201 @@
+---
+# Always-run recovery after a switchover attempt. Restore managed recovery
+# first so a later FSFO failure cannot leave apply stopped, then re-enable
+# FSFO if this play disabled it. Safe to run after success (idempotent) or
+# after a mid-play failure.
+
+- name: Restore standby apply after switchover attempt
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    export PATH="/usr/bin:/bin:${ORACLE_HOME}/bin:${PATH:-}"
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    members=(
+      '{{ _dg_switchover_new_standby | default(_dg_primary_unique_name) }}'
+      '{{ _dg_switchover_target | default(_dg_standby_unique_name) }}'
+      '{{ _dg_primary_unique_name }}'
+      '{{ _dg_standby_unique_name }}'
+    )
+    declare -A seen=()
+    restored=0
+    needed=0
+    queried=0
+    for name in "${members[@]}"; do
+      [ -n "$name" ] || continue
+      [ -z "${seen[$name]+x}" ] || continue
+      seen[$name]=1
+      role_out="$("$ORACLE_HOME/bin/sqlplus" -L -S "${SYS_CONNECT}@${name}_dgb as sysdba" <<'SQL' || true
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+    )"
+      printf 'ROLE@%s:%s\n' "$name" "$role_out"
+      if printf '%s\n' "$role_out" | grep -qE 'ORA-|SP2-'; then
+        continue
+      fi
+      queried=1
+      if ! printf '%s\n' "$role_out" | grep -q '^PHYSICAL STANDBY|'; then
+        continue
+      fi
+      needed=1
+      if printf '%s\n' "$role_out" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY'; then
+        echo "APPLY_OK:${name}"
+        restored=1
+        continue
+      fi
+      primary_conn=""
+      for cand in \
+        '{{ _dg_switchover_target | default(_dg_standby_unique_name) }}' \
+        '{{ _dg_primary_unique_name }}' \
+        '{{ _dg_standby_unique_name }}'
+      do
+        [ -n "$cand" ] || continue
+        [ "$cand" != "$name" ] || continue
+        dgmgrl_out="$(printf "EDIT DATABASE '%s' SET STATE='APPLY-ON';\nEXIT;\n" "$name" \
+          | "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${cand}_dgb" 2>/dev/null || true)"
+        printf 'APPLY-ON@%s via %s:\n%s\n' "$name" "$cand" "$dgmgrl_out"
+        primary_conn="$cand"
+        break
+      done
+      sql="$("$ORACLE_HOME/bin/sqlplus" -L -S "${SYS_CONNECT}@${name}_dgb as sysdba" <<'SQL' || true
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF SERVEROUTPUT ON
+    DECLARE
+      v_role v$database.database_role%TYPE;
+      v_open v$database.open_mode%TYPE;
+    BEGIN
+      SELECT database_role, open_mode INTO v_role, v_open FROM v$database;
+      IF v_role = 'PHYSICAL STANDBY' AND v_open != 'READ ONLY WITH APPLY' THEN
+        BEGIN
+          EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL';
+        EXCEPTION
+          WHEN OTHERS THEN NULL;
+        END;
+        IF v_open = 'MOUNTED' THEN
+          EXECUTE IMMEDIATE 'ALTER DATABASE OPEN';
+        END IF;
+        EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION';
+        DBMS_OUTPUT.PUT_LINE('APPLY_RESTORED');
+      ELSE
+        DBMS_OUTPUT.PUT_LINE('APPLY_OK');
+      END IF;
+    END;
+    /
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+    )"
+      printf '%s\n' "$sql"
+      if printf '%s\n' "$sql" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY'; then
+        echo "APPLY_RESTORED:${name}"
+        restored=1
+      else
+        echo "APPLY_FAILED:${name}" >&2
+        exit 1
+      fi
+    done
+    if [ "$queried" -eq 0 ]; then
+      echo APPLY_FAILED: no Data Guard member reachable >&2
+      exit 1
+    fi
+    if [ "$needed" -eq 0 ]; then
+      echo APPLY_NOT_NEEDED
+      exit 0
+    fi
+    if [ "$restored" -eq 1 ]; then
+      echo APPLY_READY
+      exit 0
+    fi
+    echo APPLY_FAILED >&2
+    exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_apply_restore
+  changed_when: "'APPLY_RESTORED' in (_dg_switchover_apply_restore.stdout | default(''))"
+  retries: 12
+  delay: 10
+  until: >-
+    _dg_switchover_apply_restore.rc == 0 and
+    (
+      'APPLY_READY' in (_dg_switchover_apply_restore.stdout | default('')) or
+      'APPLY_NOT_NEEDED' in (_dg_switchover_apply_restore.stdout | default(''))
+    )
+  failed_when: >-
+    _dg_switchover_apply_restore.rc != 0 or
+    'APPLY_FAILED' in (_dg_switchover_apply_restore.stdout | default('')) or
+    'APPLY_FAILED' in (_dg_switchover_apply_restore.stderr | default(''))
+  no_log: true
+
+- name: Restore Fast-Start Failover after switchover attempt
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    export TNS_ADMIN="${ORACLE_HOME}/network/admin"
+    SYS_CONNECT="sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}"
+    try_show_fsfo() {
+      local conn="$1"
+      local output
+      output="$(timeout 45 "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" <<'DGMGRL' 2>/dev/null || true
+    SHOW FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+    )"
+      if printf '%s\n' "$output" | grep -qE 'Fast-Start Failover:[[:space:]]*(Enabled|Disabled)'; then
+        printf '%s\n' "$output"
+        return 0
+      fi
+      return 1
+    }
+    fsfo="$(try_show_fsfo '{{ _dg_switchover_target }}_dgb' \
+      || try_show_fsfo '{{ _dg_primary_unique_name }}_dgb' \
+      || try_show_fsfo '{{ _dg_standby_unique_name }}_dgb' \
+      || true)"
+    printf '%s\n' "$fsfo"
+    if printf '%s\n' "$fsfo" | grep -qE 'Fast-Start Failover:[[:space:]]*Enabled'; then
+      echo FSFO_ALREADY_ENABLED
+      exit 0
+    fi
+    for conn in \
+      '{{ _dg_switchover_target }}_dgb' \
+      '{{ _dg_primary_unique_name }}_dgb' \
+      '{{ _dg_standby_unique_name }}_dgb'
+    do
+      enable_out="$(timeout 60 "$ORACLE_HOME/bin/dgmgrl" -silent "${SYS_CONNECT}@${conn}" <<'DGMGRL' 2>/dev/null || true
+    ENABLE FAST_START FAILOVER;
+    EXIT;
+    DGMGRL
+    )"
+      printf 'ENABLE@%s:\n%s\n' "$conn" "$enable_out"
+      if printf '%s\n' "$enable_out" | grep -qE 'ORA-01017|logon denied|ORA-12154|ORA-12541|ORA-12514'; then
+        continue
+      fi
+      verify="$(try_show_fsfo "$conn" || true)"
+      printf '%s\n' "$verify"
+      if printf '%s\n' "$verify" | grep -qE 'Fast-Start Failover:[[:space:]]*Enabled'; then
+        echo FSFO_ENABLED
+        exit 0
+      fi
+    done
+    echo FSFO_ENABLE_FAILED >&2
+    exit 1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_fsfo_restore
+  changed_when: "'FSFO_ENABLED' in (_dg_switchover_fsfo_restore.stdout | default(''))"
+  failed_when: >-
+    _dg_switchover_fsfo_restore.rc != 0 or
+    'FSFO_ENABLE_FAILED' in (_dg_switchover_fsfo_restore.stdout | default('')) or
+    'FSFO_ENABLE_FAILED' in (_dg_switchover_fsfo_restore.stderr | default(''))
+  retries: 6
+  delay: 10
+  until: >-
+    _dg_switchover_fsfo_restore.rc == 0 and
+    (
+      'FSFO_ENABLED' in (_dg_switchover_fsfo_restore.stdout | default('')) or
+      'FSFO_ALREADY_ENABLED' in (_dg_switchover_fsfo_restore.stdout | default(''))
+    )
+  no_log: true
+  when: _dg_switchover_fsfo_was_enabled | default(false) | bool

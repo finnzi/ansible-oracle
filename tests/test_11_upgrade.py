@@ -68,6 +68,12 @@ def test_db_deinstall_role_safety_contract():
     assert "oracle_db_deinstall_homes: []" in defaults
     assert "oracle_db_deinstall_rescue_parameter_files: true" in defaults
     assert "Fail when a deinstall target is still registered with Restart" in tasks
+    assert "Fail when a deinstall target is not an allowlisted Oracle home leaf" in tasks
+    assert "Fail when a deinstall target overlaps a live Oracle tree" in tasks
+    assert "oracle_deinstall_conflicts" in tasks
+    assert "oracle_deinstall_is_allowlisted_leaf" in tasks
+    assert "realpath -m" in tasks
+    assert "inst.oracle_base" in tasks.split("Collect approved Oracle bases")[1].split("- name:")[0]
     # Fail closed: discovery must succeed; empty/failed/multi-line srvctl must not skip the guard.
     assert "Fail when Restart discovery could not list databases" in tasks
     assert "Fail when Restart home discovery failed for a registered database" in tasks
@@ -88,11 +94,15 @@ def test_db_deinstall_role_safety_contract():
 
 def test_dual_home_switch_relocates_spfile_to_durable_data_path():
     tasks = (REPO_ROOT / "roles/oracle_patch/tasks/main.yml").read_text(encoding="utf-8")
+    cutover = (REPO_ROOT / "roles/oracle_patch/tasks/dual-home-cutover.yml").read_text(
+        encoding="utf-8"
+    )
     script = (
         REPO_ROOT / "roles/oracle_patch/files/relocate_spfile_for_dual_home.sh"
     ).read_text(encoding="utf-8")
-    assert "Relocate spfile and password file to durable path for dual-home switch" in tasks
-    assert "relocate_spfile_for_dual_home.sh" in tasks
+    assert "Relocate spfile and password file to durable path for dual-home switch" in cutover
+    assert "relocate_spfile_for_dual_home.sh" in cutover
+    assert "include_tasks: dual-home-cutover.yml" in tasks
     assert "parameter_file_dir" in tasks
     assert "SPFILE_DURABLE" in script
     assert "dirs.data" in tasks
@@ -110,7 +120,9 @@ def test_network_role_supports_selected_homes_for_upgrade_target():
     tasks = (REPO_ROOT / "roles/oracle_network/tasks/main.yml").read_text(encoding="utf-8")
     assert "oracle_network_home_selection: current" in defaults
     assert "oracle_network_home_suffixes: []" in defaults
+    assert "oracle_network_manage_listener: true" in defaults
     assert "oracle_network_instances: []" in defaults
+    assert "oracle_network_manage_listener: true" in defaults
     assert "oracle_network_instances" in tasks
     assert "Fail when network home selection is invalid" in tasks
     assert "selection == 'selected'" in tasks
@@ -145,9 +157,13 @@ def test_upgrade_prepare_playbook_contract():
     assert "oracle_upgrade_prepare_force_rebuild" in playbook
     assert "Decide which target homes need a clean rebuild" in playbook
     assert "Fail when target path equals the current runtime home" in playbook
+    assert "Fail when target path is not an allowlisted Oracle home leaf" in playbook
+    assert "Fail when target path overlaps live Oracle trees" in playbook
+    assert "oracle_network_manage_listener: false" in playbook
     assert "Install standalone dual-home upgrade target into cleaned path" in playbook
     assert "Patch standalone dual-home upgrade target without Restart switch" in playbook
     assert "Deploy network/admin into the unused upgrade target home" in playbook
+    assert "oracle_network_manage_listener: false" in playbook
     assert "oracle_network_home_selection: selected" in playbook
     assert "Fail when target home is missing network/admin files after apply" in playbook
     assert "clean_reinstall_unused_path" in playbook
@@ -180,6 +196,8 @@ def test_upgrade_cutover_playbook_contract():
     assert "Fail when target home is missing network/admin files" in playbook
     assert "tnsnames.ora" in playbook
     assert "Validate Restart uses upgrade target after cutover" in playbook
+    assert "Validate database is open after cutover" in playbook
+    assert "Validate database is open after cutover" in playbook
     # Role-scoped list so -e oracle_instances cannot reintroduce Data Guard super.
     assert "_upgrade_cutover_standalone_instances" in playbook
     assert 'oracle_patch_instances: "{{ _upgrade_cutover_standalone_instances }}"' in playbook

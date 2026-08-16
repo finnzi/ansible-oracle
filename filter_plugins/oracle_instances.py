@@ -7,14 +7,26 @@ from copy import deepcopy
 from typing import Any
 
 
+_TRUE_STRINGS = {"true", "yes", "on", "1"}
+_FALSE_STRINGS = {"false", "no", "off", "0", "", "none", "null"}
+
+
 def _ansible_bool(value: Any) -> bool:
-    """Coerce booleans the same way operators expect from Ansible extra vars."""
+    """Coerce booleans the same way operators expect from Ansible extra vars.
+
+    Unrecognized strings such as ``flase`` must not become true. Fail closed so
+    a typo cannot silently enable Data Guard overrides.
+    """
     if isinstance(value, str):
         normalized = value.strip().lower()
-        if normalized in {"false", "no", "off", "0", "", "none", "null"}:
+        if normalized in _FALSE_STRINGS:
             return False
-        if normalized in {"true", "yes", "on", "1"}:
+        if normalized in _TRUE_STRINGS:
             return True
+        raise ValueError(
+            f"Unrecognized boolean string {value!r}; "
+            "use true/false, yes/no, on/off, or 1/0"
+        )
     return bool(value)
 
 
@@ -35,11 +47,15 @@ def oracle_apply_instance_overrides(
     for inst in instances or []:
         merged = deepcopy(inst)
         name = str(merged.get("name", ""))
+        if "dataguard" in merged:
+            merged["dataguard"] = _ansible_bool(merged.get("dataguard"))
         if name and (
             not _ansible_bool(require_dataguard)
             or _ansible_bool(merged.get("dataguard"))
         ):
             merged.update(deepcopy(dict(overrides.get(name, {}))))
+            if "dataguard" in merged:
+                merged["dataguard"] = _ansible_bool(merged.get("dataguard"))
         resolved.append(merged)
 
     return resolved

@@ -1,0 +1,99 @@
+---
+# Fail-closed availability/apply gate used between serialized standby and
+# primary patch plays. A successful opatchauto is not enough: the site must
+# still be able to serve (and a physical standby must still apply redo).
+
+- name: Fail when the previous patch play did not complete on this host
+  ansible.builtin.fail:
+    msg: >-
+      Refusing to continue patch serialization because
+      oracle_patch_play_completed is not true on {{ inventory_hostname }}.
+      The previous standby/primary play failed or never finished, so the
+      remaining Data Guard site must not enter maintenance.
+  when: not (oracle_patch_play_completed | default(false) | bool)
+
+- name: Probe Oracle Restart and database availability after patch play
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+    target={{ oracle_patch_target | default('db') | quote }}
+    if [ ! -x "${gi}/bin/crsctl" ] || [ ! -x "${gi}/bin/srvctl" ]; then
+      echo "SITE_UNAVAILABLE: Restart tools missing under ${gi}" >&2
+      exit 1
+    fi
+    has="$("${gi}/bin/crsctl" check has 2>&1)" || true
+    printf '%s\n' "$has"
+    printf '%s\n' "$has" | grep -q 'CRS-4638' || {
+      echo "SITE_UNAVAILABLE: Oracle Restart is not healthy" >&2
+      exit 1
+    }
+    if [ "$target" = "grid" ]; then
+      echo SITE_READY
+      exit 0
+    fi
+    dbs="$("${gi}/bin/srvctl" config database)" || {
+      echo "SITE_UNAVAILABLE: could not list Restart databases" >&2
+      exit 1
+    }
+    while IFS= read -r db; do
+      [ -n "$db" ] || continue
+      status="$("${gi}/bin/srvctl" status database -db "$db")" || true
+      printf '%s\n' "$status"
+      printf '%s\n' "$status" | grep -Eiq 'is running' || {
+        echo "SITE_UNAVAILABLE: database ${db} is not running" >&2
+        exit 1
+      }
+      cfg="$("${gi}/bin/srvctl" config database -db "$db")" || exit 1
+      home="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Oracle home" {
+        gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit
+      }')"
+      sid="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Database instance" {
+        gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit
+      }')"
+      [ -n "$home" ] && [ -n "$sid" ] || {
+        echo "SITE_UNAVAILABLE: missing home/instance for ${db}" >&2
+        exit 1
+      }
+      export ORACLE_HOME="$home" ORACLE_SID="$sid"
+      open="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+    )"
+      printf '%s\n' "$open"
+      printf '%s\n' "$open" | grep -qE 'ORA-|SP2-' && {
+        echo "SITE_UNAVAILABLE: SQL probe failed for ${db}" >&2
+        exit 1
+      }
+      if printf '%s\n' "$open" | grep -q '^PHYSICAL STANDBY|'; then
+        printf '%s\n' "$open" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY' || {
+          echo "SITE_UNAVAILABLE: standby ${db} apply is not READ ONLY WITH APPLY" >&2
+          exit 1
+        }
+      elif printf '%s\n' "$open" | grep -q '^PRIMARY|'; then
+        printf '%s\n' "$open" | grep -qF 'PRIMARY|READ WRITE' || {
+          echo "SITE_UNAVAILABLE: primary ${db} is not READ WRITE" >&2
+          exit 1
+        }
+      else
+        echo "SITE_UNAVAILABLE: unexpected role for ${db}: ${open}" >&2
+        exit 1
+      fi
+    done <<< "$dbs"
+    echo SITE_READY
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_site_ready
+  changed_when: false
+  retries: 12
+  delay: 10
+  until: >-
+    _patch_site_ready.rc == 0 and
+    'SITE_READY' in (_patch_site_ready.stdout | default(''))
+  failed_when: >-
+    _patch_site_ready.rc != 0 or
+    'SITE_READY' not in (_patch_site_ready.stdout | default('')) or
+    'SITE_UNAVAILABLE' in (_patch_site_ready.stdout | default('')) or
+    'SITE_UNAVAILABLE' in (_patch_site_ready.stderr | default(''))
