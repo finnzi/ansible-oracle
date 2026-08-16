@@ -53,4 +53,6 @@ oracle_observer_recreate_incomplete_home: true
 # /usr/lib64 on the observer node.
 observer_create_ol9_linker_compat_symlink: true
 
-oracle_observer_enabled: false
+# Canonical enable flag. observer_enabled is a legacy alias used only when
+# this variable is not set in inventory; an explicit false here wins.
+oracle_observer_enabled: "{{ observer_enabled }}"

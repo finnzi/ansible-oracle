@@ -90,6 +90,7 @@
           {%- for home in homes -%}
             {%- set _ = out.append(inst | combine({
               '_home': home.suffix,
+              '_home_path': inst.oracle_base ~ '/' ~ home.suffix,
               '_home_is_current': (home.suffix == current_home.suffix),
               '_net': listener_name,
               '_vip': vip.ip,
@@ -98,6 +99,58 @@
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
+
+- name: Resolve runtime listener Oracle home from Restart
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+    listener="LISTENER_{{ inst.name | upper }}"
+    fallback={{ inst._home_path | default(inst.oracle_base ~ '/' ~ inst._home) | quote }}
+    home=""
+    if [ -x "${gi}/bin/srvctl" ]; then
+      home="$("${gi}/bin/srvctl" config listener -listener "${listener}" 2>/dev/null |
+        awk -F': ' '$1 == "Home" || $1 == "Oracle home" {
+          gsub(/^[ \t]+|[ \t]+$/, "", $2)
+          print $2
+          exit
+        }')"
+    fi
+    if [ -n "${home}" ] && [ -x "${home}/bin/lsnrctl" ]; then
+      printf '%s\n' "${home}"
+    else
+      printf '%s\n' "${fallback}"
+    fi
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _net_runtime_homes
+  changed_when: false
+  failed_when: (_net_runtime_homes.stdout | default('') | trim | length) == 0
+  loop: "{{ _net_instances }}"
+  loop_control: { loop_var: inst, label: "{{ inst.name }}" }
+  when: oracle_network_home_selection | default('current') == 'current'
+
+- name: Apply Restart listener homes to the network instance list
+  ansible.builtin.set_fact:
+    _net_instances: >-
+      {%- set out = [] -%}
+      {%- for r in _net_runtime_homes.results | default([]) -%}
+        {%- if r.skipped | default(false) -%}
+          {%- set _ = out.append(r.inst) -%}
+        {%- else -%}
+          {%- set home_path = r.stdout | default('') | trim -%}
+          {%- set suffix = home_path.rsplit('/', 1)[1] if (home_path | length > 0) else r.inst._home -%}
+          {%- set _ = out.append(r.inst | combine({
+            '_home': suffix,
+            '_home_path': home_path,
+            '_home_is_current': true
+          })) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ out if out | length > 0 else _net_instances }}
+  when:
+    - oracle_network_home_selection | default('current') == 'current'
+    - (_net_runtime_homes.results | default([]) | length) > 0
 
 - name: Remove stale lab host aliases from guest /etc/hosts
   ansible.builtin.shell: |
@@ -263,7 +316,7 @@
 
 - name: Ensure ORACLE_HOME/network/admin exists per instance
   ansible.builtin.file:
-    path: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin"
+    path: "{{ inst._home_path | default(inst.oracle_base ~ '/' ~ inst._home) }}/network/admin"
     state: directory
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
@@ -274,7 +327,7 @@
 - name: Write listener.ora (static SID_LIST, bound to instance VIP)
   ansible.builtin.template:
     src: listener.ora.j2
-    dest: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin/listener.ora"
+    dest: "{{ inst._home_path | default(inst.oracle_base ~ '/' ~ inst._home) }}/network/admin/listener.ora"
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0644"
@@ -284,7 +337,7 @@
 
 - name: Write sqlnet.ora defaults
   ansible.builtin.copy:
-    dest: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin/sqlnet.ora"
+    dest: "{{ inst._home_path | default(inst.oracle_base ~ '/' ~ inst._home) }}/network/admin/sqlnet.ora"
     content: |
       # Managed by ansible-oracle / oracle_network
       NAMES.DIRECTORY_PATH= (TNSNAMES, EZCONNECT)
@@ -298,7 +351,7 @@
 - name: Write tnsnames.ora with the client-facing service entry
   ansible.builtin.template:
     src: tnsnames.ora.j2
-    dest: "{{ inst.oracle_base }}/{{ inst._home }}/network/admin/tnsnames.ora"
+    dest: "{{ inst._home_path | default(inst.oracle_base ~ '/' ~ inst._home) }}/network/admin/tnsnames.ora"
     owner: "{{ oracle_user }}"
     group: "{{ oracle_group }}"
     mode: "0644"
@@ -343,7 +396,7 @@
 - name: Check listener status (LISTENER_<INSTANCE>)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ inst.oracle_base }}/{{ inst._home }}
+    export ORACLE_HOME={{ inst._home_path | default(inst.oracle_base ~ '/' ~ inst._home) }}
     "$ORACLE_HOME/bin/lsnrctl" status LISTENER_{{ inst.name | upper }} 2>&1 || true
   args: { executable: /bin/bash }
   become: true
@@ -359,7 +412,7 @@
 - name: Start listener where it is down
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ item.inst.oracle_base }}/{{ item.inst._home }}
+    export ORACLE_HOME={{ item.inst._home_path | default(item.inst.oracle_base ~ '/' ~ item.inst._home) }}
     "$ORACLE_HOME/bin/lsnrctl" start LISTENER_{{ item.inst.name | upper }} 2>&1
   args: { executable: /bin/bash }
   become: true
@@ -385,7 +438,7 @@
 - name: Restart listener where bind inputs changed
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ item.inst.oracle_base }}/{{ item.inst._home }}
+    export ORACLE_HOME={{ item.inst._home_path | default(item.inst.oracle_base ~ '/' ~ item.inst._home) }}
     "$ORACLE_HOME/bin/lsnrctl" stop LISTENER_{{ item.inst.name | upper }} 2>&1 || true
     "$ORACLE_HOME/bin/lsnrctl" start LISTENER_{{ item.inst.name | upper }} 2>&1
   args: { executable: /bin/bash }
@@ -425,7 +478,7 @@
 - name: Reload listener where it is up and .ora changed
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ item.inst.oracle_base }}/{{ item.inst._home }}
+    export ORACLE_HOME={{ item.inst._home_path | default(item.inst.oracle_base ~ '/' ~ item.inst._home) }}
     "$ORACLE_HOME/bin/lsnrctl" reload LISTENER_{{ item.inst.name | upper }} 2>&1
   args: { executable: /bin/bash }
   become: true

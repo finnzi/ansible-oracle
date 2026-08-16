@@ -43,8 +43,53 @@ def oracle_path_is_ancestor_of(ancestor: Any, descendant: Any) -> bool:
     return child == parent or child.startswith(parent + "/")
 
 
-def oracle_deinstall_conflicts(target: Any, protected_paths: Iterable[Any] | None = None) -> list[str]:
-    """Return protected paths that recursive removal of *target* would delete."""
+def oracle_paths_overlap(left: Any, right: Any) -> bool:
+    """True when either path is the other or an ancestor of the other."""
+    return oracle_path_is_ancestor_of(left, right) or oracle_path_is_ancestor_of(
+        right, left
+    )
+
+
+def oracle_deinstall_is_allowlisted_leaf(
+    target: Any, approved_bases: Iterable[Any] | None = None
+) -> bool:
+    """True when *target* is exactly one path component under an approved base.
+
+    Dual-home deinstall may remove ``{oracle_base}/dbhome_N``. It must not
+    remove the base itself, a nested path such as ``dbhome_1/bin``, or anything
+    outside an approved Oracle base.
+    """
+    try:
+        normalized = oracle_normalize_unix_path(target)
+    except ValueError:
+        return False
+    if not normalized or normalized == "/":
+        return False
+    parent, sep, leaf = normalized.rstrip("/").rpartition("/")
+    if not sep or not parent or not leaf or leaf in (".", ".."):
+        return False
+    for raw in approved_bases or []:
+        try:
+            base = oracle_normalize_unix_path(raw)
+        except ValueError:
+            continue
+        if not base or base == "/":
+            continue
+        if parent == base:
+            return True
+    return False
+
+
+def oracle_deinstall_conflicts(
+    target: Any, protected_paths: Iterable[Any] | None = None
+) -> list[str]:
+    """Return protected paths that overlap *target* in either direction.
+
+    Recursive removal of an ancestor would delete the protected tree. Removal
+    of a path inside a protected tree (active home, Grid, data, inventory,
+    staging, user home) is also rejected so a subtree or symlink-resolved
+    target cannot punch through a live Oracle path.
+    """
     try:
         normalized = oracle_normalize_unix_path(target)
     except ValueError as exc:
@@ -60,7 +105,7 @@ def oracle_deinstall_conflicts(target: Any, protected_paths: Iterable[Any] | Non
             protected = oracle_normalize_unix_path(raw)
         except ValueError:
             continue
-        if oracle_path_is_ancestor_of(normalized, protected) and protected not in seen:
+        if oracle_paths_overlap(normalized, protected) and protected not in seen:
             seen.add(protected)
             conflicts.append(protected)
     return conflicts
@@ -73,5 +118,7 @@ class FilterModule:
         return {
             "oracle_normalize_unix_path": oracle_normalize_unix_path,
             "oracle_path_is_ancestor_of": oracle_path_is_ancestor_of,
+            "oracle_paths_overlap": oracle_paths_overlap,
+            "oracle_deinstall_is_allowlisted_leaf": oracle_deinstall_is_allowlisted_leaf,
             "oracle_deinstall_conflicts": oracle_deinstall_conflicts,
         }

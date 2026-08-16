@@ -45,10 +45,18 @@ def test_observer_role_installs_client_and_tns_contract():
 
     assert "oracle_observer_install_client: true" in playbook
     assert "oracle_observer_install_client: false" in defaults
-    assert "oracle_observer_enabled: false" in defaults
+    assert 'oracle_observer_enabled: "{{ observer_enabled }}"' in defaults
     assert "oracle_observer_enabled: true" in (
         REPO_ROOT / "inventory/group_vars/observer.yml"
     ).read_text(encoding="utf-8")
+    assert (
+        '_oracle_observer_wanted: "{{ oracle_observer_enabled | default(false) | bool }}"'
+        in tasks
+    )
+    assert " or (observer_enabled" not in tasks
+    stop = tasks.split("Stop and disable FSFO observer service when not wanted", 1)[1]
+    assert "failed_when: false" not in stop.split("- name:", 1)[0]
+    assert "Verify FSFO observer is inactive when not wanted" in tasks
     assert "observer_create_ol9_linker_compat_symlink: true" in defaults
     assert "observer_dg_connect_identifier: super_dgb" in defaults
     assert "observer_dg_primary_unique_name: super" in defaults

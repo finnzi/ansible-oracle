@@ -125,7 +125,8 @@ if [ -n "$src_pwfile" ]; then
   "${gi}/bin/srvctl" modify database -db "$db" -pwfile "$dest_pwfile_durable"
   echo "PWFILE_DURABLE src=$src_pwfile dest=$dest_pwfile_durable mirror=$dest_pwfile_home"
 else
-  echo "PWFILE_MISSING (continuing; local OS auth may still work)"
+  echo "PWFILE_MISSING old_oh=$old_oh new_oh=$new_oh param_dir=$param_dir" >&2
+  exit 1
 fi
 
 if [ "$changed" -eq 1 ]; then

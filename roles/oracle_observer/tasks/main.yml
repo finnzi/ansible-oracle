@@ -10,7 +10,7 @@
     _observer_stage_dir: "{{ observer_stage_dir }}"
     _observer_client_image_dir: "{{ observer_stage_dir }}/client"
     _observer_response_file: "{{ observer_stage_dir }}/client_install.rsp"
-    _oracle_observer_wanted: "{{ (oracle_observer_enabled | default(false) | bool) or (observer_enabled | default(false) | bool) }}"
+    _oracle_observer_wanted: "{{ oracle_observer_enabled | default(false) | bool }}"
 
 - name: Verify the client installer zip is staged
   ansible.builtin.stat:
@@ -294,10 +294,21 @@
     name: "{{ observer_service_name }}.service"
     enabled: false
     state: stopped
-  failed_when: false
-  when:
-    - oracle_observer_install_client | bool
-    - not (_oracle_observer_wanted | bool)
+    daemon_reload: true
+  register: _observer_stop
+  failed_when: >-
+    (_observer_stop.failed | default(false)) and
+    'Could not find the requested service' not in (_observer_stop.msg | default('')) and
+    'not found' not in (_observer_stop.msg | default('') | lower)
+  when: not (_oracle_observer_wanted | bool)
+
+- name: Verify FSFO observer is inactive when not wanted
+  ansible.builtin.command:
+    cmd: systemctl is-active {{ observer_service_name }}.service
+  register: _observer_inactive
+  changed_when: false
+  failed_when: (_observer_inactive.stdout | default('') | trim) == 'active'
+  when: not (_oracle_observer_wanted | bool)
 
 - name: Ensure FSFO observer runtime directories exist
   ansible.builtin.file:

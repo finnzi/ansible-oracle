@@ -144,20 +144,42 @@ def test_deinstall_path_guard_rejects_parent_of_live_trees():
 
     protected = [
         "/super/app/oracle/dbhome_1",
-        "/super/app/oracle",
         "/super/d01",
         "/super/a01",
         "/super/f01",
         "/super/r01",
+        "/grid/19c/gi_home1",
+        "/home/oracle/oraInventory",
+        "/home/oracle",
+        "/u01/stage",
+        "/etc",
+        "/grid",
     ]
+    approved = ["/super/app/oracle"]
     assert "/super/d01" in oracle_paths.oracle_deinstall_conflicts("/super", protected)
     assert "/super/app/oracle/dbhome_1" in oracle_paths.oracle_deinstall_conflicts(
-        "/super/app/oracle", protected
+        "/super/app/oracle", ["/super/app/oracle/dbhome_1"]
     )
+    assert "/super/app/oracle/dbhome_1" in oracle_paths.oracle_deinstall_conflicts(
+        "/super/app/oracle/dbhome_1/bin", protected
+    )
+    assert "/grid" in oracle_paths.oracle_deinstall_conflicts("/grid", protected)
+    assert "/etc" in oracle_paths.oracle_deinstall_conflicts("/etc", protected)
     assert oracle_paths.oracle_deinstall_conflicts(
         "/super/app/oracle/dbhome_2", protected
     ) == []
     assert oracle_paths.oracle_deinstall_conflicts("/", protected) == ["/"]
+    assert oracle_paths.oracle_deinstall_is_allowlisted_leaf(
+        "/super/app/oracle/dbhome_2", approved
+    )
+    assert not oracle_paths.oracle_deinstall_is_allowlisted_leaf(
+        "/super/app/oracle", approved
+    )
+    assert not oracle_paths.oracle_deinstall_is_allowlisted_leaf(
+        "/super/app/oracle/dbhome_1/bin", approved
+    )
+    assert not oracle_paths.oracle_deinstall_is_allowlisted_leaf("/grid", approved)
+    assert not oracle_paths.oracle_deinstall_is_allowlisted_leaf("/etc", approved)
 
 
 def test_ansible_config_loads_filter_plugins():

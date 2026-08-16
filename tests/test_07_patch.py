@@ -131,35 +131,52 @@ def test_patch_role_db_apply_contract():
     assert "Fail when dual-home switch would need Data Guard orchestration" in tasks
     assert "oracle_patch_allow_dataguard_dual_home_switch | default(false)" in tasks
     assert "oracle_patch_switch_enabled | default(true) | bool" in tasks
-    assert "Switch Restart database to dual-home target" in tasks
-    assert "Start DBs after dual-home Restart switch" in tasks
-    start_dbs = tasks.split("Start DBs after dual-home Restart switch", 1)[1].split(
+    assert "Switch Restart database to dual-home target" in (
+        tasks + (REPO_ROOT / "roles/oracle_patch/tasks/dual-home-cutover.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    cutover = (REPO_ROOT / "roles/oracle_patch/tasks/dual-home-cutover.yml").read_text(
+        encoding="utf-8"
+    )
+    rollback = (REPO_ROOT / "roles/oracle_patch/tasks/dual-home-rollback.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Start DBs after dual-home Restart switch" in cutover
+    start_dbs = cutover.split("Start DBs after dual-home Restart switch", 1)[1].split(
         "- name:", 1
     )[0]
     assert "PRCR-1079" not in start_dbs
-    assert "Probe database is open after dual-home Restart switch" in tasks
-    assert "Reopen Data Guard standby read-only with apply after dual-home switch" in tasks
+    assert "Probe database is open after dual-home Restart switch" in cutover
+    assert "Dual-home Restart cutover with rollback" in tasks
+    assert "include_tasks: dual-home-rollback.yml" in tasks
+    assert "ROLLBACK_HOME" in rollback
+    assert "Reopen Data Guard standby read-only with apply after dual-home switch" in cutover
     assert (
         "ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION"
-        in tasks
+        in cutover
     )
-    assert tasks.index(
-        "Reopen Data Guard standby read-only with apply after dual-home switch"
-    ) < tasks.index("Run datapatch for patched DB homes")
+    assert tasks.index("Dual-home Restart cutover with rollback") < tasks.index(
+        "Run datapatch for patched DB homes"
+    )
     assert "Run datapatch for patched DB homes" in tasks
     assert "oracle_patch_run_datapatch | bool" in tasks
     assert "SQL Patching tool complete" in tasks
     assert "Converge Oracle DB home patch inventory (standby first)" in playbook
     assert "Converge Oracle DB home patch inventory (primary after standby)" in playbook
     assert playbook.index("hosts: standby") < playbook.index("hosts: primary")
-    assert playbook.count("serial: 1") == 2
+    assert playbook.count("serial: 1") == 3
+    assert playbook.count("any_errors_fatal: true") == 3
+    assert "Refuse primary DB patch unless standby is available after apply" in playbook
     assert playbook.index(
         "Converge Oracle DB home patch inventory (standby first)"
     ) < playbook.index("Converge Oracle DB home patch inventory (primary after standby)")
     assert "Converge Oracle Grid home patch inventory (standby first)" in grid_playbook
     assert "Converge Oracle Grid home patch inventory (primary after standby)" in grid_playbook
     assert grid_playbook.index("hosts: standby") < grid_playbook.index("hosts: primary")
-    assert grid_playbook.count("serial: 1") == 2
+    assert grid_playbook.count("serial: 1") == 3
+    assert grid_playbook.count("any_errors_fatal: true") == 3
+    assert "Refuse primary Grid patch unless standby Restart is available" in grid_playbook
     assert "oracle_patch_target: grid" in grid_playbook
     relocate = (
         REPO_ROOT / "roles/oracle_patch/files/relocate_spfile_for_dual_home.sh"

@@ -8,6 +8,42 @@
 #
 # This role is purely idempotent file/dir work — no Oracle binaries touched.
 
+- name: Verify expected instance directories are dedicated mounts
+  ansible.builtin.shell: |
+    set -o pipefail
+    dest={{ dir_path | quote }}
+    probe="$dest"
+    while [ ! -e "$probe" ] && [ "$probe" != "/" ]; do
+      probe="$(dirname -- "$probe")"
+    done
+    target="$(findmnt -n -o TARGET --target "$probe" 2>/dev/null || echo /)"
+    source="$(findmnt -n -o SOURCE --target "$probe" 2>/dev/null || echo)"
+    printf '%s|%s|%s\n' "$dest" "$target" "$source"
+    if [ "$target" = "/" ]; then
+      echo "MOUNT_MISSING dest=${dest} nearest=${probe} target=${target}" >&2
+      exit 1
+    fi
+  args: { executable: /bin/bash }
+  register: _storage_mounts
+  changed_when: false
+  failed_when: >-
+    _storage_mounts.rc != 0 or
+    'MOUNT_MISSING' in (_storage_mounts.stderr | default(''))
+  loop: >-
+    {%- set paths = [] -%}
+    {%- for inst in (oracle_instances | default([])) -%}
+      {%- for kind, path in (inst.dirs | default({})).items() -%}
+        {%- set _ = paths.append(path) -%}
+      {%- endfor -%}
+    {%- endfor -%}
+    {{ paths | unique | list }}
+  loop_control:
+    loop_var: dir_path
+    label: "{{ dir_path }}"
+  when:
+    - oracle_storage_require_dedicated_mounts | default(true) | bool
+    - (oracle_instances | default([]) | length) > 0
+
 - name: Ensure per-instance top-level directories exist
   ansible.builtin.file:
     path: "{{ top_path }}"

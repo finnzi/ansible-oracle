@@ -706,163 +706,33 @@
     - oracle_patch_apply_enabled | bool
     - _patch_missing_targets | length > 0
 
-- name: Stop DBs before dual-home Restart switch
+- name: Capture Restart metadata before dual-home cutover
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" stop database -db {{ item.restart_db_name | quote }} -stopoption IMMEDIATE
+    gi={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+    db={{ item.restart_db_name | quote }}
+    listener="LISTENER_{{ item.name | upper }}"
+    cfg="$("${gi}/bin/srvctl" config database -db "$db")" || exit 1
+    home="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Oracle home" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    spfile="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Spfile" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    pwfile="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Password file" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    status="$("${gi}/bin/srvctl" status database -db "$db")" || true
+    running=0
+    printf '%s\n' "$status" | grep -Eiq 'is running' && running=1
+    lhome=""
+    if lcfg="$("${gi}/bin/srvctl" config listener -listener "$listener" 2>/dev/null)"; then
+      lhome="$(printf '%s\n' "$lcfg" | awk -F': ' '$1 == "Home" || $1 == "Oracle home" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    fi
+    printf 'HOME=%s\nSPFILE=%s\nPWFILE=%s\nRUNNING=%s\nLISTENER_HOME=%s\n' \
+      "${home}" "${spfile}" "${pwfile}" "${running}" "${lhome}"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
-  register: _patch_dual_stop
-  changed_when: _patch_dual_stop.rc == 0
-  failed_when: >-
-    _patch_dual_stop.rc != 0 and
-    'PRCD-1120' not in (_patch_dual_stop.stdout | default('')) and
-    'PRCR-1005' not in (_patch_dual_stop.stdout | default('')) and
-    'not running' not in (_patch_dual_stop.stdout | default('') | lower)
-  loop: "{{ _patch_dual_switch_targets | default([]) }}"
-  loop_control:
-    label: "{{ item.restart_db_name }} -> {{ item.home_path }}"
-  when:
-    - oracle_patch_apply_enabled | bool
-    - oracle_patch_switch_enabled | default(true) | bool
-    - oracle_patch_mode == 'oop_dual'
-    - oracle_patch_target == 'db'
-    - (_patch_dual_switch_targets | default([]) | length) > 0
-
-- name: Switch Restart database to dual-home target
-  ansible.builtin.shell: |
-    set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify database \
-      -db {{ item.restart_db_name | quote }} \
-      -oraclehome {{ item.home_path | quote }}
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _patch_dual_modify_db
-  changed_when: _patch_dual_modify_db.rc == 0
-  failed_when: _patch_dual_modify_db.rc != 0
-  loop: "{{ _patch_dual_switch_targets | default([]) }}"
-  loop_control:
-    label: "{{ item.restart_db_name }} -> {{ item.home_path }}"
-  when:
-    - oracle_patch_apply_enabled | bool
-    - oracle_patch_switch_enabled | default(true) | bool
-    - oracle_patch_mode == 'oop_dual'
-    - oracle_patch_target == 'db'
-    - (_patch_dual_switch_targets | default([]) | length) > 0
-
-# spfile/orapw must NOT live only under $OH/dbs for dual-home work; clean
-# rebuilds delete that tree. Prefer durable data-dir path, mirror under new
-# home dbs/, rewrite Restart metadata. Script lives in files/ to avoid YAML
-# embedding large shell blocks.
-- name: Relocate spfile and password file to durable path for dual-home switch
-  ansible.builtin.script: >
-    relocate_spfile_for_dual_home.sh
-    {{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
-    {{ item.restart_db_name | quote }}
-    {{ item.home_path | quote }}
-    {{ (item.restart_home_path | default(item.current_home_path | default(''))) | quote }}
-    {{ item.name | quote }}
-    {{ item.oracle_base | quote }}
-    {{ (item.data_dir | default('')) | quote }}
-    {{ (item.parameter_file_dir | default('')) | quote }}
-  args:
-    executable: /bin/bash
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _patch_dual_migrate_spfile
-  changed_when: "'CHANGED' in (_patch_dual_migrate_spfile.stdout | default(''))"
-  failed_when: >-
-    _patch_dual_migrate_spfile.rc != 0 or
-    'SPFILE_MISSING' in (_patch_dual_migrate_spfile.stdout | default('')) or
-    'SPFILE_MISSING' in (_patch_dual_migrate_spfile.stderr | default(''))
-  loop: "{{ _patch_dual_switch_targets | default([]) }}"
-  loop_control:
-    label: "{{ item.restart_db_name }} -> durable param dir + {{ item.home_path }}/dbs"
-  when:
-    - oracle_patch_apply_enabled | bool
-    - oracle_patch_switch_enabled | default(true) | bool
-    - oracle_patch_mode == 'oop_dual'
-    - oracle_patch_target == 'db'
-    - (_patch_dual_switch_targets | default([]) | length) > 0
-
-- name: Switch Restart listener to dual-home target
-  ansible.builtin.shell: |
-    set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" modify listener \
-      -listener LISTENER_{{ item.name | upper }} \
-      -oraclehome {{ item.home_path | quote }}
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _patch_dual_modify_listener
-  changed_when: _patch_dual_modify_listener.rc == 0
-  failed_when: >-
-    _patch_dual_modify_listener.rc != 0 and
-    'PRCN-2044' not in (_patch_dual_modify_listener.stdout | default('')) and
-    'PRCR-1001' not in (_patch_dual_modify_listener.stdout | default(''))
-  loop: "{{ _patch_dual_switch_targets | default([]) }}"
-  loop_control:
-    label: "LISTENER_{{ item.name | upper }} -> {{ item.home_path }}"
-  when:
-    - oracle_patch_apply_enabled | bool
-    - oracle_patch_switch_enabled | default(true) | bool
-    - oracle_patch_mode == 'oop_dual'
-    - oracle_patch_target == 'db'
-    - (_patch_dual_switch_targets | default([]) | length) > 0
-
-- name: Start DBs after dual-home Restart switch
-  ansible.builtin.shell: |
-    set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" start database -db {{ item.restart_db_name | quote }}
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _patch_dual_start
-  changed_when: _patch_dual_start.rc == 0
-  failed_when: >-
-    _patch_dual_start.rc != 0 and
-    'already running' not in (_patch_dual_start.stdout | default('') | lower)
-  loop: "{{ _patch_dual_switch_targets | default([]) }}"
-  loop_control:
-    label: "{{ item.restart_db_name }}"
-  when:
-    - oracle_patch_apply_enabled | bool
-    - oracle_patch_switch_enabled | default(true) | bool
-    - oracle_patch_mode == 'oop_dual'
-    - oracle_patch_target == 'db'
-    - (_patch_dual_switch_targets | default([]) | length) > 0
-
-- name: Probe database is open after dual-home Restart switch
-  ansible.builtin.shell: |
-    set -o pipefail
-    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
-    status="$("${gi}/bin/srvctl" status database -db {{ item.restart_db_name | quote }})"
-    printf '%s\n' "$status"
-    printf '%s\n' "$status" | grep -Eiq 'is running' || exit 1
-    export ORACLE_HOME={{ item.home_path | quote }}
-    export ORACLE_SID={{ item.name | quote }}
-    open="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
-    SET PAGES 0 FEEDBACK OFF HEADING OFF VERIFY OFF
-    SELECT status || '|' || database_role || '|' || open_mode FROM v$instance, v$database;
-    EXIT;
-    SQL
-    )"
-    printf '%s\n' "$open"
-    printf '%s\n' "$open" | grep -qE 'ORA-|SP2-' && exit 1
-    # Standalone cutover must be OPEN. A physical standby may come up MOUNTED
-    # and is reopened READ ONLY WITH APPLY by the next task.
-    printf '%s\n' "$open" | grep -qE '^(OPEN|MOUNTED)\|' || exit 1
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _patch_dual_open
+  register: _patch_dual_rollback_meta
   changed_when: false
-  retries: 12
-  delay: 10
-  until: _patch_dual_open.rc == 0
-  failed_when: _patch_dual_open.rc != 0
+  failed_when: >-
+    _patch_dual_rollback_meta.rc != 0 or
+    'HOME=' not in (_patch_dual_rollback_meta.stdout | default(''))
   loop: "{{ _patch_dual_switch_targets | default([]) }}"
   loop_control:
     label: "{{ item.restart_db_name }}"
@@ -873,59 +743,26 @@
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
 
-- name: Reopen Data Guard standby read-only with apply after dual-home switch
-  ansible.builtin.shell: |
-    set -o pipefail
-    export ORACLE_HOME={{ item.home_path | quote }}
-    export ORACLE_SID={{ item.name | quote }}
-    "$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
-    SET SERVEROUTPUT ON PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
-    DECLARE
-      v_database_role v$database.database_role%TYPE;
-      v_open_mode v$database.open_mode%TYPE;
-    BEGIN
-      SELECT database_role, open_mode INTO v_database_role, v_open_mode
-      FROM v$database;
-      IF v_database_role != 'PHYSICAL STANDBY' THEN
-        DBMS_OUTPUT.PUT_LINE('OK');
-      ELSIF v_open_mode != 'READ ONLY WITH APPLY' THEN
-        BEGIN
-          EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE CANCEL';
-        EXCEPTION
-          WHEN OTHERS THEN NULL;
-        END;
-        IF v_open_mode = 'MOUNTED' THEN
-          EXECUTE IMMEDIATE 'ALTER DATABASE OPEN';
-        END IF;
-        EXECUTE IMMEDIATE 'ALTER DATABASE RECOVER MANAGED STANDBY DATABASE DISCONNECT FROM SESSION';
-        DBMS_OUTPUT.PUT_LINE('CHANGED');
-      ELSE
-        DBMS_OUTPUT.PUT_LINE('OK');
-      END IF;
-    END;
-    /
-    EXIT;
-    SQL
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _patch_dg_standby_open_apply
-  changed_when: "'CHANGED' in (_patch_dg_standby_open_apply.stdout | default(''))"
-  failed_when: >-
-    _patch_dg_standby_open_apply.rc != 0 or
-    'ORA-' in (_patch_dg_standby_open_apply.stdout | default('')) or
-    'SP2-' in (_patch_dg_standby_open_apply.stdout | default('')) or
-    'PLS-' in (_patch_dg_standby_open_apply.stdout | default(''))
-  loop: "{{ _patch_dual_switch_targets | default([]) | selectattr('dataguard', 'equalto', true) | list }}"
-  loop_control:
-    label: "{{ item.restart_db_name }}"
+- name: Dual-home Restart cutover with rollback
   when:
     - oracle_patch_apply_enabled | bool
     - oracle_patch_switch_enabled | default(true) | bool
-    - oracle_patch_allow_dataguard_dual_home_switch | default(false) | bool
     - oracle_patch_mode == 'oop_dual'
     - oracle_patch_target == 'db'
     - (_patch_dual_switch_targets | default([]) | length) > 0
+  block:
+    - name: Run dual-home stop, Restart switch, relocate, listener, and start
+      ansible.builtin.include_tasks: dual-home-cutover.yml
+  rescue:
+    - name: Restore previous home, parameter files, listener, and service state
+      ansible.builtin.include_tasks: dual-home-rollback.yml
+    - name: Fail after dual-home cutover rollback
+      ansible.builtin.fail:
+        msg: >-
+          Dual-home Restart cutover failed after the database was stopped.
+          Rollback of the previous Oracle home, SPFILE/password-file metadata,
+          listener configuration, and service state was attempted. Fix the
+          cutover error before retrying.
 
 - name: Read database role before datapatch
   ansible.builtin.shell: |
@@ -942,7 +779,10 @@
   become_user: "{{ oracle_user }}"
   register: _patch_datapatch_roles
   changed_when: false
-  failed_when: false
+  failed_when: >-
+    _patch_datapatch_roles.rc != 0 or
+    'ORA-' in (_patch_datapatch_roles.stdout | default('')) or
+    'SP2-' in (_patch_datapatch_roles.stdout | default(''))
   loop: >-
     {{
       ((_patch_missing_targets + (_patch_dual_switch_targets | default([]))) | unique(attribute='home_path'))
@@ -960,6 +800,23 @@
         not (oracle_patch_switch_enabled | default(true) | bool)
       )
     - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
+
+- name: Fail when a primary is not READ WRITE before datapatch
+  ansible.builtin.fail:
+    msg: >-
+      {{ item.item.name }} is PRIMARY but not READ WRITE
+      ({{ item.stdout | default('') | trim }}). Refusing to skip SQL patching
+      for a mounted or otherwise unwritable production primary.
+  loop: "{{ _patch_datapatch_roles.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.name | default('?') }}"
+  when:
+    - oracle_patch_apply_enabled | bool
+    - oracle_patch_run_datapatch | bool
+    - oracle_patch_target == 'db'
+    - not (item.skipped | default(false))
+    - "'PRIMARY|' in (item.stdout | default(''))"
+    - "'PRIMARY|READ WRITE' not in (item.stdout | default(''))"
 
 - name: Run datapatch for patched DB homes
   ansible.builtin.shell: |
@@ -993,3 +850,7 @@
     - (_patch_missing_targets | length > 0) or ((_patch_dual_switch_targets | default([]) | length) > 0)
     - not (item.skipped | default(false))
     - "'PRIMARY|READ WRITE' in (item.stdout | default(''))"
+
+- name: Record successful patch-site play completion
+  ansible.builtin.set_fact:
+    oracle_patch_play_completed: true

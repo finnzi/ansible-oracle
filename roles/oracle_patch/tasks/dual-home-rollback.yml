@@ -1,0 +1,74 @@
+---
+# Restore the pre-cutover Restart home, SPFILE/password-file metadata,
+# listener home, and database service state after a failed dual-home switch.
+
+- name: Roll back Restart metadata and start previous dual-home
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
+    db={{ item.item.restart_db_name | quote }}
+    listener="LISTENER_{{ item.item.name | upper }}"
+    meta={{ item.stdout | default('') | quote }}
+    home="$(printf '%s\n' "$meta" | awk -F= '$1 == "HOME" {print substr($0, index($0, "=") + 1); exit}')"
+    spfile="$(printf '%s\n' "$meta" | awk -F= '$1 == "SPFILE" {print substr($0, index($0, "=") + 1); exit}')"
+    pwfile="$(printf '%s\n' "$meta" | awk -F= '$1 == "PWFILE" {print substr($0, index($0, "=") + 1); exit}')"
+    running="$(printf '%s\n' "$meta" | awk -F= '$1 == "RUNNING" {print substr($0, index($0, "=") + 1); exit}')"
+    lhome="$(printf '%s\n' "$meta" | awk -F= '$1 == "LISTENER_HOME" {print substr($0, index($0, "=") + 1); exit}')"
+    errors=0
+    if [ -z "$home" ]; then
+      echo "ROLLBACK_MISSING_HOME db=${db}" >&2
+      exit 1
+    fi
+    "${gi}/bin/srvctl" stop database -db "$db" -stopoption IMMEDIATE 2>/dev/null || true
+    if ! "${gi}/bin/srvctl" modify database -db "$db" -oraclehome "$home"; then
+      echo "ROLLBACK_HOME_FAILED db=${db} home=${home}" >&2
+      errors=1
+    else
+      echo "ROLLBACK_HOME db=${db} home=${home}"
+    fi
+    if [ -n "$spfile" ]; then
+      if ! "${gi}/bin/srvctl" modify database -db "$db" -spfile "$spfile"; then
+        echo "ROLLBACK_SPFILE_FAILED db=${db} spfile=${spfile}" >&2
+        errors=1
+      else
+        echo "ROLLBACK_SPFILE db=${db} spfile=${spfile}"
+      fi
+    fi
+    if [ -n "$pwfile" ]; then
+      if ! "${gi}/bin/srvctl" modify database -db "$db" -pwfile "$pwfile"; then
+        echo "ROLLBACK_PWFILE_FAILED db=${db} pwfile=${pwfile}" >&2
+        errors=1
+      else
+        echo "ROLLBACK_PWFILE db=${db} pwfile=${pwfile}"
+      fi
+    fi
+    if [ -n "$lhome" ]; then
+      if ! "${gi}/bin/srvctl" modify listener -listener "$listener" -oraclehome "$lhome"; then
+        echo "ROLLBACK_LISTENER_FAILED listener=${listener} home=${lhome}" >&2
+        errors=1
+      else
+        echo "ROLLBACK_LISTENER listener=${listener} home=${lhome}"
+      fi
+    fi
+    if [ "${running:-0}" = "1" ]; then
+      start_out="$("${gi}/bin/srvctl" start database -db "$db" 2>&1)" || true
+      printf '%s\n' "$start_out"
+      if ! printf '%s\n' "$start_out" | grep -Eiq 'already running' \
+        && ! "${gi}/bin/srvctl" status database -db "$db" | grep -Eiq 'is running'; then
+        echo "ROLLBACK_START_FAILED db=${db}" >&2
+        errors=1
+      else
+        echo "ROLLBACK_STARTED db=${db}"
+      fi
+    fi
+    [ "$errors" -eq 0 ]
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _patch_dual_rollback
+  changed_when: "'ROLLBACK_' in (_patch_dual_rollback.stdout | default(''))"
+  failed_when: _patch_dual_rollback.rc != 0
+  loop: "{{ _patch_dual_rollback_meta.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item.restart_db_name }}"
+  when: not (item.skipped | default(false))

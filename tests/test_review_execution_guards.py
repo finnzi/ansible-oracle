@@ -46,6 +46,11 @@ def test_switchover_reenables_fsfo_only_when_it_was_enabled():
     assert "when: _dg_switchover_fsfo_was_enabled | default(false) | bool" in restore
     assert "Restore Fast-Start Failover after switchover attempt" in restore
     assert "Restore standby apply after switchover attempt" in restore
+    assert restore.index("Restore standby apply after switchover attempt") < restore.index(
+        "Restore Fast-Start Failover after switchover attempt"
+    )
+    assert "failed_when: false" not in restore
+    assert "APPLY_FAILED" in restore
     assert "\n  when: true\n" not in switchover
 
 
@@ -167,11 +172,15 @@ def test_lab_down_waits_for_domains_to_stop():
 def test_runtime_home_prefers_restart_registration():
     helper = _read("roles/oracle_common/tasks/resolve-runtime-home.yml")
     switchover = _read("roles/oracle_dataguard/tasks/switchover.yml")
+    network = _read("roles/oracle_network/tasks/main.yml")
 
     assert "oracle_runtime_home_fallback" in helper
     assert "Oracle home" in helper
     assert "resolve-runtime-home.yml" in switchover
     assert "_runtime_home_path" in switchover
+    assert "Resolve runtime listener Oracle home from Restart" in network
+    assert "_home_path" in network
+    assert "config listener" in network
 
 
 def test_listener_start_fails_closed_without_tns_token():
@@ -188,11 +197,15 @@ def test_relocate_spfile_home_copy_uses_sid():
     assert 'dest_spfile_home="${new_oh}/dbs/spfile${sid}.ora"' in script
     assert 'dest_pwfile_home="${new_oh}/dbs/orapw${sid}"' in script
     assert "SPFILE_DURABLE" in script
+    assert "PWFILE_MISSING" in script
     assert "copy_if_needed" in script
     assert not any(
         "copy_if_needed" in line and "|| true" in line
         for line in script.splitlines()
     )
+    missing = script.split("PWFILE_MISSING", 1)[1]
+    assert "exit 1" in missing.split("if [", 1)[0]
+    assert "continuing" not in script
 
 
 def test_upgrade_prepare_refuses_ancestor_paths_and_does_not_bounce_listener():
@@ -200,9 +213,11 @@ def test_upgrade_prepare_refuses_ancestor_paths_and_does_not_bounce_listener():
     deinstall = _read("roles/oracle_db_deinstall/tasks/main.yml")
     network_defaults = _read("roles/oracle_network/defaults/main.yml")
 
-    assert "Fail when target path is an ancestor of live Oracle trees" in prepare
+    assert "Fail when target path is not an allowlisted Oracle home leaf" in prepare
+    assert "Fail when target path overlaps live Oracle trees" in prepare
     assert "oracle_network_manage_listener: false" in prepare
-    assert "Fail when a deinstall target is an ancestor of a live Oracle tree" in deinstall
+    assert "Fail when a deinstall target is not an allowlisted Oracle home leaf" in deinstall
+    assert "Fail when a deinstall target overlaps a live Oracle tree" in deinstall
     assert "oracle_network_manage_listener: true" in network_defaults
 
 
@@ -215,22 +230,32 @@ def test_generic_patch_plays_are_serial_standby_first():
     assert "Converge Oracle DB home patch inventory (standby first)" in db_patch
     assert "hosts: standby" in db_patch
     assert db_patch.index("hosts: standby") < db_patch.index("hosts: primary")
-    assert db_patch.count("serial: 1") == 2
+    assert db_patch.count("serial: 1") == 3
+    assert db_patch.count("any_errors_fatal: true") == 3
+    assert "Refuse primary DB patch unless standby is available after apply" in db_patch
+    assert "assert-site-ready.yml" in db_patch
     assert "Converge Oracle Grid home patch inventory (standby first)" in grid_patch
     assert grid_patch.index("hosts: standby") < grid_patch.index("hosts: primary")
-    assert grid_patch.count("serial: 1") == 2
+    assert grid_patch.count("serial: 1") == 3
+    assert grid_patch.count("any_errors_fatal: true") == 3
+    assert "Refuse primary Grid patch unless standby Restart is available" in grid_patch
     assert "oracle_patch_allow_dataguard_concurrent: false" in defaults
     assert "Fail when generic apply would patch both Data Guard sites in one play" in tasks
 
 
 def test_dual_home_start_does_not_whitelist_prcr_1079():
     tasks = _read("roles/oracle_patch/tasks/main.yml")
-    start = tasks.split("Start DBs after dual-home Restart switch", 1)[1].split(
+    cutover = _read("roles/oracle_patch/tasks/dual-home-cutover.yml")
+    start = cutover.split("Start DBs after dual-home Restart switch", 1)[1].split(
         "- name:", 1
     )[0]
 
     assert "PRCR-1079" not in start
-    assert "Probe database is open after dual-home Restart switch" in tasks
+    assert "Probe database is open after dual-home Restart switch" in cutover
+    assert "Dual-home Restart cutover with rollback" in tasks
+    assert "include_tasks: dual-home-rollback.yml" in tasks
+    assert "|PHYSICAL STANDBY|" in cutover
+    assert "|READ WRITE" in cutover
 
 
 def test_password_file_is_copied_from_live_primary():
@@ -262,6 +287,9 @@ def test_acceptance_suite_fails_closed_when_estate_is_down():
     assert "def _skip_or_fail" in conftest
     assert "pytest.fail(message)" in conftest
     assert "pytest.skip(message)" in conftest
+    oracledb_fixture = conftest.split("def oracledb", 1)[1].split("def ", 1)[0]
+    assert "_skip_or_fail" in oracledb_fixture
+    assert 'pytest.skip("python-oracledb not installed' not in oracledb_fixture
 
 
 def test_estate_required_helper_is_opt_in(monkeypatch):
@@ -295,3 +323,31 @@ def test_estate_required_helper_is_opt_in(monkeypatch):
     monkeypatch.setenv("ORACLE_TEST_REQUIRE_LAB", "1")
     with pytest.raises(pytest.fail.Exception):
         suite_conftest._skip_or_fail("lab down")
+
+
+def test_storage_requires_dedicated_mounts_before_mkdir():
+    tasks = _read("roles/oracle_storage/tasks/main.yml")
+    defaults = _read("roles/oracle_storage/defaults/main.yml")
+    inventory = _read("inventory/group_vars/all.yml")
+
+    assert "oracle_storage_require_dedicated_mounts: true" in defaults
+    assert "oracle_storage_require_dedicated_mounts: false" in inventory
+    assert "Verify expected instance directories are dedicated mounts" in tasks
+    assert tasks.index(
+        "Verify expected instance directories are dedicated mounts"
+    ) < tasks.index("Ensure per-instance top-level directories exist")
+    assert "MOUNT_MISSING" in tasks
+
+
+def test_acceptance_restart_and_client_gaps_fail_closed():
+    restart = _read("tests/test_04_restart.py")
+    conftest = _read("tests/conftest.py")
+
+    assert "_skip_or_fail" in restart.split("def test_srvctl_status_or_honest_gap", 1)[1]
+    assert "_skip_or_fail" in restart.split(
+        "def test_restart_systemd_unit_starts_stack_after_monitor", 1
+    )[1]
+    assert "_skip_or_fail" in restart.split(
+        "def test_restart_can_stop_and_start_database", 1
+    )[1]
+    assert "_skip_or_fail" in conftest.split("def oracledb", 1)[1].split("def ", 1)[0]

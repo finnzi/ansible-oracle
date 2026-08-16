@@ -73,12 +73,15 @@ def _skip_or_fail(message, request=None):
 
 # ── Connection fixtures ────────────────────────────────────────────────
 @pytest.fixture(scope="session")
-def oracledb():
-    """Return the oracledb module, skipping if unavailable."""
+def oracledb(request):
+    """Return the oracledb module, failing closed in acceptance mode."""
     try:
         import oracledb  # noqa: F401
     except ImportError:
-        pytest.skip("python-oracledb not installed; run ./scripts/bootstrap-venv.sh")
+        _skip_or_fail(
+            "python-oracledb not installed; run ./scripts/bootstrap-venv.sh",
+            request,
+        )
     return oracledb
 
 
