@@ -6,6 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_MEDIA = [
@@ -395,11 +397,638 @@ def test_prepare_host_fedora_help_is_safe():
     assert "--skip-media-stage" in result.stdout
 
 
+def test_lab_down_help_is_safe_and_documents_shutdown_controls(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    virsh_invocations = tmp_path / "virsh-invocations.log"
+    write_fake_virsh(
+        bin_dir,
+        'printf "%s\\n" "$*" >> "${VIRSH_INVOCATIONS}"\nexit 99',
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--help",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "VIRSH_INVOCATIONS": str(virsh_invocations),
+        },
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--purge" in result.stdout
+    assert "--force" in result.stdout
+    assert "LAB_SHUTDOWN_TIMEOUT_SECONDS" in result.stdout
+    assert not virsh_invocations.exists()
+
+
 def test_prepare_host_fedora_rejects_unknown_options():
     result = run_lab_script("prepare-host-fedora.sh", "--bogus")
 
     assert result.returncode == 1
     assert "Unknown option: --bogus" in result.stderr
+
+
+def test_lab_down_times_out_without_destroying_domains(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    virsh_calls = tmp_path / "virsh-calls.log"
+    write_fake_virsh(
+        bin_dir,
+        """
+printf '%s\\n' "$*" >> "${VIRSH_CALL_LOG}"
+case "${3:-}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    printf 'running\\n'
+    ;;
+  shutdown)
+    exit 0
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+    (bin_dir / "sleep").write_text(
+        "#!/usr/bin/env bash\nexit 0\n", encoding="utf-8"
+    )
+    (bin_dir / "sleep").chmod(0o755)
+
+    result = run_lab_script(
+        "lab-down.sh",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_SHUTDOWN_TIMEOUT_SECONDS": "1",
+            "VIRSH_CALL_LOG": str(virsh_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode != 0, (
+        "lab-down unexpectedly succeeded; virsh calls:\\n" + "\\n".join(calls)
+    )
+    assert not any(" destroy " in call for call in calls), (
+        "lab-down invoked virsh destroy:\\n" + "\\n".join(calls)
+    )
+
+
+def test_lab_down_global_deadline_includes_discovery_before_waiting(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    clock = tmp_path / "epoch-clock"
+    clock.write_text("100\n", encoding="utf-8")
+    sleep_calls = tmp_path / "sleep-calls.log"
+
+    (bin_dir / "date").write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+if [ "${1:-}" = "+%s" ]; then
+  cat "${LAB_FAKE_CLOCK}"
+else
+  /bin/date "$@"
+fi
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "date").chmod(0o755)
+    write_fake_virsh(
+        bin_dir,
+        """
+case "${3:-}" in
+  dominfo)
+    now="$(<"${LAB_FAKE_CLOCK}")"
+    printf '%s\\n' "$((now + 1))" > "${LAB_FAKE_CLOCK}"
+    exit 0
+    ;;
+  domstate)
+    printf 'running\\n'
+    ;;
+  shutdown)
+    exit 0
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+    (bin_dir / "sleep").write_text(
+        """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${LAB_SLEEP_CALLS}"
+exit 0
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "sleep").chmod(0o755)
+
+    result = run_lab_script(
+        "lab-down.sh",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_FAKE_CLOCK": str(clock),
+            "LAB_SLEEP_CALLS": str(sleep_calls),
+            "LAB_SHUTDOWN_TIMEOUT_SECONDS": "1",
+        },
+    )
+
+    assert result.returncode != 0, result.stderr
+    assert not sleep_calls.exists(), (
+        "lab-down slept after the global deadline was exhausted:\\n"
+        + result.stderr
+    )
+
+
+def test_lab_down_starts_all_graceful_shutdowns_before_waiting(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    call_log = tmp_path / "lab-down-calls.log"
+    write_fake_virsh(
+        bin_dir,
+        """
+printf '%s\\n' "virsh $*" >> "${LAB_DOWN_CALL_LOG}"
+case "${3:-}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    printf 'running\\n'
+    ;;
+  shutdown)
+    exit 0
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+    (bin_dir / "sleep").write_text(
+        """#!/usr/bin/env bash
+printf '%s\n' "sleep $*" >> "${LAB_DOWN_CALL_LOG}"
+exit 0
+""",
+        encoding="utf-8",
+    )
+    (bin_dir / "sleep").chmod(0o755)
+
+    result = run_lab_script(
+        "lab-down.sh",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_SHUTDOWN_TIMEOUT_SECONDS": "1",
+            "LAB_DOWN_CALL_LOG": str(call_log),
+        },
+    )
+
+    calls = call_log.read_text(encoding="utf-8").splitlines()
+    shutdown_calls = [
+        (index, call)
+        for index, call in enumerate(calls)
+        if " shutdown ansible-oracle-lab-" in call
+    ]
+    expected_domains = {
+        "ansible-oracle-lab-superdb1",
+        "ansible-oracle-lab-superdb2",
+        "ansible-oracle-lab-observer",
+    }
+    assert result.returncode != 0
+    assert {call.split()[-1] for _, call in shutdown_calls} == expected_domains
+
+    first_wait = next(
+        index for index, call in enumerate(calls) if call.startswith("sleep ")
+    )
+    assert all(index < first_wait for index, _ in shutdown_calls), (
+        "graceful shutdowns were not all initiated before waiting:\\n"
+        + "\\n".join(calls)
+    )
+
+
+def test_lab_down_force_destroys_active_domains_without_waiting(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    virsh_calls = tmp_path / "virsh-calls.log"
+    destroyed_domains = tmp_path / "destroyed-domains.log"
+    sleep_calls = tmp_path / "sleep-calls.log"
+    write_fake_virsh(
+        bin_dir,
+        """
+printf '%s\n' "$*" >> "${VIRSH_CALL_LOG}"
+case "${3:-}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    if grep -qx "${4}" "${DESTROYED_DOMAINS}" 2>/dev/null; then
+      printf 'shut off\n'
+    else
+      printf 'running\n'
+    fi
+    ;;
+  destroy)
+    printf '%s\n' "${4}" >> "${DESTROYED_DOMAINS}"
+    exit 0
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+    (bin_dir / "sleep").write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"${SLEEP_CALL_LOG}\"\nexit 0\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "sleep").chmod(0o755)
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--force",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "VIRSH_CALL_LOG": str(virsh_calls),
+            "DESTROYED_DOMAINS": str(destroyed_domains),
+            "SLEEP_CALL_LOG": str(sleep_calls),
+        },
+    )
+
+    calls = (
+        virsh_calls.read_text(encoding="utf-8").splitlines()
+        if virsh_calls.exists()
+        else []
+    )
+    expected_domains = {
+        "ansible-oracle-lab-superdb1",
+        "ansible-oracle-lab-superdb2",
+        "ansible-oracle-lab-observer",
+    }
+    destroy_calls = [
+        call for call in calls if " destroy ansible-oracle-lab-" in call
+    ]
+
+    assert result.returncode == 0, result.stderr
+    assert {call.split()[-1] for call in destroy_calls} == expected_domains
+    assert not any(" shutdown " in call for call in calls)
+    assert not sleep_calls.exists() or sleep_calls.read_text(encoding="utf-8") == ""
+
+
+def test_lab_down_waits_for_graceful_shutdown_without_destroying(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state_dir = tmp_path / "domain-state"
+    state_dir.mkdir()
+    virsh_calls = tmp_path / "virsh-calls.log"
+    sleep_calls = tmp_path / "sleep-calls.log"
+    write_fake_virsh(
+        bin_dir,
+        """
+printf '%s\n' "$*" >> "${VIRSH_CALL_LOG}"
+case "${3:-}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    count_file="${DOMAIN_STATE_DIR}/${4}.count"
+    count=0
+    if [ -f "${count_file}" ]; then
+      count="$(<"${count_file}")"
+    fi
+    count=$((count + 1))
+    printf '%s\n' "${count}" > "${count_file}"
+    if [ "${count}" -lt 3 ]; then
+      printf 'running\n'
+    else
+      printf 'shut off\n'
+    fi
+    ;;
+  shutdown)
+    exit 0
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+    (bin_dir / "sleep").write_text(
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"${SLEEP_CALL_LOG}\"\nexit 0\n",
+        encoding="utf-8",
+    )
+    (bin_dir / "sleep").chmod(0o755)
+
+    result = run_lab_script(
+        "lab-down.sh",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_SHUTDOWN_TIMEOUT_SECONDS": "5",
+            "VIRSH_CALL_LOG": str(virsh_calls),
+            "DOMAIN_STATE_DIR": str(state_dir),
+            "SLEEP_CALL_LOG": str(sleep_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode == 0, result.stderr
+    assert sleep_calls.read_text(encoding="utf-8").splitlines()
+    assert not any(" destroy " in call for call in calls)
+
+
+def test_lab_down_shutdown_failure_is_visible_and_does_not_purge(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state_dir = tmp_path / "lab-state"
+    (state_dir / "vms").mkdir(parents=True)
+    (state_dir / "seed").mkdir()
+    marker = state_dir / "vms/keep-me.qcow2"
+    marker.write_text("fixture\n", encoding="utf-8")
+    virsh_calls = tmp_path / "virsh-calls.log"
+    write_fake_virsh(
+        bin_dir,
+        """
+printf '%s\n' "$*" >> "${VIRSH_CALL_LOG}"
+case "${3:-}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    if [ "${4}" = "ansible-oracle-lab-superdb1" ]; then
+      printf 'running\n'
+    else
+      printf 'shut off\n'
+    fi
+    ;;
+  shutdown)
+    if [ "${4}" = "ansible-oracle-lab-superdb1" ]; then
+      printf 'simulated virsh shutdown failure for %s\n' "${4}" >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--purge",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_STATE_DIR": str(state_dir),
+            "VIRSH_CALL_LOG": str(virsh_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode != 0
+    assert "simulated virsh shutdown failure" in result.stderr
+    assert "Lab down." not in result.stderr
+    assert not any(" destroy " in call for call in calls)
+    assert not any(" undefine " in call for call in calls)
+    assert marker.is_file()
+    assert (state_dir / "seed").is_dir()
+
+
+def test_lab_down_purge_undefine_failure_is_visible_and_does_not_cleanup(
+    tmp_path: Path,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state_dir = tmp_path / "lab-state"
+    vm_dir = state_dir / "vms"
+    seed_dir = state_dir / "seed"
+    vm_dir.mkdir(parents=True)
+    seed_dir.mkdir()
+    vm_marker = vm_dir / "must-survive.qcow2"
+    seed_marker = seed_dir / "must-survive.iso"
+    vm_marker.write_text("fixture\n", encoding="utf-8")
+    seed_marker.write_text("fixture\n", encoding="utf-8")
+    virsh_calls = tmp_path / "virsh-calls.log"
+    undefine_error = "simulated undefine failure"
+    write_fake_virsh(
+        bin_dir,
+        f"""
+printf '%s\\n' "$*" >> "${{VIRSH_CALL_LOG}}"
+case "${{3:-}}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    printf 'shut off\\n'
+    ;;
+  undefine)
+    printf '%s (%s)\\n' '{undefine_error}' "${{*:4}}" >&2
+    exit 1
+    ;;
+  net-info)
+    exit 0
+    ;;
+  net-destroy|net-undefine)
+    printf 'network cleanup must not run\\n' >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--purge",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_STATE_DIR": str(state_dir),
+            "VIRSH_CALL_LOG": str(virsh_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode != 0
+    assert undefine_error in result.stderr
+    assert "Lab down." not in result.stderr
+    expected_domains = {
+        "ansible-oracle-lab-superdb1",
+        "ansible-oracle-lab-superdb2",
+        "ansible-oracle-lab-observer",
+    }
+    for domain in expected_domains:
+        domain_undefines = [call for call in calls if f"undefine {domain} " in call]
+        assert len(domain_undefines) == 2
+    assert not any(" net-destroy " in call for call in calls)
+    assert not any(" net-undefine " in call for call in calls)
+    assert "Removing ansible-oracle block from /etc/hosts" not in result.stderr
+    assert vm_marker.is_file()
+    assert seed_marker.is_file()
+    assert vm_dir.is_dir()
+    assert seed_dir.is_dir()
+
+
+@pytest.mark.parametrize("args", [(), ("--purge",)])
+def test_lab_down_aborts_on_libvirt_connection_error_before_cleanup(
+    tmp_path: Path, args: tuple[str, ...]
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state_dir = tmp_path / "lab-state"
+    vm_dir = state_dir / "vms"
+    seed_dir = state_dir / "seed"
+    vm_dir.mkdir(parents=True)
+    seed_dir.mkdir()
+    vm_marker = vm_dir / "must-survive.qcow2"
+    seed_marker = seed_dir / "must-survive.iso"
+    vm_marker.write_text("fixture\n", encoding="utf-8")
+    seed_marker.write_text("fixture\n", encoding="utf-8")
+    virsh_calls = tmp_path / "virsh-calls.log"
+    connection_error = "error: failed to connect to libvirt: permission denied"
+    write_fake_virsh(
+        bin_dir,
+        f"""
+printf '%s\\n' "$*" >> "${{VIRSH_CALL_LOG}}"
+case "${{3:-}}" in
+  dominfo)
+    printf '%s\\n' '{connection_error}' >&2
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        *args,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_STATE_DIR": str(state_dir),
+            "VIRSH_CALL_LOG": str(virsh_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode != 0
+    assert connection_error in result.stderr
+    assert "Removing ansible-oracle block from /etc/hosts" not in result.stderr
+    assert not any(
+        any(operation in call for operation in ("shutdown", "destroy", "undefine", "net-"))
+        for call in calls
+    )
+    assert vm_marker.is_file()
+    assert seed_marker.is_file()
+    assert vm_dir.is_dir()
+    assert seed_dir.is_dir()
+
+
+def test_lab_down_purge_force_destroys_before_undefine_and_remove(tmp_path: Path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state_dir = tmp_path / "lab-state"
+    vm_dir = state_dir / "vms"
+    seed_dir = state_dir / "seed"
+    vm_dir.mkdir(parents=True)
+    seed_dir.mkdir()
+    vm_marker = vm_dir / "keep-until-undefine.qcow2"
+    seed_marker = seed_dir / "keep-until-undefine.iso"
+    vm_marker.write_text("fixture\n", encoding="utf-8")
+    seed_marker.write_text("fixture\n", encoding="utf-8")
+    virsh_calls = tmp_path / "virsh-calls.log"
+    destroyed_domains = tmp_path / "destroyed-domains.log"
+    write_fake_virsh(
+        bin_dir,
+        """
+printf '%s\n' "$*" >> "${VIRSH_CALL_LOG}"
+case "${3:-}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    if [ -f "${DESTROYED_DOMAINS}" ] && grep -Fxq "${4}" "${DESTROYED_DOMAINS}"; then
+      printf 'shut off\n'
+    else
+      printf 'running\n'
+    fi
+    ;;
+  destroy)
+    printf '%s\n' "${4}" >> "${DESTROYED_DOMAINS}"
+    ;;
+  undefine)
+    if [ -f "${VM_MARKER}" ] && [ -f "${SEED_MARKER}" ]; then
+      printf '%s\n' 'undefine-state-present' >> "${VIRSH_CALL_LOG}"
+    else
+      printf '%s\n' 'undefine-state-missing' >> "${VIRSH_CALL_LOG}"
+    fi
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--purge",
+        "--force",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_STATE_DIR": str(state_dir),
+            "VIRSH_CALL_LOG": str(virsh_calls),
+            "DESTROYED_DOMAINS": str(destroyed_domains),
+            "VM_MARKER": str(vm_marker),
+            "SEED_MARKER": str(seed_marker),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    expected_domains = {
+        "ansible-oracle-lab-superdb1",
+        "ansible-oracle-lab-superdb2",
+        "ansible-oracle-lab-observer",
+    }
+    destroy_indices = [
+        index for index, call in enumerate(calls) if " destroy ansible-oracle-lab-" in call
+    ]
+    undefine_indices = [
+        index for index, call in enumerate(calls) if " undefine ansible-oracle-lab-" in call
+    ]
+
+    assert result.returncode == 0, result.stderr
+    assert {calls[index].split()[-1] for index in destroy_indices} == expected_domains
+    assert len(undefine_indices) == len(expected_domains)
+    assert max(destroy_indices) < min(undefine_indices)
+    assert calls.count("undefine-state-present") == len(expected_domains)
+    assert not any(" shutdown " in call for call in calls)
+    assert not vm_dir.exists()
+    assert not seed_dir.exists()
 
 
 def test_prepare_host_fedora_installs_python_for_bootstrap():

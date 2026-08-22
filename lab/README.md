@@ -178,11 +178,20 @@ ssh-keygen -t ed25519 -f ~/.ssh/lab_oracle -N ''
 source .venv/bin/activate
 ansible-playbook playbooks/site.yml -e oracle_gi_install_enabled=true
 
-# Stop the VMs but keep disks.
+# Gracefully stop all VMs concurrently; wait up to the 10-minute global default.
 ./lab/scripts/lab-down.sh
 
-# Remove VMs, VM disks, seed ISOs, libvirt network, and /etc/hosts block.
+# Override the global shutdown timeout (seconds; must be a positive integer).
+LAB_SHUTDOWN_TIMEOUT_SECONDS=900 ./lab/scripts/lab-down.sh
+
+# Immediately destroy active VMs, without waiting for graceful shutdown.
+./lab/scripts/lab-down.sh --force
+
+# Gracefully stop the VMs, then remove VMs, disks, seed ISOs, network, and hosts.
 ./lab/scripts/lab-down.sh --purge
+
+# Immediately destroy active VMs, then remove the lab state and configuration.
+./lab/scripts/lab-down.sh --purge --force
 
 # Switch host aliases from standalone to Data Guard naming.
 ./lab/scripts/update-hosts.sh --dg
@@ -195,6 +204,14 @@ ansible-playbook playbooks/site.yml -e oracle_gi_install_enabled=true
 `inventory/hosts.example.yml` and writes a marked `/etc/hosts` block if direct
 write access or passwordless sudo is available. If not, it prints the block to
 add manually.
+
+`lab-down.sh` sends graceful shutdown requests to all active VMs before it
+waits. The default is one global 10-minute timeout; set
+`LAB_SHUTDOWN_TIMEOUT_SECONDS` to a different positive integer number of
+seconds. A timeout or shutdown failure exits nonzero and leaves the VMs, lab
+state, network, and `/etc/hosts` untouched. `--force` immediately destroys
+active VMs. `--purge` performs the graceful shutdown before removing lab state;
+`--purge --force` combines immediate destruction with removal.
 
 On first boot, `lab-up.sh` waits for both SSH and cloud-init. This is expected
 to take longer while the guest installs the packages required for the shared

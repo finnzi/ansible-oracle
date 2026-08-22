@@ -157,14 +157,19 @@ def test_e2e_helper_fails_when_pytest_fails():
     assert "WARN: pytest reported failures" not in helper
 
 
-def test_lab_down_waits_for_domains_to_stop():
-    down = _read("lab/scripts/lab-down.sh")
+def test_lab_up_waits_for_domains_to_finish_shutting_down():
     common = _read("lab/scripts/lib/common.sh")
     up = _read("lab/scripts/lab-up.sh")
 
-    assert "wait_for_domain_shutoff" in down
     assert "wait_for_domain_shutoff" in common
+    assert "wait_for_domain_shutoff" in up
     assert "in shutdown" in up or "shut off" in up
+
+
+def test_lab_up_renders_inventory_and_resizes_root_disk_strictly():
+    common = _read("lab/scripts/lib/common.sh")
+    up = _read("lab/scripts/lab-up.sh")
+
     assert "render_lab_inventory" in common or "vm_ip superdb1" in up
     assert "|| true" not in up.split("lab_ensure_root_disk_size")[1].split("\n")[0]
 
