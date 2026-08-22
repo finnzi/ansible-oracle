@@ -64,12 +64,17 @@ for svc in superdb1 superdb2 observer; do
   dominfo_output=""
   if dominfo_output="$(virsh_cmd dominfo "${name}" 2>&1)"; then
     domains+=("${name}")
-  elif printf '%s\n' "${dominfo_output}" | grep -Eqi \
-      "domain( .*)? not found|no domain with matching name|domain .*does not exist"; then
-    :
   else
-    warn "Unable to inspect ${name}: ${dominfo_output}"
-    dominfo_failed=true
+    list_output=""
+    if ! list_output="$(virsh_cmd list --all --name 2>&1)"; then
+      warn "Unable to inspect ${name}: ${dominfo_output}"
+      warn "Unable to list libvirt domains while checking ${name}: ${list_output}"
+      dominfo_failed=true
+    elif printf '%s\n' "${list_output}" | grep -Fqx "${name}"; then
+      warn "Unable to inspect ${name}: ${dominfo_output}"
+      warn "Libvirt lists ${name} despite the failed dominfo query"
+      dominfo_failed=true
+    fi
   fi
   if [ "${FORCE}" = false ]; then
     if lab_shutdown_deadline_expired "${shutdown_deadline}"; then
@@ -104,6 +109,10 @@ if [ "${FORCE}" = true ]; then
       force_pending+=("${name}")
     fi
   done
+
+  if [ "${force_failed}" = true ]; then
+    die "Lab force shutdown aborted: unable to establish the state of one or more lab domains"
+  fi
 
   for name in "${force_pending[@]}"; do
     log "Destroying ${name}"

@@ -429,6 +429,47 @@ def test_prepare_host_fedora_rejects_unknown_options():
     assert "Unknown option: --bogus" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("args", "timeout_value", "expected_error"),
+    [
+        ((), "0", "LAB_SHUTDOWN_TIMEOUT_SECONDS must be a positive integer"),
+        (
+            (),
+            "not-an-integer",
+            "LAB_SHUTDOWN_TIMEOUT_SECONDS must be a positive integer",
+        ),
+        (("--bogus",), "600", "Unknown option: --bogus"),
+    ],
+)
+def test_lab_down_rejects_invalid_controls_without_invoking_virsh(
+    tmp_path: Path,
+    args: tuple[str, ...],
+    timeout_value: str,
+    expected_error: str,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    virsh_invocations = tmp_path / "virsh-invocations.log"
+    write_fake_virsh(
+        bin_dir,
+        'printf "%s\\n" "$*" >> "${VIRSH_INVOCATIONS}"\nexit 0',
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        *args,
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_SHUTDOWN_TIMEOUT_SECONDS": timeout_value,
+            "VIRSH_INVOCATIONS": str(virsh_invocations),
+        },
+    )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert not virsh_invocations.exists()
+
+
 def test_lab_down_times_out_without_destroying_domains(tmp_path: Path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -687,6 +728,109 @@ esac
     assert not sleep_calls.exists() or sleep_calls.read_text(encoding="utf-8") == ""
 
 
+def test_lab_down_force_aborts_before_destroy_when_state_preflight_fails(
+    tmp_path: Path,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    virsh_calls = tmp_path / "virsh-calls.log"
+    state_error = "simulated domstate failure for ansible-oracle-lab-superdb1"
+    write_fake_virsh(
+        bin_dir,
+        f"""
+printf '%s\n' "$*" >> "${{VIRSH_CALL_LOG}}"
+case "${{3:-}}" in
+  dominfo)
+    exit 0
+    ;;
+  domstate)
+    if [ "${{4}}" = "ansible-oracle-lab-superdb1" ]; then
+      printf '%s\n' '{state_error}' >&2
+      exit 1
+    fi
+    printf 'running\n'
+    ;;
+  destroy)
+    printf 'unexpected destroy\n' >&2
+    exit 99
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--force",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "VIRSH_CALL_LOG": str(virsh_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode != 0
+    assert state_error in result.stderr
+    assert not any(" destroy " in call for call in calls)
+
+
+def test_lab_down_treats_generic_missing_domain_as_absent_when_list_confirms_it(
+    tmp_path: Path,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    virsh_calls = tmp_path / "virsh-calls.log"
+    missing_error = "error: failed to get domain 'ansible-oracle-lab-superdb1'"
+    write_fake_virsh(
+        bin_dir,
+        f"""
+printf '%s\n' "$*" >> "${{VIRSH_CALL_LOG}}"
+case "${{3:-}}" in
+  dominfo)
+    if [ "${{4}}" = "ansible-oracle-lab-superdb1" ]; then
+      printf '%s\n' '{missing_error}' >&2
+      exit 1
+    fi
+    exit 0
+    ;;
+  list)
+    printf '%s\n' \\
+      ansible-oracle-lab-superdb2 \\
+      ansible-oracle-lab-observer
+    ;;
+  domstate)
+    printf 'shut off\n'
+    ;;
+  net-info)
+    exit 1
+    ;;
+  *)
+    exit 0
+    ;;
+esac
+""",
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "VIRSH_CALL_LOG": str(virsh_calls),
+        },
+    )
+
+    calls = virsh_calls.read_text(encoding="utf-8").splitlines()
+    assert result.returncode == 0, result.stderr
+    assert "Unable to inspect" not in result.stderr
+    assert any(" list --all --name" in call for call in calls)
+    assert not any(" shutdown " in call or " destroy " in call for call in calls)
+
+
 def test_lab_down_waits_for_graceful_shutdown_without_destroying(tmp_path: Path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -914,6 +1058,10 @@ case "${{3:-}}" in
     printf '%s\\n' '{connection_error}' >&2
     exit 1
     ;;
+  list)
+    printf '%s\\n' '{connection_error}' >&2
+    exit 1
+    ;;
   *)
     exit 0
     ;;
@@ -945,7 +1093,10 @@ esac
     assert seed_dir.is_dir()
 
 
-def test_lab_down_purge_force_destroys_before_undefine_and_remove(tmp_path: Path):
+@pytest.mark.parametrize("args", [("--purge", "--force"), ("--force", "--purge")])
+def test_lab_down_purge_force_destroys_before_undefine_and_remove(
+    tmp_path: Path, args: tuple[str, ...]
+):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     state_dir = tmp_path / "lab-state"
@@ -996,8 +1147,7 @@ esac
 
     result = run_lab_script(
         "lab-down.sh",
-        "--purge",
-        "--force",
+        *args,
         env={
             "PATH": f"{bin_dir}:{os.environ['PATH']}",
             "LAB_STATE_DIR": str(state_dir),
