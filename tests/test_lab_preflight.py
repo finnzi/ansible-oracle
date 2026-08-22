@@ -470,6 +470,47 @@ def test_lab_down_rejects_invalid_controls_without_invoking_virsh(
     assert not virsh_invocations.exists()
 
 
+def test_lab_down_rejects_option_like_lab_name_before_virsh_or_cleanup(
+    tmp_path: Path,
+):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    state_dir = tmp_path / "lab-state"
+    vm_dir = state_dir / "vms"
+    seed_dir = state_dir / "seed"
+    vm_dir.mkdir(parents=True)
+    seed_dir.mkdir()
+    vm_marker = vm_dir / "must-survive.qcow2"
+    seed_marker = seed_dir / "must-survive.iso"
+    vm_marker.write_text("fixture\n", encoding="utf-8")
+    seed_marker.write_text("fixture\n", encoding="utf-8")
+    virsh_invocations = tmp_path / "virsh-invocations.log"
+    write_fake_virsh(
+        bin_dir,
+        'printf "%s\\n" "$*" >> "${VIRSH_INVOCATIONS}"\nexit 99',
+    )
+
+    result = run_lab_script(
+        "lab-down.sh",
+        "--purge",
+        "--force",
+        env={
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "LAB_NAME": "-foo",
+            "LAB_STATE_DIR": str(state_dir),
+            "VIRSH_INVOCATIONS": str(virsh_invocations),
+        },
+    )
+
+    assert result.returncode != 0
+    assert "Invalid LAB_NAME" in result.stderr
+    assert not virsh_invocations.exists()
+    assert vm_marker.is_file()
+    assert seed_marker.is_file()
+    assert vm_dir.is_dir()
+    assert seed_dir.is_dir()
+
+
 def test_lab_down_times_out_without_destroying_domains(tmp_path: Path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

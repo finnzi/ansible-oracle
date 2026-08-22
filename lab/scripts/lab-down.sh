@@ -35,6 +35,10 @@ for arg in "$@"; do
   esac
 done
 
+if [[ -z "${LAB_NAME}" || "${LAB_NAME}" == -* || ! "${LAB_NAME}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  die "Invalid LAB_NAME: must be non-empty, must not start with '-', and may contain only ASCII letters, digits, '.', '_', or '-' (got: ${LAB_NAME:-<empty>})"
+fi
+
 require_cmd virsh
 
 if ! lab_is_positive_integer "${LAB_SHUTDOWN_TIMEOUT_SECONDS}"; then
@@ -70,7 +74,7 @@ for svc in superdb1 superdb2 observer; do
       warn "Unable to inspect ${name}: ${dominfo_output}"
       warn "Unable to list libvirt domains while checking ${name}: ${list_output}"
       dominfo_failed=true
-    elif printf '%s\n' "${list_output}" | grep -Fqx "${name}"; then
+    elif printf '%s\n' "${list_output}" | grep -Fqx -- "${name}"; then
       warn "Unable to inspect ${name}: ${dominfo_output}"
       warn "Libvirt lists ${name} despite the failed dominfo query"
       dominfo_failed=true
