@@ -208,13 +208,13 @@
     _dg_primary_live_state_line: >-
       {{
         _dg_live_db_state_probe.stdout_lines
-        | select('match', '^LIVE_DB_STATE=' ~ _dg_primary_unique_name ~ '\\|')
+        | select('match', '^LIVE_DB_STATE=' ~ _dg_primary_unique_name ~ '[|]')
         | list | first | default('')
       }}
     _dg_standby_live_state_line: >-
       {{
         _dg_live_db_state_probe.stdout_lines
-        | select('match', '^LIVE_DB_STATE=' ~ _dg_standby_unique_name ~ '\\|')
+        | select('match', '^LIVE_DB_STATE=' ~ _dg_standby_unique_name ~ '[|]')
         | list | first | default('')
       }}
 

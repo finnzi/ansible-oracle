@@ -170,7 +170,7 @@ def test_restart_registration_uses_supported_srvctl_syntax():
     assert "'PRIMARY|READ WRITE'" in register_tasks
     assert "'PHYSICAL STANDBY|READ ONLY WITH APPLY'" in register_tasks
     assert "Reconcile standby database Restart configuration" in standby_tasks
-    assert "-role {{ _dg_standby_restart_role }}" in standby_tasks
+    assert '-role "{{ _dg_standby_restart_role }}"' in standby_tasks
     assert "_dg_standby_live_role" in standby_tasks
     assert "_dg_standby_restart_startoption" in standby_tasks
     assert "-policy AUTOMATIC" in standby_tasks

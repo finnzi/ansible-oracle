@@ -252,7 +252,8 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "'NOT_REGISTERED' in (_dg_standby_registered_status_before.stdout | default(''))" in dataguard_duplicate_standby
     assert "oracle_dataguard_configure_broker | default(false) | bool" in dataguard_duplicate_standby
     assert "STARTUP MOUNT" in dataguard_duplicate_standby
-    assert "-role {{ _dg_standby_restart_role }}" in dataguard_duplicate_standby
+    assert '-role "{{ _dg_standby_restart_role }}"' in dataguard_duplicate_standby
+    assert "_dg_standby_live_role | replace(' ', '_')" in dataguard_duplicate_standby
     assert "Read standby Restart database resource profile" in dataguard_duplicate_standby
     assert "_dg_standby_crs_db_exists" in dataguard_duplicate_standby
     assert "_dg_standby_srvctl_db_usable" in dataguard_duplicate_standby
@@ -275,6 +276,23 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "_dg_standby_live_role" in dataguard_duplicate_standby
     assert "_dg_standby_restart_startoption" in dataguard_duplicate_standby
     assert "Fail closed when standby role or open mode is unknown" in dataguard_duplicate_standby
+    assert "Resolve normalized live standby state line" in dataguard_duplicate_standby
+    assert "Resolve normalized final standby state line" in dataguard_duplicate_standby
+    assert "stdout_lines" in dataguard_duplicate_standby
+    assert "| map('trim')" in dataguard_duplicate_standby
+    assert "| regex_search(" not in dataguard_duplicate_standby
+    assert "Fail closed when final standby role or open mode is unknown" in dataguard_duplicate_standby
+    assert "_dg_standby_live_state_lines | length == 1" in dataguard_duplicate_standby
+    assert "_dg_standby_final_state_lines | length == 1" in dataguard_duplicate_standby
+    assert "export ORACLE_HOME={{ _dg_home_path }}" in dataguard_duplicate_standby.split(
+        "Register physical standby database with Oracle Restart", 1
+    )[1].split("- name:", 1)[0]
+    assert '-role "{{ _dg_standby_restart_role }}"' in dataguard_duplicate_standby
+    standby_modify = dataguard_duplicate_standby.split(
+        "Reconcile standby database Restart configuration", 1
+    )[1].split("- name:", 1)[0]
+    assert "environment:" in standby_modify
+    assert 'ORACLE_HOME: "{{ _dg_home_path }}"' in standby_modify
     assert "ALTER DATABASE FLASHBACK ON" in dataguard_flashback
     assert "SHUTDOWN ABORT" in dataguard_flashback
     assert "replace('ORA-01109', '')" in dataguard_flashback
@@ -295,6 +313,8 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     )
     assert "Add missing standby to existing Data Guard broker configuration" in dataguard_configure_broker
     assert "_dg_standby_unique_name not in (_dg_broker_show_before.stdout | default(''))" in dataguard_configure_broker
+    assert "~ '[|]'" in dataguard_configure_broker
+    assert "~ '\\\\|'" not in dataguard_configure_broker
     assert "GRANT SYSDG TO" in dataguard_configure_broker
     assert "Validate observer SYSDG account can inspect broker" in dataguard_configure_broker
     assert "CREATE CONFIGURATION" in dataguard_configure_broker
