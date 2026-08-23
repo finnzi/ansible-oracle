@@ -131,13 +131,25 @@
 - name: Check registered physical standby before auxiliary startup
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
+    db_home={{ _dg_home_path | quote }}
+    output="$(ORACLE_HOME="$db_home" "$db_home/bin/srvctl" status database \
+      -db {{ _dg_standby_unique_name | quote }} 2>&1)"
+    rc=$?
+    printf '%s\n' "$output"
+    if [ "$rc" -eq 0 ]; then
+      exit 0
+    fi
+    if printf '%s\n' "$output" | grep -Eq 'PRCD-1120|PRCR-1001'; then
+      echo NOT_REGISTERED
+      exit 0
+    fi
+    exit "$rc"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_registered_standby_status
   changed_when: false
-  failed_when: false
+  failed_when: _dg_registered_standby_status.rc != 0
 
 - name: Start registered physical standby instead of auxiliary NOMOUNT
   ansible.builtin.shell: |
@@ -271,3 +283,21 @@
     'ORA-' in (_dg_standby_static_connect.stdout | default('')) or
     'SP2-' in (_dg_standby_static_connect.stdout | default(''))
   no_log: true
+
+# This in-memory fact is deliberately recorded only when this play started a
+# previously down, unregistered instance from the managed auxiliary pfile.
+# ORA-01507 alone is not proof that a target is safe to overwrite: an existing
+# database can also be unmounted.
+- name: Record freshly prepared RMAN auxiliary
+  ansible.builtin.set_fact:
+    _dg_fresh_auxiliary_names: >-
+      {{
+        ((_dg_fresh_auxiliary_names | default([])) + [_dg_standby_unique_name])
+        | unique
+        | list
+      }}
+  when:
+    - _dg_standby_start.changed | default(false)
+    - _dg_standby_pmon.rc != 0
+    - "'NOT_REGISTERED' in (_dg_registered_standby_status.stdout | default(''))"
+    - "'STARTED' in (_dg_standby_static_connect.stdout | default(''))"

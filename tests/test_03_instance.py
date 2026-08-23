@@ -113,6 +113,13 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     )
     assert "if dg_mode else ('standby' not in group_names" not in network_tasks
     assert "Ensure guest /etc/hosts has the lab host aliases" in network_tasks
+    assert 'mktemp "${hosts_file}.ansible-oracle.XXXXXX"' in network_tasks
+    assert "trap 'rm -f -- \"$tmp\"' EXIT" in network_tasks
+    assert "if ! awk" in network_tasks
+    assert 'mv -f -- "$tmp" "$hosts_file"' in network_tasks
+    assert "Inspect cloud-init hosts template" in network_tasks
+    assert "/etc/cloud/templates/hosts.redhat.tmpl" in network_tasks
+    assert "_guest_hosts_managed_files" in network_tasks
     assert "oracle_network_open_firewall: false" in network_defaults
     assert "oracle_lab_host_map_mode: standalone" in network_defaults
     assert "oracle_lab_listener_vips: []" in network_defaults

@@ -17,7 +17,7 @@
     set -o pipefail
     gi={{ oracle_gi_home | default('/grid/19c/gi_home1') | quote }}
     target={{ oracle_patch_target | default('db') | quote }}
-    if [ ! -x "${gi}/bin/crsctl" ] || [ ! -x "${gi}/bin/srvctl" ]; then
+    if [ ! -x "${gi}/bin/crsctl" ]; then
       echo "SITE_UNAVAILABLE: Restart tools missing under ${gi}" >&2
       exit 1
     fi
@@ -31,23 +31,28 @@
       echo SITE_READY
       exit 0
     fi
-    dbs="$("${gi}/bin/srvctl" config database)" || {
+    resources="$("${gi}/bin/crsctl" status resource -w 'TYPE = ora.database.type' -p)" || {
       echo "SITE_UNAVAILABLE: could not list Restart databases" >&2
+      exit 1
+    }
+    dbs="$(printf '%s\n' "$resources" | awk -F= '$1 == "DB_UNIQUE_NAME" { print $2 }')"
+    [ -n "$dbs" ] || {
+      echo "SITE_UNAVAILABLE: no Restart databases are registered" >&2
       exit 1
     }
     while IFS= read -r db; do
       [ -n "$db" ] || continue
-      status="$("${gi}/bin/srvctl" status database -db "$db")" || true
+      status="$("${gi}/bin/crsctl" status resource "ora.${db}.db" -t)" || true
       printf '%s\n' "$status"
-      printf '%s\n' "$status" | grep -Eiq 'is running' || {
+      printf '%s\n' "$status" | grep -Eq 'ONLINE[[:space:]]+ONLINE' || {
         echo "SITE_UNAVAILABLE: database ${db} is not running" >&2
         exit 1
       }
-      cfg="$("${gi}/bin/srvctl" config database -db "$db")" || exit 1
-      home="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Oracle home" {
+      cfg="$("${gi}/bin/crsctl" status resource "ora.${db}.db" -p)" || exit 1
+      home="$(printf '%s\n' "$cfg" | awk -F= '$1 == "ORACLE_HOME" {
         gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit
       }')"
-      sid="$(printf '%s\n' "$cfg" | awk -F': ' '$1 == "Database instance" {
+      sid="$(printf '%s\n' "$cfg" | awk -F= '$1 == "USR_ORA_INST_NAME" {
         gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit
       }')"
       [ -n "$home" ] && [ -n "$sid" ] || {

@@ -346,37 +346,49 @@
   ansible.builtin.shell: |
     set -o pipefail
     oh={{ item.item.home_path | quote }}
-    if [ ! -d "$oh" ]; then
-      echo ABSENT
+    fallback={{ item.item.current_home_path | quote }}
+    inventory={{ (oracle_inventory_loc | default('/home/oracle/oraInventory')) | quote }}/ContentsXML/inventory.xml
+    log=/tmp/ansible-oracle-detach-{{ item.item.name }}-{{ item.item.home_suffix }}.log
+
+    # A previous interrupted rebuild can remove the target tree while leaving
+    # its central-inventory HOME entry behind. Inspect inventory independently
+    # of the directory so the active home's OUI can repair that state.
+    if [ ! -f "$inventory" ] || ! grep -Fq "LOC=\"$oh\"" "$inventory"; then
+      echo NOT_REGISTERED
       exit 0
     fi
-    # Prefer OUI detach when available (updates oraInventory without full deinstall tool).
+
     if [ -x "$oh/oui/bin/runInstaller" ]; then
-      if "$oh/oui/bin/runInstaller" -silent -detachHome \
-           "ORACLE_HOME=$oh" -local \
-           >/tmp/ansible-oracle-detach-{{ item.item.home_suffix }}.log 2>&1; then
-        echo DETACHED
-      else
-        # Home may already be detached or half-broken; continue to directory remove.
-        echo DETACH_BEST_EFFORT
-      fi
+      runner="$oh/oui/bin/runInstaller"
+    elif [ -n "$fallback" ] && [ "$fallback" != "$oh" ] &&
+         [ -x "$fallback/oui/bin/runInstaller" ]; then
+      runner="$fallback/oui/bin/runInstaller"
     else
-      echo NO_RUNINSTALLER
+      echo "DETACH_FAILED: no usable OUI for registered home $oh" >&2
+      exit 1
     fi
+
+    if ! "$runner" -silent -detachHome "ORACLE_HOME=$oh" -local >"$log" 2>&1; then
+      tail -80 "$log" >&2 || true
+      echo "DETACH_FAILED: OUI could not detach registered home $oh" >&2
+      exit 1
+    fi
+    if grep -Fq "LOC=\"$oh\"" "$inventory"; then
+      tail -80 "$log" >&2 || true
+      echo "DETACH_FAILED: $oh remains in $inventory" >&2
+      exit 1
+    fi
+    echo DETACHED
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _deinstall_detach
-  changed_when: >-
-    'DETACHED' in (_deinstall_detach.stdout | default('')) or
-    'DETACH_BEST_EFFORT' in (_deinstall_detach.stdout | default('')) or
-    'NO_RUNINSTALLER' in (_deinstall_detach.stdout | default(''))
+  changed_when: "'DETACHED' in (_deinstall_detach.stdout | default(''))"
+  failed_when: _deinstall_detach.rc != 0
   loop: "{{ _deinstall_stats.results | default([]) }}"
   loop_control:
     label: "{{ item.item.home_path }}"
-  when:
-    - oracle_db_deinstall_execute | bool
-    - item.stat.exists | default(false)
+  when: oracle_db_deinstall_execute | bool
 
 # Dual-home rebuilds delete $OH entirely. spfile/pfile/orapw often live under
 # $OH/dbs (or Restart still points there even after a home switch). Rescue them

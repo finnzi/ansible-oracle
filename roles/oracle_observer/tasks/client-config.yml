@@ -7,9 +7,26 @@
     group: "{{ oracle_group }}"
     mode: "0755"
 
+- name: Inspect observer cloud-init hosts template
+  ansible.builtin.stat:
+    path: /etc/cloud/templates/hosts.redhat.tmpl
+  register: _observer_hosts_cloud_template
+
+- name: Resolve observer hosts files managed across reboot
+  ansible.builtin.set_fact:
+    _observer_hosts_managed_files: >-
+      {{
+        ['/etc/hosts']
+        + (
+          ['/etc/cloud/templates/hosts.redhat.tmpl']
+          if (_observer_hosts_cloud_template.stat.exists | default(false))
+          else []
+        )
+      }}
+
 - name: Ensure client can resolve lab Data Guard host aliases
   ansible.builtin.blockinfile:
-    path: /etc/hosts
+    path: "{{ observer_hosts_file }}"
     marker: "# {mark} ANSIBLE-ORACLE DATAGUARD HOSTS"
     block: |
       {% for host in oracle_lab_guest_hosts | default([]) %}
@@ -20,6 +37,10 @@
     owner: root
     group: root
     mode: "0644"
+  loop: "{{ _observer_hosts_managed_files }}"
+  loop_control:
+    loop_var: observer_hosts_file
+    label: "{{ observer_hosts_file }}"
 
 - name: Write native client aliases and broker aliases
   ansible.builtin.template:

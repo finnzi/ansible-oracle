@@ -14,11 +14,12 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/spfile{{ inst.name }}.ora
     _dg_standby_pwfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
+    _dg_gi_home_path: "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
 
 - name: Check for conflicting standalone Restart registration on standby
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ inst.name }} 2>&1 || echo NOT_REGISTERED
+    "{{ _dg_home_path }}/bin/srvctl" config database -db {{ inst.name }} 2>&1 || echo NOT_REGISTERED
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -30,7 +31,7 @@
 - name: Remove conflicting standalone Restart registration on standby
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" remove database -db {{ inst.name }} -force
+    "{{ _dg_home_path }}/bin/srvctl" remove database -db {{ inst.name }} -force
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -44,18 +45,31 @@
 - name: Check registered standby database status before duplicate
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
+    db_home={{ _dg_home_path | quote }}
+    output="$(ORACLE_HOME="$db_home" "$db_home/bin/srvctl" status database \
+      -db {{ _dg_standby_unique_name | quote }} 2>&1)"
+    rc=$?
+    printf '%s\n' "$output"
+    if [ "$rc" -eq 0 ]; then
+      exit 0
+    fi
+    if printf '%s\n' "$output" | grep -Eq 'PRCD-1120|PRCR-1001'; then
+      echo NOT_REGISTERED
+      exit 0
+    fi
+    exit "$rc"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_standby_registered_status_before
   changed_when: false
-  failed_when: false
+  failed_when: _dg_standby_registered_status_before.rc != 0
 
 - name: Start registered physical standby before role probe
   ansible.builtin.shell: |
     set -o pipefail
-    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    gi_home="{{ _dg_gi_home_path }}"
+    db_home="{{ _dg_home_path }}"
     changed=0
 
     listener_status="$("$gi_home/bin/srvctl" status listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || true)"
@@ -65,12 +79,17 @@
       changed=1
     fi
 
-    db_status="$("$gi_home/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || true)"
+    db_status="$("$db_home/bin/srvctl" status database -db {{ _dg_standby_unique_name }} 2>&1 || true)"
     printf '%s\n' "$db_status"
     if pgrep -x "ora_pmon_{{ inst.name }}" >/dev/null 2>&1; then
       printf '%s\n' DATABASE_ALREADY_RUNNING_OUTSIDE_RESTART
     elif ! printf '%s\n' "$db_status" | grep -Eiq 'is running|running on'; then
-      "$gi_home/bin/srvctl" start database -db {{ _dg_standby_unique_name }} -startoption MOUNT
+      start_option=MOUNT
+      if "$db_home/bin/srvctl" config database -db {{ _dg_standby_unique_name }} 2>/dev/null |
+         grep -Eiq '^Database role:[[:space:]]*PRIMARY'; then
+        start_option=OPEN
+      fi
+      "$db_home/bin/srvctl" start database -db {{ _dg_standby_unique_name }} -startoption "$start_option"
       changed=1
     fi
 
@@ -93,17 +112,41 @@
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
     export ORACLE_SID={{ inst.name }}
-    "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    fresh_auxiliary_prepared={{ 'true' if _dg_standby_unique_name in (_dg_fresh_auxiliary_names | default([])) else 'false' }}
+    output="$("$ORACLE_HOME/bin/sqlplus" -L -S / as sysdba <<'SQL'
+    WHENEVER SQLERROR EXIT FAILURE
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
-    SELECT database_role || '|' || open_mode || '|' || db_unique_name FROM v$database;
+    SELECT 'DG_STATE=' || database_role || '|' || open_mode || '|' || db_unique_name FROM v$database;
     EXIT;
     SQL
+    )"
+    sql_rc=$?
+    printf '%s\n' "$output"
+
+    if printf '%s\n' "$output" |
+       grep -Eq '^[[:space:]]*DG_STATE=(PRIMARY|PHYSICAL STANDBY)\|[^|]+\|[[:alnum:]_$#]+[[:space:]]*$'; then
+      exit 0
+    fi
+
+    ora_codes="$(printf '%s\n' "$output" | grep -Eo 'ORA-[0-9]+' | sort -u || true)"
+    unexpected="$(printf '%s\n' "$ora_codes" | grep -Ev '^ORA-01507$' || true)"
+    if [ "$fresh_auxiliary_prepared" = true ] &&
+       [ -z "$unexpected" ] &&
+       printf '%s\n' "$ora_codes" | grep -Fxq 'ORA-01507'; then
+      # The freshly prepared RMAN auxiliary is deliberately NOMOUNT, so
+      # v$database does not exist yet. This is the sole safe duplicate state.
+      echo DG_STATE=ABSENT
+      exit 0
+    fi
+
+    echo "Standby role probe was neither a live member nor a NOMOUNT auxiliary explicitly prepared by this play (sqlplus rc=${sql_rc})" >&2
+    exit 1
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_standby_role_before
   changed_when: false
-  failed_when: false
+  failed_when: _dg_standby_role_before.rc != 0
 
 - name: Record whether duplicate target is already a live Data Guard member
   ansible.builtin.set_fact:
@@ -116,6 +159,43 @@
           _dg_standby_unique_name in (_dg_standby_role_before.stdout | default(''))
         )
       }}
+
+- name: Resolve live standby role and open mode after duplicate or promotion
+  ansible.builtin.set_fact:
+    _dg_standby_live_role: >-
+      {{
+        (
+          _dg_standby_role_before.stdout
+          | regex_search('(?m)^DG_STATE=([^|]+)\\|', '\\1')
+          | default([], true)
+          | first
+          | default('')
+        ) | trim | upper
+      }}
+    _dg_standby_live_open_mode: >-
+      {{
+        (
+          _dg_standby_role_before.stdout
+          | regex_search('(?m)^DG_STATE=[^|]+\\|([^|]+)\\|', '\\1')
+          | default([], true)
+          | first
+          | default('')
+        ) | trim | upper
+      }}
+  when: _dg_standby_is_live_member | bool
+
+- name: Fail closed when standby role or open mode is unknown
+  ansible.builtin.assert:
+    that:
+      - _dg_standby_live_role in ['PRIMARY', 'PHYSICAL STANDBY']
+      - >-
+        (_dg_standby_live_role == 'PRIMARY' and _dg_standby_live_open_mode == 'READ WRITE') or
+        (_dg_standby_live_role == 'PHYSICAL STANDBY' and _dg_standby_live_open_mode in ['MOUNTED', 'READ ONLY', 'READ ONLY WITH APPLY'])
+    fail_msg: >-
+      Standby candidate {{ _dg_standby_unique_name }} reported role={{ _dg_standby_live_role | default('unknown') }}
+      and open_mode={{ _dg_standby_live_open_mode | default('unknown') }}. Refusing to
+      force a promoted member back to PHYSICAL_STANDBY or infer an unsafe Restart start option.
+  when: _dg_standby_is_live_member | bool
 
 - name: Run RMAN active duplicate for physical standby
   ansible.builtin.shell: |
@@ -146,14 +226,14 @@
     - "'PHYSICAL STANDBY' not in (_dg_standby_role_before.stdout | default(''))"
     - not (_dg_standby_is_live_member | default(false) | bool)
 
-- name: Validate physical standby role after duplicate
+- name: Validate standby role after duplicate or preserve promoted primary
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
     export ORACLE_SID={{ inst.name }}
     "$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
-    SELECT database_role || '|' || open_mode FROM v$database;
+    SELECT 'DG_STATE=' || database_role || '|' || open_mode || '|' || db_unique_name FROM v$database;
     EXIT;
     SQL
   args: { executable: /bin/bash }
@@ -163,9 +243,51 @@
   changed_when: false
   failed_when: >-
     _dg_standby_role_after.rc != 0 or
-    'PHYSICAL STANDBY' not in (_dg_standby_role_after.stdout | default('')) or
     'ORA-' in (_dg_standby_role_after.stdout | default('')) or
-    'SP2-' in (_dg_standby_role_after.stdout | default(''))
+    'SP2-' in (_dg_standby_role_after.stdout | default('')) or
+    (
+      'DG_STATE=PHYSICAL STANDBY|' not in (_dg_standby_role_after.stdout | default('')) and
+      'DG_STATE=PRIMARY|READ WRITE|' not in (_dg_standby_role_after.stdout | default(''))
+    )
+
+- name: Resolve final standby Restart role and start option
+  ansible.builtin.set_fact:
+    _dg_standby_live_role: >-
+      {{
+        (
+          _dg_standby_role_after.stdout
+          | regex_search('(?m)^DG_STATE=([^|]+)\\|', '\\1')
+          | default([], true)
+          | first
+          | default('')
+        ) | trim | upper
+      }}
+    _dg_standby_live_open_mode: >-
+      {{
+        (
+          _dg_standby_role_after.stdout
+          | regex_search('(?m)^DG_STATE=[^|]+\\|([^|]+)\\|', '\\1')
+          | default([], true)
+          | first
+          | default('')
+        ) | trim | upper
+      }}
+    _dg_standby_restart_role: >-
+      {{
+        (
+          _dg_standby_role_after.stdout
+          | regex_search('(?m)^DG_STATE=([^|]+)\\|', '\\1')
+          | default([], true)
+          | first
+          | default('')
+        ) | trim | upper
+      }}
+    _dg_standby_restart_startoption: >-
+      {{
+        'open'
+        if 'DG_STATE=PRIMARY|READ WRITE|' in (_dg_standby_role_after.stdout | default(''))
+        else 'read only'
+      }}
 
 - name: Check standby spfile for Restart registration
   ansible.builtin.stat:
@@ -276,37 +398,10 @@
     'ORA-' in (_dg_standby_params.stdout | default('')) or
     'SP2-' in (_dg_standby_params.stdout | default(''))
 
-- name: Check local CSS status before standby Restart registration
-  ansible.builtin.shell: |
-    set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/crsctl" stat res ora.cssd -init 2>&1 || true
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _dg_standby_css_status
-  changed_when: false
-
-- name: Start local CSS before standby Restart registration
-  ansible.builtin.shell: |
-    set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/crsctl" start resource ora.cssd -init 2>&1
-  args: { executable: /bin/bash }
-  become: true
-  become_user: "{{ oracle_user }}"
-  register: _dg_standby_css_start
-  changed_when: "'CRS-2676' in (_dg_standby_css_start.stdout | default(''))"
-  failed_when: >-
-    _dg_standby_css_start.rc != 0 and
-    'CRS-5702' not in (_dg_standby_css_start.stdout | default('')) and
-    'already running' not in (_dg_standby_css_start.stdout | default('') | lower)
-  when:
-    - "'STATE=ONLINE' not in (_dg_standby_css_status.stdout | default(''))"
-    - "'ONLINE  ONLINE' not in (_dg_standby_css_status.stdout | default(''))"
-
 - name: Check standby Restart database registration
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
+    "{{ _dg_home_path }}/bin/srvctl" config database -db {{ _dg_standby_unique_name }} 2>&1 || echo NOT_REGISTERED
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -314,33 +409,115 @@
   changed_when: false
   failed_when: false
 
+- name: Read standby Restart database resource profile
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ _dg_gi_home_path }}/bin/crsctl" \
+      status resource ora.{{ _dg_standby_unique_name }}.db -p 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_crs_db
+  changed_when: false
+  failed_when: false
+
+- name: Resolve standby Restart database registration probes
+  ansible.builtin.set_fact:
+    _dg_standby_crs_db_exists: >-
+      {{
+        _dg_standby_crs_db.rc == 0 and
+        ('NAME=ora.' ~ _dg_standby_unique_name ~ '.db') in
+        (_dg_standby_crs_db.stdout | default(''))
+      }}
+    _dg_standby_srvctl_db_usable: >-
+      {{
+        _dg_standby_srvctl_db.rc == 0 and
+        'NOT_REGISTERED' not in (_dg_standby_srvctl_db.stdout | default('')) and
+        'PRCR-' not in (_dg_standby_srvctl_db.stdout | default('')) and
+        'PRCD-' not in (_dg_standby_srvctl_db.stdout | default(''))
+      }}
+    _dg_standby_crs_db_contract_ok: >-
+      {{
+        _dg_standby_crs_db.rc == 0 and
+        ('ROLE=' ~ _dg_standby_restart_role) in (_dg_standby_crs_db.stdout | default('')) and
+        'MANAGEMENT_POLICY=AUTOMATIC' in (_dg_standby_crs_db.stdout | default('')) and
+        ('usr_ora_open_mode=' ~ _dg_standby_restart_startoption | lower) in
+          ((_dg_standby_crs_db.stdout | default('')) | lower) and
+        'USR_ORA_STOP_MODE=immediate' in (_dg_standby_crs_db.stdout | default('')) and
+        'ENABLED=1' in (_dg_standby_crs_db.stdout | default(''))
+      }}
+
+- name: Fail when standby Restart registration cannot be reconciled safely
+  ansible.builtin.fail:
+    msg: >-
+      Standby Restart resource ora.{{ _dg_standby_unique_name }}.db exists,
+      but srvctl cannot inspect it and its read-only CRS profile does not match
+      the required live-role/AUTOMATIC/start-option contract. Refusing to
+      mutate an ora.* resource with crsctl; restore supported srvctl/CSS access
+      or remove and recreate the registration through srvctl.
+  when:
+    - _dg_standby_crs_db_exists | bool
+    - not (_dg_standby_srvctl_db_usable | bool)
+    - not (_dg_standby_crs_db_contract_ok | bool)
+
 - name: Register physical standby database with Oracle Restart
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" add database \
+    "{{ _dg_home_path }}/bin/srvctl" add database \
       -db {{ _dg_standby_unique_name }} \
       -oraclehome {{ _dg_home_path }} \
       -spfile {{ _dg_standby_spfile }} \
       -pwfile {{ _dg_standby_pwfile }} \
-      -role PHYSICAL_STANDBY \
+      -role {{ _dg_standby_restart_role }} \
+      -policy AUTOMATIC \
       -dbname {{ inst.name }} \
       -instance {{ inst.name }} \
-      -startoption MOUNT \
+      -startoption "{{ _dg_standby_restart_startoption }}" \
       -stopoption IMMEDIATE
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _dg_standby_srvctl_add_db
   changed_when: _dg_standby_srvctl_add_db.rc == 0
-  failed_when: >-
-    _dg_standby_srvctl_add_db.rc != 0 and
-    'already exists' not in (_dg_standby_srvctl_add_db.stdout | default(''))
-  when: "'NOT_REGISTERED' in (_dg_standby_srvctl_db.stdout | default(''))"
+  failed_when: _dg_standby_srvctl_add_db.rc != 0
+  when: not (_dg_standby_crs_db_exists | bool)
+
+# `srvctl add` only establishes the contract on first convergence. Broker
+# switchovers and older lab runs can leave an existing Restart registration
+# with the wrong role or start policy, so reconcile it through SRVCTL on every
+# run. The broker role later promotes the start option to read-only apply.
+- name: Reconcile standby database Restart configuration
+  ansible.builtin.command:
+    argv:
+      - "{{ _dg_home_path }}/bin/srvctl"
+      - modify
+      - database
+      - -db
+      - "{{ _dg_standby_unique_name }}"
+      - -role
+      - "{{ _dg_standby_restart_role }}"
+      - -policy
+      - AUTOMATIC
+      - -startoption
+      - "{{ _dg_standby_restart_startoption }}"
+      - -stopoption
+      - IMMEDIATE
+  become: true
+  become_user: "{{ oracle_user }}"
+  changed_when: true
+  when: >-
+    _dg_standby_srvctl_db_usable | bool and
+    (
+      ('database role: ' ~ _dg_standby_restart_role | lower) not in (_dg_standby_srvctl_db.stdout | default('') | lower) or
+      'Management policy: AUTOMATIC' not in (_dg_standby_srvctl_db.stdout | default('')) or
+      ('start options: ' ~ _dg_standby_restart_startoption | lower) not in (_dg_standby_srvctl_db.stdout | default('') | lower) or
+      'stop options: immediate' not in (_dg_standby_srvctl_db.stdout | default('') | lower)
+    )
 
 - name: Check standby listener Restart registration
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" config listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || echo NOT_REGISTERED
+    "{{ _dg_gi_home_path }}/bin/srvctl" config listener -listener LISTENER_{{ inst.name | upper }} 2>&1 || echo NOT_REGISTERED
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -351,7 +528,7 @@
 - name: Register standby listener with Oracle Restart
   ansible.builtin.shell: |
     set -o pipefail
-    "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl" add listener \
+    "{{ _dg_gi_home_path }}/bin/srvctl" add listener \
       -listener LISTENER_{{ inst.name | upper }} \
       -oraclehome {{ _dg_home_path }} \
       -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
@@ -365,19 +542,56 @@
     'already exists' not in (_dg_standby_srvctl_add_listener.stdout | default(''))
   when: "'NOT_REGISTERED' in (_dg_standby_srvctl_listener.stdout | default(''))"
 
+# `srvctl add` only handles the first registration. A rebuilt or switched
+# Oracle home can leave an existing listener pointed at the wrong home or port,
+# which prevents Restart from bringing it back cleanly after a guest boot.
+- name: Reconcile standby listener Restart configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home="{{ _dg_gi_home_path }}"
+    listener="LISTENER_{{ inst.name | upper }}"
+    config="$("$gi_home/bin/srvctl" config listener -listener "$listener" 2>&1)"
+    printf '%s\n' "$config"
+    if printf '%s\n' "$config" | grep -Fqx "Home: {{ _dg_home_path }}" &&
+       printf '%s\n' "$config" | grep -Eiq '^End points:[[:space:]]*TCP:{{ inst.listener_port | default(1521) }}([[:space:]]|$)'; then
+      echo LISTENER_CONTRACT_OK
+      exit 0
+    fi
+
+    "$gi_home/bin/srvctl" modify listener \
+      -listener "$listener" \
+      -oraclehome {{ _dg_home_path }} \
+      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+    echo LISTENER_CONTRACT_RECONCILED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_srvctl_reconcile_listener
+  changed_when: >-
+    'LISTENER_CONTRACT_RECONCILED' in
+    (_dg_standby_srvctl_reconcile_listener.stdout | default(''))
+  failed_when: _dg_standby_srvctl_reconcile_listener.rc != 0
+
 - name: Enable standby database and listener in Oracle Restart
   ansible.builtin.shell: |
     set -o pipefail
-    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    gi_home="{{ _dg_gi_home_path }}"
+    db_home="{{ _dg_home_path }}"
     changed=0
 
-    enable_output="$("$gi_home/bin/srvctl" enable database -db {{ _dg_standby_unique_name }} 2>&1)" || enable_rc=$?
-    printf '%s\n' "$enable_output"
-    if [ "${enable_rc:-0}" -ne 0 ] && ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
-      exit "${enable_rc:-1}"
-    fi
-    if [ "${enable_rc:-0}" -eq 0 ]; then
-      changed=1
+    db_profile="$("$gi_home/bin/crsctl" status resource ora.{{ _dg_standby_unique_name }}.db -p 2>&1)" || true
+    printf '%s\n' "$db_profile"
+    if printf '%s\n' "$db_profile" | grep -Fqx 'ENABLED=1'; then
+      echo DATABASE_ALREADY_ENABLED
+    else
+      enable_output="$("$db_home/bin/srvctl" enable database -db {{ _dg_standby_unique_name }} 2>&1)" || enable_rc=$?
+      printf '%s\n' "$enable_output"
+      if [ "${enable_rc:-0}" -ne 0 ] && ! printf '%s\n' "$enable_output" | grep -Eiq 'already enabled|PRCR-1002'; then
+        exit "${enable_rc:-1}"
+      fi
+      if [ "${enable_rc:-0}" -eq 0 ]; then
+        changed=1
+      fi
     fi
 
     unset enable_rc
@@ -402,9 +616,32 @@
 - name: Validate standby Restart registration
   ansible.builtin.shell: |
     set -o pipefail
-    gi_home="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
-    "$gi_home/bin/srvctl" config database -db {{ _dg_standby_unique_name }}
-    "$gi_home/bin/srvctl" config listener -listener LISTENER_{{ inst.name | upper }}
+    gi_home="{{ _dg_gi_home_path }}"
+    db_home="{{ _dg_home_path }}"
+    db_config="$($db_home/bin/srvctl config database -db {{ _dg_standby_unique_name }} 2>&1)"
+    db_rc=$?
+    printf '%s\n' "$db_config"
+    if [ "$db_rc" -ne 0 ] ||
+       ! printf '%s\n' "$db_config" | grep -Fqi "Database role: {{ _dg_standby_restart_role }}"; then
+      db_profile="$($gi_home/bin/crsctl status resource ora.{{ _dg_standby_unique_name }}.db -p 2>&1)"
+      profile_rc=$?
+      printf '%s\n' "$db_profile"
+      if [ "$profile_rc" -ne 0 ] ||
+         ! printf '%s\n' "$db_profile" | grep -Fq 'ROLE={{ _dg_standby_restart_role }}' ||
+         ! printf '%s\n' "$db_profile" | grep -Fq 'MANAGEMENT_POLICY=AUTOMATIC' ||
+         ! printf '%s\n' "$db_profile" | grep -Fiq 'USR_ORA_OPEN_MODE={{ _dg_standby_restart_startoption }}' ||
+         ! printf '%s\n' "$db_profile" | grep -Fq 'USR_ORA_STOP_MODE=immediate' ||
+         ! printf '%s\n' "$db_profile" | grep -Fq 'ENABLED=1'; then
+        echo "Standby Restart database registration is not verifiable through srvctl or a matching read-only CRS profile." >&2
+        exit 1
+      fi
+    fi
+
+    listener_config="$($gi_home/bin/srvctl config listener -listener LISTENER_{{ inst.name | upper }} 2>&1)"
+    listener_rc=$?
+    printf '%s\n' "$listener_config"
+    [ "$listener_rc" -eq 0 ] || exit "$listener_rc"
+    printf '%s\n' "$listener_config" | grep -Fq 'LISTENER_' || exit 1
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -412,5 +649,5 @@
   changed_when: false
   failed_when: >-
     _dg_standby_srvctl_validate.rc != 0 or
-    'PHYSICAL_STANDBY' not in (_dg_standby_srvctl_validate.stdout | default('')) or
+    (_dg_standby_restart_role not in (_dg_standby_srvctl_validate.stdout | default(''))) or
     'LISTENER_' not in (_dg_standby_srvctl_validate.stdout | default(''))

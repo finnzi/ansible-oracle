@@ -1,6 +1,7 @@
 """Role-service and native client availability contracts."""
 from __future__ import annotations
 
+import re
 import shlex
 from pathlib import Path
 
@@ -34,6 +35,29 @@ def test_client_availability_contract_is_wired():
     assert "'modify', 'service'" in service
     assert "Management policy: AUTOMATIC" in service
     assert "Service role: " in service
+    assert "Read Restart service resource profile" in service
+    assert "Read Restart service resource status" in service
+    inspect_service = service.index("Inspect Restart service configuration")
+    resolve_output = service.index("Resolve Restart service command output")
+    resolve_probes = service.index("Resolve Restart service registration probes")
+    assert inspect_service < resolve_output < resolve_probes
+    assert '"{{ _svc_home_path }}/bin/srvctl"' in service
+    assert "_svc_home_path ~ '/bin/srvctl'" in service
+    assert 'ORACLE_HOME: "{{ _svc_home_path }}"' in service
+    assert "oracle_gi_home }}/bin/srvctl" not in service
+    assert "_svc_crs_service_exists" in service
+    assert "_svc_srvctl_config_output" in service
+    assert "_svc_srvctl_config_usable" in service
+    assert "_svc_crs_service_contract_ok" in service
+    assert "TAF_FAILOVER_DELAY" in service
+    assert "AQ_HA_NOTIFICATION" in service
+    assert "svc.notification | default(true)" in service
+    assert "Fail when an existing Restart service cannot be reconciled safely" in service
+    assert "Refusing to mutate an ora.* resource with crsctl" in service
+    assert "Fail when a Restart service is absent and srvctl is unavailable" in service
+    assert "Accept matching Restart service state without SRVCTL mutation" in service
+    assert "Fail when a matching current-role service is not online" in service
+    assert "crsctl\" start resource" not in service
     assert "Prime standby-role service for broker role transitions" in service
     assert "srvctl\" stop service" in service
     assert "{{ observer_client_primary_alias }}" in client_tns
@@ -52,8 +76,25 @@ def test_client_availability_contract_is_wired():
     assert "commit_outcome: true" in inventory
     assert "-replay_init_time" in service
     assert "{{ observer_client_tac_alias }}" in client_tns
-    assert "srvctl\", enable, ons" in fan_role
+    assert 'srvctl", "enable", "ons"' in fan_role
     assert "'ONS daemon is running' not in" in fan_role
+    assert "PRKO-0?2458|PRKO-0?2465" in fan_role
+    assert "PRKO-00371" not in fan_role
+    assert '"-onsremoteport"' in fan_role
+    assert '"{{ oracle_fan_remote_port }}"' in fan_role
+    assert "PRKO-0?2452" in fan_role
+    assert "PRKO-0?2576" in fan_role
+    assert "PRKO-0?2569" in fan_role
+    for diagnostic in ("PRKO-02576", "PRKO-2576", "PRKO-02569", "PRKO-2569"):
+        assert re.search(r"PRKO-0?25(?:76|69)", diagnostic)
+    ons_lifecycle = fan_role.split("Read initial Oracle Notification Services state", 1)[1].split(
+        "Probe firewalld for remote ONS", 1
+    )[0]
+    assert "failed_when: false" not in ons_lifecycle
+    assert "Classify initial ONS resource probe" in ons_lifecycle
+    assert "Fail when ONS status probe reports an operational error" not in ons_lifecycle
+    assert "Validate Oracle Notification Services after lifecycle convergence" in ons_lifecycle
+    assert "become_user: \"{{ oracle_user }}\"" in ons_lifecycle
     assert "oracle_fan_remote_port: 6200" in fan_defaults
     assert "--confirm TAC_FCF_SWITCHOVER" in tac_helper
     assert "POC_RESULT|fan_down=true|fcf=true" in tac_helper
@@ -63,37 +104,61 @@ def test_client_availability_contract_is_wired():
 
 
 def test_live_role_services_and_client_aliases(lab_exec, standby_exec, observer_exec):
-    expected = {
-        "super": lab_exec,
-        "super_sby": standby_exec,
-    }
-    states = {}
-    for db_unique_name, execute in expected.items():
-        command = (
-            "/grid/19c/gi_home1/bin/srvctl status service "
-            f"-db {db_unique_name} 2>&1; "
-            "/grid/19c/gi_home1/bin/srvctl config service "
-            f"-db {db_unique_name} -service super_pri; "
-            "/grid/19c/gi_home1/bin/srvctl config service "
-            f"-db {db_unique_name} -service super_stb; "
-            "/grid/19c/gi_home1/bin/srvctl config service "
-            f"-db {db_unique_name} -service super_tac; "
+    command = (
+            "ORACLE_HOME=/super/app/oracle/dbhome_1 "
+            "/super/app/oracle/dbhome_1/bin/srvctl status service -db super 2>&1; "
+            "ORACLE_HOME=/super/app/oracle/dbhome_1 "
+            "/super/app/oracle/dbhome_1/bin/srvctl config service "
+            "-db super -service super_pri; "
+            "ORACLE_HOME=/super/app/oracle/dbhome_1 "
+            "/super/app/oracle/dbhome_1/bin/srvctl config service "
+            "-db super -service super_stb; "
+            "ORACLE_HOME=/super/app/oracle/dbhome_1 "
+            "/super/app/oracle/dbhome_1/bin/srvctl config service "
+            "-db super -service super_tac; "
             "/grid/19c/gi_home1/bin/srvctl status ons"
-        )
-        result = execute(f"su - oracle -c {shlex.quote(command)}", timeout=90)
-        assert result.returncode == 0, result.stdout + result.stderr
-        assert "Service role: PRIMARY" in result.stdout
-        assert "Failover type: SELECT" in result.stdout
-        assert "Failover method: BASIC" in result.stdout
-        assert "Service role: PHYSICAL_STANDBY" in result.stdout
-        assert "Failover type: AUTO" in result.stdout
-        assert "Commit Outcome: true" in result.stdout
-        assert "Failover restore: LEVEL1" in result.stdout
-        assert "running" in result.stdout.lower()
-        states[db_unique_name] = result.stdout
+    )
+    primary = lab_exec(f"su - oracle -c {shlex.quote(command)}", timeout=90)
+    assert primary.returncode == 0, primary.stdout + primary.stderr
+    assert "Service role: PRIMARY" in primary.stdout
+    assert "Failover type: SELECT" in primary.stdout
+    assert "Failover method: BASIC" in primary.stdout
+    assert "Service role: PHYSICAL_STANDBY" in primary.stdout
+    assert "Failover type: AUTO" in primary.stdout
+    assert "Commit Outcome: true" in primary.stdout
+    assert "Failover restore: LEVEL1" in primary.stdout
+    assert "Service super_pri is running" in primary.stdout
+    assert "Service super_stb is not running" in primary.stdout
+    assert "ONS daemon is running" in primary.stdout
 
-    assert sum("Service super_pri is running" in value for value in states.values()) == 1
-    assert sum("Service super_stb is running" in value for value in states.values()) == 1
+    # Verify the public SRVCTL view first, then independently inspect the
+    # persisted Oracle Restart resource properties through read-only CRSCTL.
+    standby = standby_exec(
+        "su - oracle -c 'ORACLE_HOME=/super/app/oracle/dbhome_1 "
+        "/super/app/oracle/dbhome_1/bin/srvctl config service -db super_sby'; "
+        "/grid/19c/gi_home1/bin/crsctl status resource "
+        "-w 'TYPE = ora.service.type' -p; "
+        "/grid/19c/gi_home1/bin/crsctl status resource "
+        "ora.super_sby.super_pri.svc -t; "
+        "/grid/19c/gi_home1/bin/crsctl status resource "
+        "ora.super_sby.super_stb.svc -t; "
+        "su - oracle -c '/grid/19c/gi_home1/bin/srvctl status ons'",
+        timeout=90,
+    )
+    assert standby.returncode == 0, standby.stdout + standby.stderr
+    assert "NAME=ora.super_sby.super_pri.svc" in standby.stdout
+    assert "ROLE=PRIMARY" in standby.stdout
+    assert "FAILOVER_TYPE=SELECT" in standby.stdout
+    assert "FAILOVER_METHOD=BASIC" in standby.stdout
+    assert "NAME=ora.super_sby.super_stb.svc" in standby.stdout
+    assert "ROLE=PHYSICAL_STANDBY" in standby.stdout
+    assert "NAME=ora.super_sby.super_tac.svc" in standby.stdout
+    assert "FAILOVER_TYPE=AUTO" in standby.stdout
+    assert "COMMIT_OUTCOME=1" in standby.stdout
+    assert "FAILOVER_RESTORE=LEVEL1" in standby.stdout
+    assert "ora.super_sby.super_pri.svc\n      1        OFFLINE OFFLINE" in standby.stdout
+    assert "ora.super_sby.super_stb.svc\n      1        ONLINE  ONLINE" in standby.stdout
+    assert "ONS daemon is running" in standby.stdout
 
     tns = observer_exec(
         "sed -n '/^super_primary =/,/^super_standby =/p' "

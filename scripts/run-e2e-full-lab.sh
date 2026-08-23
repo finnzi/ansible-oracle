@@ -9,7 +9,9 @@
 #      rebuild home1 → cutover back)
 #   5. Super DG: skip standby-first for OJVM+RU combo (apply combos together via
 #      dual-home/downtime; SF only for fully SF-eligible media)
-#   6. Full pytest suite
+#   6. Warm Data Guard switchover cycle
+#   7. Power-cycle and prove automatic Oracle/observer startup
+#   8. Full pytest suite
 #
 # Usage:
 #   scripts/run-e2e-full-lab.sh
@@ -189,12 +191,12 @@ EOF
 
 # ── 1. Lab recreate ────────────────────────────────────────────────────
 if [ "${SKIP_LAB_RECREATE}" != "1" ]; then
-  step "1/6 Lab purge + recreate"
+  step "1/8 Lab purge + recreate"
   ./lab/scripts/lab-down.sh --purge
   ./lab/scripts/lab-up.sh
   ./lab/scripts/update-hosts.sh --dg --multi || true
 else
-  step "1/6 SKIP lab recreate (SKIP_LAB_RECREATE=1)"
+  step "1/8 SKIP lab recreate (SKIP_LAB_RECREATE=1)"
   ./lab/scripts/lab-up.sh
   ./lab/scripts/update-hosts.sh --dg --multi || true
 fi
@@ -202,7 +204,7 @@ fi
 [ -f "${INV}" ] || fail "inventory missing: ${INV}"
 
 # ── 2. Greenfield site at 19.31 (no pytest yet) ────────────────────────
-step "2/6 Multi-instance site converge @ 19.31 (playbooks 00–08 + patch)"
+step "2/8 Multi-instance site converge @ 19.31 (playbooks 00–08 + patch)"
 
 # site.yml order without 99-test so we control upgrade before suite.
 SITE_PLAYS=(
@@ -231,7 +233,7 @@ COMMON_E=(
 )
 
 for play in "${SITE_PLAYS[@]}"; do
-  step "2/6 run ${play}"
+  step "2/8 run ${play}"
   case "${play}" in
     playbooks/07-patch.yml|playbooks/07-patch-grid.yml)
       run_pb "${COMMON_E[@]}" "${play}" -e oracle_patch_apply_enabled=true
@@ -246,7 +248,7 @@ for play in "${SITE_PLAYS[@]}"; do
 done
 
 # ── 3. Install second homes @ 19.31 (standalone, no cutover) ───────────
-step "3/6 Install dbhome_2 @ 19.31 for standalone duper+fluff (DB stays on dbhome_1)"
+step "3/8 Install dbhome_2 @ 19.31 for standalone duper+fluff (DB stays on dbhome_1)"
 STANDALONE_H1="$(write_standalone_vars dbhome_1 /tmp/e2e-standalone-home1.yml)"
 
 run_pb -i "${INV}" -e @"${STANDALONE_H1}" --limit superdb1 \
@@ -262,7 +264,7 @@ run_pb -i "${INV}" -e @"${STANDALONE_H1}" --limit superdb1 \
   -e "oracle_upgrade_db_ru_component_path=${BASE_DB_COMPONENT}"
 
 # ── 4. Dual-home upgrade standalone → 19.32 ────────────────────────────
-step "4/6 Dual-home upgrade duper+fluff to 19.32"
+step "4/8 Dual-home upgrade duper+fluff to 19.32"
 
 # 4a: rebuild unused home2 @ 19.32 (force), no switch
 run_pb -i "${INV}" -e @"${STANDALONE_H1}" --limit superdb1 \
@@ -309,7 +311,7 @@ run_pb -i "${INV}" -e @"${STANDALONE_H2}" --limit superdb1 \
 # 19.32 media is an OJVM+DB RU combo — not SF as a whole. Apply combos
 # together (dual-home prepare/cutover or downtime), not SF RU then OJVM.
 # Standby-first remains for fully SF-eligible zips only.
-step "5/6 SKIP super standby-first (combo policy: apply OJVM+RU together via dual-home/downtime)"
+step "5/8 SKIP super standby-first (combo policy: apply OJVM+RU together via dual-home/downtime)"
 echo "[e2e] Combo zip ${UPG_DB_ZIP} is not standby-first installable as a unit."
 echo "[e2e] Standalone dual-home upgrade already covered duper/fluff @ 19.32."
 echo "[e2e] For DG super + combo, use playbooks/07-upgrade-dual-db-downtime.yml"
@@ -319,7 +321,7 @@ echo "[e2e] (or dual-home prepare on both DG nodes) — not run-standbyfirst-app
 # First post-upgrade broker switchover under MaxAvailability can spend many
 # minutes in CRS restart of the old primary. Running one cycle here warms the
 # path and leaves roles on super so test_manual_switchover is not the cold start.
-step "6/7 Warm Data Guard switchover (super -> super_sby -> super)"
+step "6/8 Warm Data Guard switchover (super -> super_sby -> super)"
 run_pb "${COMMON_E[@]}" playbooks/05-dataguard.yml \
   -e oracle_dataguard_prepare_primary=false \
   -e oracle_dataguard_prepare_standby=false \
@@ -335,16 +337,22 @@ run_pb "${COMMON_E[@]}" playbooks/05-dataguard.yml \
   -e oracle_dataguard_run_switchover=true \
   -e oracle_dataguard_switchover_target=super
 
-# ── 7. Full test suite ─────────────────────────────────────────────────
+# ── 7. Automatic startup proof ───────────────────────────────────────────
+step "7/8 Power-cycle and verify automatic startup"
+./lab/scripts/lab-down.sh
+./lab/scripts/lab-up.sh
+./lab/scripts/update-hosts.sh --dg --multi
+./scripts/verify-lab-autostart.sh
+
 if [ "${SKIP_TESTS}" != "1" ]; then
-  step "7/7 Full pytest suite"
+  step "8/8 Full pytest suite"
   export ORACLE_TEST_REQUIRE_LAB=1
   ./scripts/run-tests.sh tests/ -v --tb=short --require-lab || {
     echo "ERROR: pytest reported failures (see log)" >&2
     exit 1
   }
 else
-  step "7/7 SKIP tests"
+  step "8/8 SKIP tests"
 fi
 
 step "E2E COMPLETE $(date -Is)"

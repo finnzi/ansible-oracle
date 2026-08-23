@@ -74,9 +74,17 @@
     DECLARE
       PROCEDURE set_param(p_name VARCHAR2, p_value VARCHAR2) IS
         v_current VARCHAR2(4000);
+        v_spfile VARCHAR2(4000);
       BEGIN
         SELECT value INTO v_current FROM v$parameter WHERE name = lower(p_name);
-        IF NVL(v_current, ' ') != p_value THEN
+        SELECT MAX(value) KEEP (DENSE_RANK LAST ORDER BY
+                 CASE WHEN sid = '*' THEN 1 ELSE 0 END)
+          INTO v_spfile
+          FROM v$spparameter
+         WHERE name = lower(p_name)
+           AND value IS NOT NULL;
+        IF NVL(v_current, ' ') != p_value OR
+           NVL(TRIM(v_spfile), ' ') != p_value THEN
           EXECUTE IMMEDIATE 'ALTER SYSTEM SET ' || p_name || '=''' ||
             REPLACE(p_value, '''', '''''') || ''' SCOPE=BOTH SID=''*''';
           DBMS_OUTPUT.PUT_LINE('CHANGED ' || p_name);
@@ -86,9 +94,17 @@
       END;
       PROCEDURE set_bool_param(p_name VARCHAR2, p_value VARCHAR2) IS
         v_current VARCHAR2(4000);
+        v_spfile VARCHAR2(4000);
       BEGIN
         SELECT value INTO v_current FROM v$parameter WHERE name = lower(p_name);
-        IF UPPER(NVL(v_current, 'FALSE')) != UPPER(p_value) THEN
+        SELECT MAX(value) KEEP (DENSE_RANK LAST ORDER BY
+                 CASE WHEN sid = '*' THEN 1 ELSE 0 END)
+          INTO v_spfile
+          FROM v$spparameter
+         WHERE name = lower(p_name)
+           AND value IS NOT NULL;
+        IF UPPER(NVL(v_current, 'FALSE')) != UPPER(p_value) OR
+           UPPER(NVL(TRIM(v_spfile), 'FALSE')) != UPPER(p_value) THEN
           EXECUTE IMMEDIATE 'ALTER SYSTEM SET ' || p_name || '=' ||
             UPPER(p_value) || ' SCOPE=BOTH SID=''*''';
           DBMS_OUTPUT.PUT_LINE('CHANGED ' || p_name);

@@ -361,6 +361,18 @@
     - oracle_observer_install_client | bool
     - _oracle_observer_wanted | bool
 
+- name: Write FSFO observer cold-boot guard wrapper
+  ansible.builtin.template:
+    src: fsfo-observer-cold-boot-guard.j2
+    dest: "/usr/local/bin/{{ observer_service_name }}-cold-boot-guard"
+    owner: root
+    group: root
+    mode: "0755"
+  register: _observer_cold_boot_guard_wrapper
+  when:
+    - oracle_observer_install_client | bool
+    - _oracle_observer_wanted | bool
+
 - name: Write FSFO observer systemd unit
   ansible.builtin.template:
     src: fsfo-observer.service.j2
@@ -437,6 +449,7 @@
           (_observer_env is changed) or
           (_observer_start_wrapper is changed) or
           (_observer_stop_wrapper is changed) or
+          (_observer_cold_boot_guard_wrapper is changed) or
           (_observer_unit is changed) or
           ('Observer:           (none)' in (_observer_fsfo_before.stdout | default('')))
         )

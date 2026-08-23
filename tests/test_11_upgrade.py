@@ -86,6 +86,11 @@ def test_db_deinstall_role_safety_contract():
     )[0]
     assert "Detach Oracle home from central inventory" in tasks
     assert "-detachHome" in tasks
+    assert "ContentsXML/inventory.xml" in tasks
+    assert 'fallback={{ item.item.current_home_path | quote }}' in tasks
+    assert "DETACH_FAILED" in tasks
+    assert "DETACH_BEST_EFFORT" not in tasks
+    assert "failed_when: _deinstall_detach.rc != 0" in tasks
     assert "Rescue spfile/pfile/orapw before removing Oracle home" in tasks
     assert "Remove Oracle home directory tree" in tasks
     assert "Remove per-home install staging directory" in tasks

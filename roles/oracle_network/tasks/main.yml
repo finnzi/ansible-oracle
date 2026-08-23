@@ -152,12 +152,41 @@
     - oracle_network_home_selection | default('current') == 'current'
     - (_net_runtime_homes.results | default([]) | length) > 0
 
+- name: Inspect cloud-init hosts template
+  ansible.builtin.stat:
+    path: /etc/cloud/templates/hosts.redhat.tmpl
+  register: _guest_hosts_cloud_template
+  when: oracle_lab_guest_hosts | length > 0
+
+# Oracle Linux cloud images use manage_etc_hosts=true, so cloud-init rebuilds
+# /etc/hosts from this template at every boot. Manage both files to make the
+# listener VIP aliases available during Oracle Restart startup, not only after
+# Ansible converges again.
+- name: Resolve guest hosts files managed across reboot
+  ansible.builtin.set_fact:
+    _guest_hosts_managed_files: >-
+      {{
+        ['/etc/hosts']
+        + (
+          ['/etc/cloud/templates/hosts.redhat.tmpl']
+          if (_guest_hosts_cloud_template.stat.exists | default(false))
+          else []
+        )
+      }}
+  when: oracle_lab_guest_hosts | length > 0
+
 - name: Remove stale lab host aliases from guest /etc/hosts
   ansible.builtin.shell: |
-    set -o pipefail
-    tmp="$(mktemp)"
+    set -euo pipefail
+    hosts_file="{{ guest_hosts_file }}"
+    if [ ! -f "$hosts_file" ] || [ ! -r "$hosts_file" ]; then
+      echo "Cannot safely read hosts file: $hosts_file" >&2
+      exit 1
+    fi
+    tmp="$(mktemp "${hosts_file}.ansible-oracle.XXXXXX")"
+    trap 'rm -f -- "$tmp"' EXIT
     aliases="{{ oracle_lab_guest_hosts | map(attribute='names') | join(' ') }}"
-    awk -v b="# BEGIN ANSIBLE-ORACLE lab guest hosts" \
+    if ! awk -v b="# BEGIN ANSIBLE-ORACLE lab guest hosts" \
         -v e="# END ANSIBLE-ORACLE lab guest hosts" \
         -v aliases="$aliases" '
       BEGIN {
@@ -179,20 +208,32 @@
         }
       }
       {print}
-    ' /etc/hosts > "$tmp"
-    if ! cmp -s "$tmp" /etc/hosts; then
-      cat "$tmp" > /etc/hosts
+    ' "$hosts_file" > "$tmp"; then
+      echo "Failed to scrub hosts file safely: $hosts_file" >&2
+      exit 1
+    fi
+    if ! cmp -s "$tmp" "$hosts_file"; then
+      chown --reference="$hosts_file" "$tmp"
+      chmod --reference="$hosts_file" "$tmp"
+      if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+        chcon --reference="$hosts_file" "$tmp"
+      fi
+      mv -f -- "$tmp" "$hosts_file"
+      trap - EXIT
       echo CHANGED
     fi
-    rm -f "$tmp"
   args: { executable: /bin/bash }
   register: _guest_hosts_scrub
   changed_when: "'CHANGED' in (_guest_hosts_scrub.stdout | default(''))"
+  loop: "{{ _guest_hosts_managed_files }}"
+  loop_control:
+    loop_var: guest_hosts_file
+    label: "{{ guest_hosts_file }}"
   when: oracle_lab_guest_hosts | length > 0
 
 - name: Ensure guest /etc/hosts has the lab host aliases
   ansible.builtin.blockinfile:
-    path: /etc/hosts
+    path: "{{ guest_hosts_file }}"
     marker: "# {mark} ANSIBLE-ORACLE lab guest hosts"
     block: |
       {% for entry in oracle_lab_guest_hosts %}
@@ -203,6 +244,10 @@
     owner: root
     group: root
     mode: "0644"
+  loop: "{{ _guest_hosts_managed_files }}"
+  loop_control:
+    loop_var: guest_hosts_file
+    label: "{{ guest_hosts_file }}"
   when: oracle_lab_guest_hosts | length > 0
   register: _guest_hosts
 

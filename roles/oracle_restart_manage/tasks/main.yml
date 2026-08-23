@@ -42,50 +42,28 @@
     - not oracle_restart_available
     - oracle_restart_required | bool
 
-- name: Read local CSS autostart policy
+- name: Read Oracle High Availability Services autostart policy
   ansible.builtin.command: >-
-    {{ oracle_gi_home }}/bin/crsctl stat res ora.cssd -p -init
-  register: _restart_css_properties
+    {{ oracle_gi_home }}/bin/crsctl config has
+  register: _restart_has_autostart
   changed_when: false
   when: oracle_restart_available
 
-# With filesystem-backed databases there is no ASM resource to pull CSS up.
-# The Restart database agent still requires local cluster membership, so CSS
-# must start directly with OHASD after a host reboot.
-- name: Configure local CSS to start with OHASD
+# Oracle documents `crsctl enable has` as the supported way to enable Oracle
+# Restart autostart. Do not modify AUTO_START on an `ora.*` resource directly;
+# SRVCTL is the supported interface for Oracle Restart-managed components.
+#
+# The Grid installer configures ASM/CSS through its supported configuration
+# assistants. This role only enables HAS and manages Oracle entities with
+# SRVCTL; forcing ora.cssd directly would bypass those supported interfaces.
+- name: Enable Oracle High Availability Services autostart
   ansible.builtin.command: >-
-    {{ oracle_gi_home }}/bin/crsctl modify resource ora.cssd
-    -attr AUTO_START=always -init
-  register: _restart_css_autostart
+    {{ oracle_gi_home }}/bin/crsctl enable has
+  register: _restart_has_enable
   changed_when: true
   when:
     - oracle_restart_available
-    - "'AUTO_START=always' not in (_restart_css_properties.stdout | default(''))"
-
-- name: Check local CSS status for Restart database resources
-  ansible.builtin.shell: |
-    set -o pipefail
-    {{ oracle_gi_home }}/bin/crsctl stat res ora.cssd -init 2>&1 || true
-  args: { executable: /bin/bash }
-  register: _restart_css_status
-  changed_when: false
-  when: oracle_restart_available
-
-- name: Start local CSS before srvctl database operations
-  ansible.builtin.shell: |
-    set -o pipefail
-    {{ oracle_gi_home }}/bin/crsctl start resource ora.cssd -init 2>&1
-  args: { executable: /bin/bash }
-  register: _restart_css_start
-  changed_when: "'CRS-2676' in (_restart_css_start.stdout | default(''))"
-  failed_when: >-
-    _restart_css_start.rc != 0 and
-    'CRS-5702' not in (_restart_css_start.stdout | default('')) and
-    'already running' not in (_restart_css_start.stdout | default('') | lower)
-  when:
-    - oracle_restart_available
-    - "'STATE=ONLINE' not in (_restart_css_status.stdout | default(''))"
-    - "'ONLINE  ONLINE' not in (_restart_css_status.stdout | default(''))"
+    - "'CRS-4622' not in (_restart_has_autostart.stdout | default(''))"
 
 # ── Register each instance + its listener with Restart ─────────────────
 - name: Register instance, listener, and start them under Restart
@@ -116,3 +94,77 @@
           inst.dg_role | default('') == 'standby'
         )
       )
+
+# Oracle Restart may exhaust its initial start retries while the Data Guard
+# peer is still booting.  Install a bounded, broker-aware pass for the next
+# boot.  It uses each registered database home's srvctl and only reads HAS
+# state through CRSCTL; it never edits ora.* resources with CRSCTL.
+- name: Write Oracle Restart reconciliation environment
+  ansible.builtin.template:
+    src: oracle-restart-reconcile.env.j2
+    dest: "{{ oracle_restart_reconcile_environment_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  register: _restart_reconcile_environment
+  no_log: true
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Install Oracle Restart post-boot reconciliation script
+  ansible.builtin.template:
+    src: oracle-restart-reconcile.sh.j2
+    dest: "{{ oracle_restart_reconcile_script_path }}"
+    owner: root
+    group: "{{ oracle_group }}"
+    mode: "0750"
+  register: _restart_reconcile_script
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Install Oracle Restart post-boot reconciliation unit
+  ansible.builtin.template:
+    src: oracle-restart-reconcile.service.j2
+    dest: "/etc/systemd/system/{{ oracle_restart_reconcile_service_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _restart_reconcile_unit
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Reload systemd after Oracle Restart reconciliation install
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+    - >-
+      (_restart_reconcile_environment.changed | default(false)) or
+      (_restart_reconcile_script.changed | default(false)) or
+      (_restart_reconcile_unit.changed | default(false))
+
+- name: Enable Oracle Restart post-boot reconciliation
+  ansible.builtin.systemd_service:
+    name: "{{ oracle_restart_reconcile_service_name }}"
+    enabled: true
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Disable Oracle Restart post-boot reconciliation when not enabled
+  ansible.builtin.systemd_service:
+    name: "{{ oracle_restart_reconcile_service_name }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  register: _restart_reconcile_disable
+  failed_when: >-
+    (_restart_reconcile_disable.failed | default(false)) and
+    'Could not find the requested service' not in
+      (_restart_reconcile_disable.msg | default('')) and
+    'not found' not in (_restart_reconcile_disable.msg | default('') | lower)
+  when: not (oracle_restart_reconcile_enabled | bool)

@@ -50,9 +50,20 @@ def test_install_role_applies_extracted_database_ru_directory():
     assert "home_path in selected_paths" in main_tasks
     assert "Remove incomplete Oracle home left by a failed installer run" in tasks
     assert "Remove bundled OPatch before upgrade" in tasks
+    assert "Resolve Database RU media for installer applyRU" in tasks
+    assert "oracle_patch_db_zip" in tasks
+    assert "oracle_patch_apply_component_path" in tasks
+    assert "_db_ru_zip_path" in tasks
+    assert "_db_ru_component_path" in tasks
+    assert 'src: "{{ _db_ru_zip_path }}"' in tasks
+    assert 'candidate="$root/$configured"' in tasks
     assert "Extract DB RU bundle for runInstaller -applyRU" in tasks
     assert "Resolve extracted Database RU directory for runInstaller -applyRU" in tasks
     assert "-applyRU {{ _db_ru_apply_dir.stdout | trim | quote }}" in tasks
+    assert "Verify selected Database RU was applied during install" in tasks
+    assert '"$oracle_home/OPatch/opatch" lspatches' in tasks
+    assert 'test -s "$oracle_home/bin/oracle"' in tasks
+    assert "_db_ru_install_verified | default({})" in tasks
 
 
 def test_grid_install_role_enforces_asm_disk_permissions():

@@ -12,7 +12,8 @@
 #   /<instance>/r01                     redo log members
 #   /grid/19c/gi_homeN                  Oracle Restart (Grid) homes
 #
-# Everything is filesystem-based — no ASM, by design.
+# Database files remain filesystem-based. Oracle Restart uses ASM only for the
+# small RESTART disk group that keeps the local GI stack bootable and healthy.
 
 # ── Software versions / source artefacts ──────────────────────────────
 # These filenames match what is staged under download/ by lab-up.sh

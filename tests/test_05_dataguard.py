@@ -22,8 +22,8 @@ def _oracle_home(exec_fn, db_unique_name: str) -> str:
         r = exec_fn(
             "su - oracle -c "
             + shlex.quote(
-                f"/grid/19c/gi_home1/bin/srvctl config database -db {candidate} | "
-                "sed -n 's/^Oracle home: //p'"
+                f"/grid/19c/gi_home1/bin/crsctl status resource ora.{candidate}.db -p | "
+                "sed -n 's/^ORACLE_HOME=//p'"
             )
         )
         if r.returncode == 0 and r.stdout.strip():
@@ -188,6 +188,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "dependencies: []" in dataguard_meta
     assert "standby_file_management" in dataguard_prepare
     assert "dg_broker_start" in dataguard_prepare
+    assert "v$spparameter" in dataguard_prepare
+    assert "NVL(TRIM(v_spfile), 'FALSE')" in dataguard_prepare
+    assert "NVL(TRIM(v_spfile), ' ')" in dataguard_prepare
     assert "log_archive_config" in dataguard_prepare
     assert "log_archive_dest_2" in dataguard_prepare
     assert "SYNC AFFIRM" in dataguard_prepare
@@ -198,6 +201,12 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "ALTER DATABASE ADD STANDBY LOGFILE" in dataguard_prepare
     assert "STARTUP NOMOUNT" in dataguard_prepare_standby
     assert "Check registered physical standby before auxiliary startup" in dataguard_prepare_standby
+    prep_registration_probe = dataguard_prepare_standby.split(
+        "Check registered physical standby before auxiliary startup", 1
+    )[1].split("- name:", 1)[0]
+    assert "PRCD-1120|PRCR-1001" in prep_registration_probe
+    assert "|| echo NOT_REGISTERED" not in prep_registration_probe
+    assert "failed_when: _dg_registered_standby_status.rc != 0" in prep_registration_probe
     assert "Start registered physical standby instead of auxiliary NOMOUNT" in dataguard_prepare_standby
     assert "'ORA-19838' not in (_dg_registered_standby_start.stdout | default(''))" in dataguard_prepare_standby
     assert "'ORA-19838' in (_dg_registered_standby_start.stdout | default(''))" in dataguard_prepare_standby
@@ -218,15 +227,51 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH" in dataguard_duplicate_standby
     assert "Remove conflicting standalone Restart registration on standby" in dataguard_duplicate_standby
     assert "Start registered physical standby before role probe" in dataguard_duplicate_standby
+    duplicate_registration_probe = dataguard_duplicate_standby.split(
+        "Check registered standby database status before duplicate", 1
+    )[1].split("- name:", 1)[0]
+    assert "PRCD-1120|PRCR-1001" in duplicate_registration_probe
+    assert "|| echo NOT_REGISTERED" not in duplicate_registration_probe
+    assert "failed_when: _dg_standby_registered_status_before.rc != 0" in duplicate_registration_probe
+    assert "WHENEVER SQLERROR EXIT FAILURE" in dataguard_duplicate_standby
+    assert "DG_STATE=ABSENT" in dataguard_duplicate_standby
+    assert "_dg_fresh_auxiliary_names" in dataguard_prepare_standby
+    assert "fresh_auxiliary_prepared" in dataguard_duplicate_standby
+    assert "explicitly prepared by this play" in dataguard_duplicate_standby
+    role_probe = dataguard_duplicate_standby.split(
+        "Read standby database role before duplicate", 1
+    )[1].split("- name:", 1)[0]
+    assert "failed_when: false" not in role_probe
+    assert "failed_when: _dg_standby_role_before.rc != 0" in role_probe
     assert "DATABASE_ALREADY_RUNNING_OUTSIDE_RESTART" in dataguard_duplicate_standby
     assert "Restart standby from spfile for broker management" in dataguard_duplicate_standby
     assert "replace('ORA-01109', '')" in dataguard_duplicate_standby
     assert "'NOT_REGISTERED' in (_dg_standby_registered_status_before.stdout | default(''))" in dataguard_duplicate_standby
     assert "oracle_dataguard_configure_broker | default(false) | bool" in dataguard_duplicate_standby
     assert "STARTUP MOUNT" in dataguard_duplicate_standby
-    assert "-role PHYSICAL_STANDBY" in dataguard_duplicate_standby
+    assert "-role {{ _dg_standby_restart_role }}" in dataguard_duplicate_standby
+    assert "Read standby Restart database resource profile" in dataguard_duplicate_standby
+    assert "_dg_standby_crs_db_exists" in dataguard_duplicate_standby
+    assert "_dg_standby_srvctl_db_usable" in dataguard_duplicate_standby
+    assert 'startoption "{{ _dg_standby_restart_startoption }}"' in dataguard_duplicate_standby
+    assert "Refusing to" in dataguard_duplicate_standby
+    assert "ora.* resource with crsctl" in dataguard_duplicate_standby
+    assert "crsctl; restore supported srvctl/CSS access" in dataguard_duplicate_standby
     assert "srvctl\" add database" in dataguard_duplicate_standby
     assert "Validate standby Restart registration" in dataguard_duplicate_standby
+    assert "Reconcile standby listener Restart configuration" in dataguard_duplicate_standby
+    assert '"$gi_home/bin/srvctl" modify listener' in dataguard_duplicate_standby
+    assert "LISTENER_CONTRACT_RECONCILED" in dataguard_duplicate_standby
+    assert "DATABASE_ALREADY_ENABLED" in dataguard_duplicate_standby
+    assert "ora.cssd" not in dataguard_duplicate_standby
+    assert "crsctl\" start resource" not in dataguard_duplicate_standby
+    assert "_dg_gi_home_path" in dataguard_duplicate_standby
+    assert 'db_home="{{ _dg_home_path }}"' in dataguard_duplicate_standby
+    assert '"$db_home/bin/srvctl" status database' in dataguard_duplicate_standby
+    assert '"$gi_home/bin/srvctl" status listener' in dataguard_duplicate_standby
+    assert "_dg_standby_live_role" in dataguard_duplicate_standby
+    assert "_dg_standby_restart_startoption" in dataguard_duplicate_standby
+    assert "Fail closed when standby role or open mode is unknown" in dataguard_duplicate_standby
     assert "ALTER DATABASE FLASHBACK ON" in dataguard_flashback
     assert "SHUTDOWN ABORT" in dataguard_flashback
     assert "replace('ORA-01109', '')" in dataguard_flashback
@@ -256,6 +301,20 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "Stop standby apply through broker before opening read-only" in dataguard_configure_broker
     assert "READ ONLY WITH APPLY" in dataguard_configure_broker
     assert "Configure standby Restart start policy for read-only apply" in dataguard_configure_broker
+    assert "Read standby Restart database resource profile after broker convergence" in dataguard_configure_broker
+    assert "_dg_standby_restart_resource_contract_ok" in dataguard_configure_broker
+    assert "_dg_standby_restart_srvctl_usable" in dataguard_configure_broker
+    assert "Refusing to mutate an" in dataguard_configure_broker
+    assert "ora.* resource with crsctl" in dataguard_configure_broker
+    assert "_dg_live_primary_unique" in dataguard_configure_broker
+    assert "_dg_live_standby_unique" in dataguard_configure_broker
+    assert "_dg_live_standby_host" in dataguard_configure_broker
+    assert "LIVE_DB_STATE" in dataguard_configure_broker
+    assert "Fail closed when live Data Guard roles are ambiguous" in dataguard_configure_broker
+    assert "Verify broker roles match live database state" in dataguard_configure_broker
+    assert "Primary database" in dataguard_configure_broker
+    assert "Physical standby database" in dataguard_configure_broker
+    assert "- database" in dataguard_configure_broker
     assert "PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "PRIMARY|READ WRITE|MAXIMUM AVAILABILITY|MAXIMUM AVAILABILITY" in dataguard_configure_broker
     assert "LogXptMode='SYNC'" in dataguard_configure_broker
@@ -269,6 +328,16 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "ALREADY_PRIMARY" in dataguard_switchover
     assert "_dg_switchover_target_is_physical_standby" in dataguard_switchover
     assert "READ ONLY WITH APPLY" in dataguard_switchover
+    assert "Resolve post-switchover Restart registration contract" in dataguard_switchover
+    assert "Reconcile local Restart database registration after switchover" in dataguard_switchover
+    assert "Verify local Restart database registration after switchover" in dataguard_switchover
+    assert "-policy" in dataguard_switchover
+    assert "AUTOMATIC" in dataguard_switchover
+    assert "PHYSICAL_STANDBY" in dataguard_switchover
+    assert "db_home" in dataguard_switchover
+    assert '"{{ item.item.db_home }}/bin/srvctl"' in dataguard_switchover
+    assert "tr '[:lower:]' '[:upper:]'" in dataguard_switchover
+    assert "item.stdout | default('') | lower" in dataguard_switchover
     assert "_DGMGRL" in listener_template
     assert "dg_primary_unique = inst.dg_primary_db_unique_name" in tns_template
     assert "dg_standby_unique = inst.dg_standby_db_unique_name" in tns_template
@@ -460,25 +529,28 @@ def test_physical_standby_duplicate(standby_exec):
 
 def test_physical_standby_restart_registration(standby_exec):
     config = standby_exec(
-        "/grid/19c/gi_home1/bin/srvctl config database -db super_sby"
+        "/grid/19c/gi_home1/bin/crsctl status resource ora.super_sby.db -p"
     )
     listener = standby_exec(
         "/grid/19c/gi_home1/bin/srvctl config listener -listener LISTENER_SUPER"
     )
     assert config.returncode == 0, config.stdout + config.stderr
     assert listener.returncode == 0, listener.stdout + listener.stderr
-    assert "Database unique name: super_sby" in config.stdout
-    assert "Database name: super" in config.stdout
-    assert "Database role: PHYSICAL_STANDBY" in config.stdout
+    assert "NAME=ora.super_sby.db" in config.stdout
+    assert "DB_UNIQUE_NAME=super_sby" in config.stdout
+    assert "USR_ORA_DB_NAME=super" in config.stdout
+    assert "ROLE=PHYSICAL_STANDBY" in config.stdout
+    assert "MANAGEMENT_POLICY=AUTOMATIC" in config.stdout
+    assert "USR_ORA_OPEN_MODE=read only" in config.stdout
     assert (
-        "Oracle home: /super/app/oracle/dbhome_1" in config.stdout
-        or "Oracle home: /super/app/oracle/dbhome_2" in config.stdout
+        "ORACLE_HOME=/super/app/oracle/dbhome_1" in config.stdout
+        or "ORACLE_HOME=/super/app/oracle/dbhome_2" in config.stdout
     ), config.stdout
     assert any(
         path in config.stdout
         for path in (
-            "/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
-            "/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
+            "SPFILE=/super/app/oracle/dbhome_1/dbs/spfilesuper.ora",
+            "SPFILE=/super/app/oracle/dbhome_2/dbs/spfilesuper.ora",
         )
     )
     assert "LISTENER_SUPER" in listener.stdout
@@ -720,9 +792,11 @@ def _assert_super_service_role(lab_exec, standby_exec, expected_primary: str) ->
 
 def _service_state(exec_fn, db_unique_name: str) -> str:
     command = (
-        "/grid/19c/gi_home1/bin/srvctl status service "
-        f"-db {db_unique_name} -service super_svc 2>&1"
+        "/grid/19c/gi_home1/bin/crsctl status resource "
+        f"ora.{db_unique_name}.super_svc.svc -t 2>&1"
     )
-    result = exec_fn(f"su - oracle -c {shlex.quote(command)}", timeout=90)
+    result = exec_fn(command, timeout=90)
     assert result.returncode == 0, result.stdout + result.stderr
-    return result.stdout
+    if "ONLINE  ONLINE" in result.stdout:
+        return "Service super_svc is running"
+    return "Service super_svc is not running"

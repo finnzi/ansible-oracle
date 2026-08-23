@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+# Bounded cold-boot repair for Oracle Restart database resources.
+#
+# Oracle Restart can consume its normal start retries before a Data Guard peer
+# is reachable.  For a Data Guard member, never infer the role from inventory:
+# first obtain the current broker role from either fixed connect identifier.
+# If broker evidence is unavailable, leave the database alone and try again on
+# the next bounded iteration.  This prevents a former primary from being
+# repeatedly opened after FSFO has promoted its peer.
+set -u
+
+: "${ORACLE_RESTART_RECONCILE_GI_HOME:?}"
+: "${ORACLE_RESTART_RECONCILE_ATTEMPTS:?}"
+: "${ORACLE_RESTART_RECONCILE_DELAY_SECONDS:?}"
+: "${ORACLE_RESTART_RECONCILE_COMMAND_TIMEOUT_SECONDS:?}"
+: "${ORACLE_RESTART_RECONCILE_READ_TIMEOUT_SECONDS:?}"
+: "${ORACLE_RESTART_RECONCILE_MUTATION_TIMEOUT_SECONDS:?}"
+: "${ORACLE_RESTART_RECONCILE_DGMGRL_USER:?}"
+: "${ORACLE_RESTART_RECONCILE_DGMGRL_PASSWORD:?}"
+
+readonly GI_HOME="${ORACLE_RESTART_RECONCILE_GI_HOME}"
+readonly ATTEMPTS="${ORACLE_RESTART_RECONCILE_ATTEMPTS}"
+readonly DELAY_SECONDS="${ORACLE_RESTART_RECONCILE_DELAY_SECONDS}"
+readonly COMMAND_TIMEOUT_SECONDS="${ORACLE_RESTART_RECONCILE_COMMAND_TIMEOUT_SECONDS}"
+readonly READ_TIMEOUT_SECONDS="${ORACLE_RESTART_RECONCILE_READ_TIMEOUT_SECONDS}"
+readonly MUTATION_TIMEOUT_SECONDS="${ORACLE_RESTART_RECONCILE_MUTATION_TIMEOUT_SECONDS}"
+readonly DG_BROKER_USER="${ORACLE_RESTART_RECONCILE_DGMGRL_USER}"
+readonly DG_PASSWORD="${ORACLE_RESTART_RECONCILE_DGMGRL_PASSWORD}"
+
+positive_integer() {
+  [[ "$1" =~ ^[1-9][0-9]*$ ]]
+}
+
+non_negative_integer() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+positive_integer "$ATTEMPTS" || {
+  printf '[oracle-restart-reconcile] invalid attempts value: %s\n' "$ATTEMPTS" >&2
+  exit 1
+}
+non_negative_integer "$DELAY_SECONDS" || {
+  printf '[oracle-restart-reconcile] invalid delay value: %s\n' "$DELAY_SECONDS" >&2
+  exit 1
+}
+for timeout_value in \
+  "$COMMAND_TIMEOUT_SECONDS" \
+  "$READ_TIMEOUT_SECONDS" \
+  "$MUTATION_TIMEOUT_SECONDS"; do
+  if ! positive_integer "$timeout_value"; then
+    printf '[oracle-restart-reconcile] invalid timing value: %s\n' "$timeout_value" >&2
+    exit 1
+  fi
+done
+
+run_read() {
+  timeout --kill-after=5s "$READ_TIMEOUT_SECONDS" "$@"
+}
+
+run_mutation() {
+  timeout --kill-after=5s "$MUTATION_TIMEOUT_SECONDS" "$@"
+}
+
+log() {
+  printf '[oracle-restart-reconcile] %s\n' "$*"
+}
+
+has_ready() {
+  [ -x "$GI_HOME/bin/crsctl" ] || return 1
+  run_read "$GI_HOME/bin/crsctl" check has 2>&1 | grep -Fq 'CRS-4638'
+}
+
+# DGMGRL can print a valid member table together with a warning or error.  The
+# reconciliation pass is allowed to wait through only the conditions that are
+# expected during a cold boot or FSFO reinstatement. Everything else is
+# evidence that the broker view is not safe to use for a durable srvctl write.
+broker_diagnostics_valid() {
+  local output="$1"
+  local ora_codes unknown line
+
+  ora_codes="$(printf '%s\n' "$output" | grep -Eo 'ORA-[0-9]+' | sort -u || true)"
+  unknown="$(printf '%s\n' "$ora_codes" |
+    grep -Ev '^ORA-(16072|16661|16819|16820)$' || true)"
+  if [ -n "$unknown" ]; then
+    log "Failing closed: unrecognized broker diagnostic ${unknown}"
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if ! printf '%s\n' "$line" |
+      grep -Eiq 'Error:.*ORA-(16072|16661|16819|16820)'; then
+      log "Failing closed: unrecognized broker diagnostic ${line}"
+      return 1
+    fi
+  done < <(printf '%s\n' "$output" | grep -Ei '(^|[[:space:]])Error:' || true)
+  return 0
+}
+
+validate_broker_output() {
+  local output="$1"
+  local status
+
+  broker_diagnostics_valid "$output" || return 1
+  status="$(printf '%s\n' "$output" |
+    sed -n 's/^[[:space:]]*Configuration Status:[[:space:]]*//Ip' |
+    head -n 1 | tr '[:lower:]' '[:upper:]')"
+  case "$status" in
+    SUCCESS)
+      ;;
+    WARNING)
+      # A warning is accepted only for the explicit observer/cold-boot or
+      # reinstatement diagnostics. Do not turn an arbitrary warning into a
+      # reason to rewrite Restart metadata.
+      printf '%s\n' "$output" |
+        grep -Eq 'ORA-(16072|16661|16819|16820)' || return 1
+      ;;
+    ERROR)
+      # An ERROR is usable only when it is one of the enumerated cold-boot,
+      # observer, or reinstatement diagnostics checked above.
+      printf '%s\n' "$output" |
+        grep -Eq 'ORA-(16072|16661|16819|16820)' || return 1
+      ;;
+    *)
+      log "Failing closed: broker configuration status is unavailable"
+      return 1
+      ;;
+  esac
+
+  PRIMARY_COUNT="$(printf '%s\n' "$output" | awk '
+    $0 ~ /^[[:space:]]*[[:alnum:]_.-]+[[:space:]]+-[[:space:]]+(\(\*\)[[:space:]]+)?Primary database[[:space:]]*$/ { count++ }
+    END { print count + 0 }
+  ')"
+  STANDBY_COUNT="$(printf '%s\n' "$output" | awk '
+    $0 ~ /^[[:space:]]*[[:alnum:]_.-]+[[:space:]]+-[[:space:]]+(\(\*\)[[:space:]]+)?Physical standby database[[:space:]]*$/ { count++ }
+    END { print count + 0 }
+  ')"
+  if [ "$PRIMARY_COUNT" -ne 1 ] || [ "$STANDBY_COUNT" -ne 1 ]; then
+    log "Failing closed: broker did not report exactly one primary and one physical standby"
+    return 1
+  fi
+
+  BROKER_PRIMARY="$(printf '%s\n' "$output" | awk '
+    $0 ~ /^[[:space:]]*[[:alnum:]_.-]+[[:space:]]+-[[:space:]]+(\(\*\)[[:space:]]+)?Primary database[[:space:]]*$/ { print $1; exit }
+  ')"
+  BROKER_STANDBY="$(printf '%s\n' "$output" | awk '
+    $0 ~ /^[[:space:]]*[[:alnum:]_.-]+[[:space:]]+-[[:space:]]+(\(\*\)[[:space:]]+)?Physical standby database[[:space:]]*$/ { print $1; exit }
+  ')"
+  [ -n "$BROKER_PRIMARY" ] && [ -n "$BROKER_STANDBY" ]
+}
+
+validate_member_output() {
+  local output="$1"
+  local db_unique="$2"
+  local member_role
+
+  broker_diagnostics_valid "$output" || return 1
+  printf '%s\n' "$output" | grep -Fq "Database - ${db_unique}" || {
+    log "Failing closed: broker member probe did not identify ${db_unique}"
+    return 1
+  }
+
+  # ORA-16072 means the primary was attempted before a synchronous standby
+  # was ready; ORA-16661 means the former primary must be mounted for broker
+  # AutoReinstate. Both are safe retry/mount signals, not role evidence.
+  if printf '%s\n' "$output" | grep -Eq 'ORA-(16072|16661)'; then
+    return 0
+  fi
+
+  member_role="$(printf '%s\n' "$output" |
+    sed -n 's/^[[:space:]]*Role:[[:space:]]*//Ip' | head -n 1 | tr '[:lower:]' '[:upper:]')"
+  case "$member_role" in
+    PRIMARY)
+      [ "$db_unique" = "$BROKER_PRIMARY" ]
+      ;;
+    PHYSICAL\ STANDBY)
+      [ "$db_unique" = "$BROKER_STANDBY" ]
+      ;;
+    *)
+      log "Failing closed: broker member ${db_unique} role is unavailable"
+      return 1
+      ;;
+  esac
+}
+
+# Set BROKER_PRIMARY and BROKER_STANDBY from a live broker configuration.
+# The peer may be the only reachable endpoint while this host is booting.
+probe_broker() {
+  local db_home="$1"
+  local db_unique="$2"
+  local peer_unique="$3"
+  local target output member_output
+  BROKER_PRIMARY=""
+  BROKER_STANDBY=""
+  BROKER_MEMBER_NEEDS_REINSTATE=0
+  for target in "${db_unique}_dgb" "${peer_unique}_dgb"; do
+    output="$(ORACLE_HOME="$db_home" timeout --kill-after=5s "$COMMAND_TIMEOUT_SECONDS" "$db_home/bin/dgmgrl" -silent \
+      "${DG_BROKER_USER}/${DG_PASSWORD}@${target}" <<'DGMGRL' 2>/dev/null
+SHOW CONFIGURATION;
+EXIT;
+DGMGRL
+    )" || true
+    if ! validate_broker_output "$output"; then
+      continue
+    fi
+
+    member_output="$(ORACLE_HOME="$db_home" timeout --kill-after=5s "$COMMAND_TIMEOUT_SECONDS" "$db_home/bin/dgmgrl" -silent \
+      "${DG_BROKER_USER}/${DG_PASSWORD}@${target}" <<DGMGRL 2>/dev/null
+SHOW DATABASE '${db_unique}';
+EXIT;
+DGMGRL
+    )" || true
+    if ! validate_member_output "$member_output" "$db_unique"; then
+      continue
+    fi
+
+    # ORA-16661 is the specific FSFO state Oracle documents for a former
+    # primary that must be mounted before AutoReinstate can repair it. Do not
+    # treat an administratively DISABLED member the same way.
+    if printf '%s\n' "$member_output" | grep -Fq 'ORA-16661'; then
+      BROKER_MEMBER_NEEDS_REINSTATE=1
+    fi
+    return 0
+  done
+  BROKER_PRIMARY=""
+  BROKER_STANDBY=""
+  return 1
+}
+
+# Print a canonical local role/open-mode marker, or nothing while the DB is
+# still down.  This is a read-only fallback for non-Data Guard databases and
+# for deciding whether an already-running DG DB needs no action.
+local_state() {
+  local db_home="$1"
+  local sid="$2"
+  run_read env ORACLE_HOME="$db_home" ORACLE_SID="$sid" "$db_home/bin/sqlplus" -L -S / as sysdba <<'SQL' 2>/dev/null |
+SET PAGES 0 FEEDBACK OFF VERIFY OFF HEADING OFF
+SELECT database_role || '|' || open_mode FROM v$database;
+EXIT;
+SQL
+  awk '/^[[:space:]]*(PRIMARY|PHYSICAL STANDBY)\|(READ WRITE|READ ONLY WITH APPLY|READ ONLY|MOUNTED)[[:space:]]*$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); print; exit}'
+}
+
+reconcile_database() {
+  local db_home="$1"
+  local db_unique="$2"
+  local sid="$3"
+  local dg_enabled="$4"
+  local peer_unique="$5"
+  local config state status start_output start_rc desired_role desired_start_option
+
+  [ -x "$db_home/bin/srvctl" ] || {
+    log "Skipping ${db_unique}: database-home srvctl is unavailable"
+    return 0
+  }
+  config="$(run_read env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" config database -db "$db_unique" -all 2>&1)" || {
+    log "Skipping ${db_unique}: Restart registration is not readable yet"
+    return 0
+  }
+
+  desired_role="PRIMARY"
+  desired_start_option="OPEN"
+  if [ "$dg_enabled" = "1" ]; then
+    if ! probe_broker "$db_home" "$db_unique" "$peer_unique"; then
+      log "Failing closed for ${db_unique}: live broker role is unavailable"
+      return 1
+    fi
+    if [ "$BROKER_PRIMARY" = "$db_unique" ]; then
+      desired_role="PRIMARY"
+      desired_start_option="OPEN"
+    elif [ "$BROKER_STANDBY" = "$db_unique" ]; then
+      desired_role="PHYSICAL_STANDBY"
+      desired_start_option="read only"
+    else
+      log "Failing closed for ${db_unique}: broker did not identify this member"
+      return 1
+    fi
+  fi
+
+  # A clear local role mismatch means the broker and local instance are in a
+  # transition.  Do not stop or open it based on stale inventory assumptions.
+  state="$(local_state "$db_home" "$sid")"
+  if [ -n "$state" ]; then
+    case "$state" in
+      PRIMARY\|* )
+        [ "$desired_role" = "PRIMARY" ] || {
+          log "Failing closed for ${db_unique}: local state ${state}, broker role ${desired_role}"
+          return 1
+        }
+        ;;
+      PHYSICAL\ STANDBY\|* )
+        [ "$desired_role" = "PHYSICAL_STANDBY" ] || {
+          log "Failing closed for ${db_unique}: local state ${state}, broker role ${desired_role}"
+          return 1
+        }
+        ;;
+      * )
+        log "Failing closed for ${db_unique}: unrecognized local state ${state}"
+        return 1
+        ;;
+    esac
+  fi
+
+  status="$(run_read env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" status database -db "$db_unique" 2>&1)" || true
+  if [ "$dg_enabled" = "1" ] && [ "$BROKER_MEMBER_NEEDS_REINSTATE" -eq 1 ]; then
+    # FSFO leaves the old primary as a broker-disabled physical standby until
+    # the observer reinstates it.  Do not rewrite its durable Restart role or
+    # try to open it read-only; hand the observer a mounted database instead.
+    if [ -n "$state" ]; then
+      case "$state" in
+        PHYSICAL\ STANDBY\|MOUNTED|PHYSICAL\ STANDBY\|READ\ ONLY* )
+          log "${db_unique} is a broker-disabled standby; leaving it for observer reinstatement"
+          return 0
+          ;;
+      esac
+    fi
+    if printf '%s\n' "$status" | grep -Eiq 'is running|running on node'; then
+      log "${db_unique} is broker-disabled and online; leaving it unchanged for observer reinstatement"
+      return 0
+    fi
+    log "Starting broker-disabled ${db_unique} MOUNTED for observer reinstatement"
+    start_output="$(run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" start database \
+      -db "$db_unique" -startoption MOUNT 2>&1)"
+    start_rc=$?
+    printf '%s\n' "$start_output"
+    if [ "$start_rc" -ne 0 ] &&
+       ! printf '%s\n' "$start_output" | grep -Eiq 'already running|PRCC-1014'; then
+      return "$start_rc"
+    fi
+    return 0
+  fi
+
+  if ! printf '%s\n' "$config" | grep -Fqi "Database role: ${desired_role}" ||
+     ! printf '%s\n' "$config" | grep -Fiq "Start options: ${desired_start_option}" ||
+     ! printf '%s\n' "$config" | grep -Eiq '^Stop options:[[:space:]]*immediate$' ||
+     ! printf '%s\n' "$config" | grep -Eiq '^Management policy:[[:space:]]*automatic$'; then
+    log "Reconciling ${db_unique} through database-home srvctl (${desired_role}/${desired_start_option})"
+    run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" modify database \
+      -db "$db_unique" \
+      -role "$desired_role" \
+      -policy AUTOMATIC \
+      -startoption "$desired_start_option" \
+      -stopoption IMMEDIATE || return 1
+  fi
+
+  if printf '%s\n' "$status" | grep -Eiq 'is running|running on node'; then
+    state="$(local_state "$db_home" "$sid")"
+    case "$desired_role:$state" in
+      PRIMARY:PRIMARY\|READ\ WRITE|PHYSICAL_STANDBY:PHYSICAL\ STANDBY\|READ\ ONLY* )
+        log "${db_unique} is role-appropriate and ready"
+        return 0
+        ;;
+      * )
+        # The resource is online but not role-appropriate (for example a
+        # mounted primary left by ORA-16072).  Restart it only after the
+        # broker/local role check above has made the stop safe.
+        log "Restarting ${db_unique} with role-appropriate start option"
+        run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" stop database \
+          -db "$db_unique" -stopoption IMMEDIATE || return 1
+        ;;
+    esac
+  fi
+
+  log "Starting ${db_unique} through database-home srvctl"
+  run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" start database -db "$db_unique" \
+    -startoption "$desired_start_option"
+}
+
+for ((attempt=1; attempt<=ATTEMPTS; attempt++)); do
+  if ! has_ready; then
+    log "Oracle High Availability Services is not ready (attempt ${attempt}/${ATTEMPTS})"
+  else
+    pending=0
+{% set reconcile_instances = (oracle_instances | default([])) | oracle_apply_instance_overrides(oracle_instance_overrides | default({}), oracle_restart_apply_instance_overrides_require_dataguard | default(true)) %}
+{% for inst in reconcile_instances %}
+{% set current_home = (inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0]) %}
+{% set db_unique = inst.db_unique_name | default(inst.name) %}
+{% set dg_role = inst.dg_role | default('') | lower %}
+{% set peer_unique = inst.dg_primary_db_unique_name | default(inst.name) if dg_role == 'standby' else inst.dg_standby_db_unique_name | default(inst.name ~ '_sby') %}
+    if ! reconcile_database \
+      {{ (inst.oracle_base ~ '/' ~ current_home.suffix) | quote }} \
+      {{ db_unique | quote }} \
+      {{ inst.name | quote }} \
+      {{ '1' if (inst.dataguard | default(false) | bool) else '0' }} \
+      {{ peer_unique | quote }}; then
+      pending=1
+    fi
+{% endfor %}
+    if [ "$pending" -eq 0 ]; then
+      log "Oracle Restart post-boot reconciliation complete"
+      exit 0
+    fi
+  fi
+  [ "$attempt" -lt "$ATTEMPTS" ] && sleep "$DELAY_SECONDS"
+done
+
+log "Reconciliation remained incomplete after ${ATTEMPTS} bounded attempts; leaving resources unchanged where role evidence was unavailable"
+exit 1

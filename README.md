@@ -20,7 +20,12 @@ Implemented:
 - DB home install, standalone instance creation, listener, and `super_svc`
   service verified in the KVM lab.
 - Oracle Restart/Grid install path, Restart registration, systemd OHASD stack
-  startup, CSS autostart, and stop/start recovery verified on the KVM primary.
+  startup, OHASD autostart, and role-aware database startup verified on both
+  KVM database hosts. Database files are filesystem-backed, while the dedicated
+  Grid disk supplies the `RESTART` ASM disk group used by Oracle Restart. The
+  installer completes Oracle's post-root configuration-assistant phase so ASM
+  and CSS are configured through supported tools; automation never directly
+  manipulates an internal `ora.*` resource with CRSCTL.
 - Restart-managed `super_svc` client service registered with role `PRIMARY` on
   both Data Guard members, running only on the current primary.
 - Role-based `super_pri` and `super_stb` services plus native two-site Oracle
@@ -206,7 +211,33 @@ ansible-playbook playbooks/site.yml -e oracle_gi_install_enabled=true
 
 # Run pytest against the lab.
 ./scripts/run-tests.sh
+
+# Prove that a guest power cycle—not an Ansible repair—starts Oracle services.
+./lab/scripts/lab-down.sh
+./lab/scripts/lab-up.sh
+./scripts/verify-lab-autostart.sh
 ```
+
+Oracle's supported automatic-startup controls are used throughout: `crsctl
+enable has` enables Oracle High Availability Services at boot, while `srvctl`
+registers and enables databases, listeners, services, and ONS with an
+`AUTOMATIC` management policy and role-appropriate database start options.
+The Grid response-file install also runs Oracle's documented
+`gridSetup.sh -executeConfigTools` postinstallation phase after `root.sh`; the
+completion marker is written only after CSS and ASM are online. The verifier is
+deliberately read-only and never starts or repairs a resource.
+
+For a coordinated Data Guard cold boot, a bounded systemd reconciliation pass
+retries database-home `srvctl` after the peer becomes reachable. The FSFO
+observer waits for a healthy broker primary before beginning its initial
+failover threshold. After a real FSFO promotion, an `ORA-16661` former primary
+is started mounted so the observer's `FastStartFailoverAutoReinstate=TRUE`
+policy can reinstate it; an administratively disabled member is left alone.
+See Oracle's documentation for [automatic database restart](https://docs.oracle.com/en/database/oracle/oracle-database/19/admin/configuring-automatic-restart-of-an-oracle-database.html),
+the [SRVCTL command reference](https://docs.oracle.com/en/database/oracle/oracle-database/19/racad/server-control-utility-reference.html),
+the [CRSCTL command reference](https://docs.oracle.com/en/database/oracle/oracle-database/19/cwadd/oracle-clusterware-control-crsctl-utility-reference.html),
+Oracle's [postinstallation configuration procedure](https://docs.oracle.com/en/database/oracle/oracle-database/19/hpdbi/running-postinstallation-configuration-using-response-file.html),
+and the [FSFO failover and automatic-reinstatement procedure](https://docs.oracle.com/en/database/oracle/oracle-database/19/dgbkr/using-data-guard-broker-to-manage-switchovers-failovers.html).
 
 Oracle installers and patches are expected under `~/sources/oracle` by default
 and are mounted read-only into the VMs at `/u01/stage`. Override with

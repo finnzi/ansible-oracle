@@ -45,6 +45,19 @@
   changed_when: false
   failed_when: false
 
+- name: Probe existing ASM registration before install
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [ -x {{ oracle_gi_home }}/bin/crsctl ]; then
+      {{ oracle_gi_home }}/bin/crsctl status resource ora.asm -p 2>&1 || true
+    else
+      echo "no-crsctl"
+    fi
+  args: { executable: /bin/bash }
+  register: _gi_existing_asm_profile
+  changed_when: false
+  failed_when: false
+
 - name: Check GI install marker
   ansible.builtin.stat:
     path: "{{ oracle_gi_home }}/.install_complete"
@@ -55,20 +68,30 @@
     path: "{{ oracle_gi_home }}/crs/install/crsconfig_params"
   register: _gi_crsconfig_params
 
-- name: Check whether GI root configuration already started
-  ansible.builtin.stat:
-    path: /etc/systemd/system/oracle-ohasd.service
-  register: _gi_root_started
+- name: Verify whether GI root configuration completed
+  ansible.builtin.shell: |
+    set -o pipefail
+    test -f /etc/oracle/olr.loc
+    grep -Fqx 'crs_home={{ oracle_gi_home }}' /etc/oracle/olr.loc
+    test "$(cat /etc/oracle/scls_scr/{{ ansible_hostname }}/root/crsstart 2>/dev/null)" = enable
+  args: { executable: /bin/bash }
+  register: _gi_root_configured
+  changed_when: false
+  failed_when: false
 
 - name: Record current GI install fact
   ansible.builtin.set_fact:
     oracle_gi_installed: "{{ _gi_srvctl.stat.exists and 'CRS-4638' in (_gi_existing_has_check.stdout | default('')) }}"
+    _gi_asm_registered: >-
+      {{
+        _gi_srvctl.stat.exists and
+        'NAME=ora.asm' in (_gi_existing_asm_profile.stdout | default(''))
+      }}
 
 - name: Install Oracle Grid Infrastructure standalone
   when:
     - oracle_gi_install_enabled | bool
-    - not _gi_marker.stat.exists
-    - not oracle_gi_installed
+    - not (_gi_marker.stat.exists and _gi_asm_registered)
   block:
     - name: Check free space for Grid Infrastructure install
       ansible.builtin.shell: |
@@ -128,7 +151,7 @@
         - _gi_gridsetup.stat.exists
         - not oracle_gi_installed
         - not _gi_crsconfig_params.stat.exists
-        - not _gi_root_started.stat.exists
+        - _gi_root_configured.rc != 0
 
     - name: Ensure GI directories exist
       ansible.builtin.file:
@@ -347,6 +370,56 @@
       register: _gi_root
       changed_when: true
       failed_when: _gi_root.rc != 0
+      when: _gi_root_configured.rc != 0
+
+    # A response-file install pauses after software setup and root.sh. Oracle's
+    # documented postinstallation phase runs ASMCA and the remaining Grid
+    # configuration assistants. Without it, OHASD exists but ora.asm/CSS do not,
+    # and service-level SRVCTL operations fail with PRCR-1055.
+    - name: Allow the Grid owner to update oratab during configuration
+      ansible.builtin.file:
+        path: /etc/oratab
+        state: touch
+        owner: root
+        group: "{{ oracle_group }}"
+        mode: "0664"
+        modification_time: preserve
+        access_time: preserve
+      when: not (_gi_asm_registered | bool)
+
+    - name: Run Grid Infrastructure configuration assistants
+      ansible.builtin.command:
+        argv:
+          - "{{ oracle_gi_home }}/gridSetup.sh"
+          - -silent
+          - -executeConfigTools
+          - -responseFile
+          - "{{ _gi_response_file }}"
+      environment:
+        CV_ASSUME_DISTID: OL7
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _gi_config_tools
+      changed_when: true
+      when: not (_gi_asm_registered | bool)
+
+    - name: Verify ASM and CSS after Grid configuration
+      ansible.builtin.shell: |
+        set -o pipefail
+        css="$({{ oracle_gi_home }}/bin/crsctl check css 2>&1)"
+        asm="$({{ oracle_gi_home }}/bin/crsctl status resource ora.asm -p 2>&1)"
+        asm_status="$({{ oracle_gi_home }}/bin/srvctl status asm 2>&1)"
+        diskgroup="$({{ oracle_gi_home }}/bin/srvctl status diskgroup -diskgroup {{ oracle_gi_asm_diskgroup_name | quote }} 2>&1)"
+        printf '%s\n%s\n%s\n%s\n' "$css" "$asm" "$asm_status" "$diskgroup"
+        printf '%s\n' "$css" | grep -Fq 'CRS-4529'
+        printf '%s\n' "$asm" | grep -Fqx 'NAME=ora.asm'
+        printf '%s\n' "$asm_status" | grep -Fiq 'ASM is running'
+        printf '%s\n' "$diskgroup" | grep -Fiq 'Disk Group {{ oracle_gi_asm_diskgroup_name }} is running'
+      args: { executable: /bin/bash }
+      become: true
+      become_user: "{{ oracle_user }}"
+      register: _gi_asm_css_verify
+      changed_when: false
 
     - name: Drop GI install marker
       ansible.builtin.file:
@@ -374,6 +447,20 @@
     _gi_ohasd_boot_files_present: >-
       {{ _gi_ohasd_boot_files.results | map(attribute='stat.exists') | min }}
     _gi_ohasd_native_starts_stack: false
+
+- name: Refresh ASM registration after GI configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    if [ -x {{ oracle_gi_home }}/bin/crsctl ]; then
+      {{ oracle_gi_home }}/bin/crsctl status resource ora.asm -p 2>&1 || true
+    else
+      echo "no-crsctl"
+    fi
+  args: { executable: /bin/bash }
+  register: _gi_asm_profile_after_config
+  changed_when: false
+  failed_when: false
+  when: _gi_ohasd_repair_requested | bool
 
 - name: Read native OHASD systemd unit
   ansible.builtin.slurp:
@@ -461,6 +548,27 @@
   when:
     - _gi_ohasd_repair_requested | bool
     - _gi_srvctl.stat.exists
+
+- name: Wait for the configured Restart ASM stack
+  ansible.builtin.shell: |
+    set -o pipefail
+    css="$({{ oracle_gi_home }}/bin/crsctl check css 2>&1)"
+    asm="$({{ oracle_gi_home }}/bin/srvctl status asm 2>&1)"
+    diskgroup="$({{ oracle_gi_home }}/bin/srvctl status diskgroup -diskgroup {{ oracle_gi_asm_diskgroup_name | quote }} 2>&1)"
+    printf '%s\n%s\n%s\n' "$css" "$asm" "$diskgroup"
+    grep -Fq 'CRS-4529' <<<"$css"
+    grep -Fiq 'ASM is running' <<<"$asm"
+    grep -Fiq 'Disk Group {{ oracle_gi_asm_diskgroup_name }} is running' <<<"$diskgroup"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _gi_restart_stack_wait
+  changed_when: false
+  retries: 30
+  delay: 2
+  until: _gi_restart_stack_wait.rc == 0
+  when:
+    - _gi_ohasd_repair_requested | bool
 
 - name: Probe Restart stack after GI install attempt
   ansible.builtin.shell: |
