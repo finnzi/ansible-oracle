@@ -35,8 +35,10 @@ LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-250G}"
 LAB_GRID_DISK_SIZE="${LAB_GRID_DISK_SIZE:-20G}"
 LAB_DB_MEMORY_MIB="${LAB_DB_MEMORY_MIB:-12288}"
 LAB_OBSERVER_MEMORY_MIB="${LAB_OBSERVER_MEMORY_MIB:-4096}"
+LAB_SWAP_SIZE_MIB="${LAB_SWAP_SIZE_MIB:-2048}"
 LAB_DB_VCPUS="${LAB_DB_VCPUS:-4}"
 LAB_OBSERVER_VCPUS="${LAB_OBSERVER_VCPUS:-2}"
+LAB_SHUTDOWN_TIMEOUT_SECONDS="${LAB_SHUTDOWN_TIMEOUT_SECONDS:-600}"
 VIRSH_URI="${VIRSH_URI:-qemu:///system}"
 
 BASE_IMAGE="${ORACLE_LINUX_BASE_IMAGE:-${IMAGE_DIR}/OracleLinux-${LAB_OS_VERSION}-x86_64-kvm.qcow2}"
@@ -75,6 +77,30 @@ group_list_has() {
 
 virsh_cmd() {
   virsh --connect "${VIRSH_URI}" "$@"
+}
+
+lab_epoch_seconds() {
+  local now
+  now="$(date +%s 2>/dev/null)" || return 1
+  case "${now}" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  printf '%s\n' "${now}"
+}
+
+lab_shutdown_deadline_after() {
+  local timeout_seconds="$1" now
+  if ! lab_is_positive_integer "${timeout_seconds}"; then
+    return 1
+  fi
+  now="$(lab_epoch_seconds)" || return 1
+  printf '%s\n' "$((now + timeout_seconds))"
+}
+
+lab_shutdown_deadline_expired() {
+  local deadline="$1" now
+  now="$(lab_epoch_seconds)" || return 2
+  [ "${now}" -ge "${deadline}" ]
 }
 
 lab_prepare_state_dirs() {
@@ -206,21 +232,84 @@ ssh_lab() {
   ssh "${opts[@]}" "root@${host_ip}" "$@"
 }
 
-wait_for_domain_shutoff() {
-  local name="$1" tries=0 state
-  while true; do
-    state="$(virsh_cmd domstate "${name}" 2>/dev/null | tr -d '\r' || true)"
-    case "${state}" in
-      "shut off"|"") return 0 ;;
-    esac
-    tries=$((tries+1))
-    if [ "${tries}" -ge 60 ]; then
-      warn "${name} did not shut off; destroying"
-      virsh_cmd destroy "${name}" >/dev/null 2>&1 || true
+wait_for_domains_shutoff() {
+  local deadline="$1" timeout_seconds="$2"
+  shift 2
+  local waited=0 state sleep_seconds name query_failed now real_remaining logical_remaining
+  local -a pending=("$@") remaining=()
+  local -A last_states=()
+
+  if ! lab_is_positive_integer "${timeout_seconds}"; then
+    die "Shutdown timeout must be a positive integer (got: ${timeout_seconds})"
+  fi
+
+  while [ "${#pending[@]}" -gt 0 ]; do
+    if now="$(lab_epoch_seconds 2>/dev/null)" && [ "${now}" -ge "${deadline}" ]; then
+      for name in "${pending[@]}"; do
+        warn "${name} did not shut off within ${timeout_seconds}s (state: ${last_states["${name}"]:-unknown})"
+      done
+      return 1
+    fi
+
+    remaining=()
+    query_failed=false
+    for name in "${pending[@]}"; do
+      if ! state="$(virsh_cmd domstate "${name}")"; then
+        warn "Unable to read shutdown state for ${name}"
+        query_failed=true
+        continue
+      fi
+      state="$(printf '%s' "${state}" | tr -d '\r')"
+      if [ -z "${state}" ]; then
+        warn "Unable to read shutdown state for ${name}: empty state"
+        query_failed=true
+        continue
+      fi
+      last_states["${name}"]="${state}"
+      if [ "${state}" != "shut off" ]; then
+        remaining+=("${name}")
+      fi
+    done
+
+    if [ "${query_failed}" = true ]; then
+      return 1
+    fi
+    pending=("${remaining[@]}")
+    if [ "${#pending[@]}" -eq 0 ]; then
       return 0
     fi
-    sleep 2
+
+    # Use the real epoch deadline when available so time spent inside virsh
+    # counts.  The logical clock remains a deterministic fallback for tests
+    # (and unusual environments) whose sleep command does not advance time.
+    real_remaining="${timeout_seconds}"
+    if now="$(lab_epoch_seconds 2>/dev/null)"; then
+      real_remaining=$((deadline - now))
+    fi
+    logical_remaining=$((timeout_seconds - waited))
+    if [ "${real_remaining}" -le 0 ] || [ "${logical_remaining}" -le 0 ]; then
+      for name in "${pending[@]}"; do
+        warn "${name} did not shut off within ${timeout_seconds}s (state: ${last_states[$name]})"
+      done
+      return 1
+    fi
+    sleep_seconds=2
+    if [ "${sleep_seconds}" -gt "${real_remaining}" ]; then
+      sleep_seconds="${real_remaining}"
+    fi
+    if [ "${sleep_seconds}" -gt "${logical_remaining}" ]; then
+      sleep_seconds="${logical_remaining}"
+    fi
+    sleep "${sleep_seconds}"
+    waited=$((waited + sleep_seconds))
   done
+}
+
+wait_for_domain_shutoff() {
+  local deadline
+  deadline="$(lab_shutdown_deadline_after "${LAB_SHUTDOWN_TIMEOUT_SECONDS}")" || \
+    die "Unable to establish shutdown deadline"
+  wait_for_domains_shutoff "${deadline}" "${LAB_SHUTDOWN_TIMEOUT_SECONDS}" "$1"
 }
 
 render_lab_inventory() {
@@ -345,6 +434,13 @@ write_files:
 # Requires the org.qemu.guest_agent.0 channel in write_domain_xml.
 packages:
   - qemu-guest-agent
+# OUI starts nested attachHome sessions while applying RUs. Give those
+# sessions deterministic swap headroom instead of relying on the cloud
+# image's marginal 512 MiB swap device.
+swap:
+  filename: /swapfile
+  size: ${LAB_SWAP_SIZE_MIB}M
+  maxsize: ${LAB_SWAP_SIZE_MIB}M
 runcmd:
   - [ sh, -lc, "growpart /dev/vda 4 || true" ]
   - [ sh, -lc, "pvresize /dev/vda4 || true" ]
@@ -545,6 +641,7 @@ lab_preflight_resources() {
   for value_name in \
     LAB_DB_MEMORY_MIB \
     LAB_OBSERVER_MEMORY_MIB \
+    LAB_SWAP_SIZE_MIB \
     LAB_DB_VCPUS \
     LAB_OBSERVER_VCPUS; do
     if ! lab_is_positive_integer "${!value_name}"; then

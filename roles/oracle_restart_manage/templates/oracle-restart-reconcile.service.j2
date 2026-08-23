@@ -1,0 +1,29 @@
+[Unit]
+Description=Role-aware Oracle Restart post-boot reconciliation
+Wants=network-online.target oracle-ohasd.service
+After=oracle-ohasd.service network-online.target
+ConditionPathExists={{ oracle_restart_reconcile_script_path }}
+
+[Service]
+Type=oneshot
+User={{ oracle_user }}
+Group={{ oracle_group }}
+ExecStart={{ oracle_restart_reconcile_script_path }}
+EnvironmentFile={{ oracle_restart_reconcile_environment_file }}
+# Per instance, reserve four bounded read probes (SRVCTL config/status and up
+# to two SQL role probes), four DGMGRL probes, and three bounded SRVCTL
+# mutations. Add five seconds for each timeout's kill-after grace period and a
+# generous shell/CRS margin; the instance count is intentionally unfiltered so
+# this remains conservative when host overrides select a smaller set.
+TimeoutStartSec={{ (
+  (oracle_restart_reconcile_attempts | int) * (
+    (oracle_restart_reconcile_delay_seconds | int) +
+    (1 + (oracle_instances | default([]) | length) * 4) * ((oracle_restart_reconcile_read_timeout_seconds | int) + 5) +
+    (oracle_instances | default([]) | length) * 4 * ((oracle_restart_reconcile_command_timeout_seconds | int) + 5) +
+    (oracle_instances | default([]) | length) * 3 * ((oracle_restart_reconcile_mutation_timeout_seconds | int) + 5) +
+    60
+  ) + 60
+) }}s
+
+[Install]
+WantedBy=multi-user.target

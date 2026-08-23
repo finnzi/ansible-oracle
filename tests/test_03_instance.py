@@ -68,6 +68,9 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     network_defaults = (
         REPO_ROOT / "roles/oracle_network/defaults/main.yml"
     ).read_text(encoding="utf-8")
+    common_guest_hosts = (
+        REPO_ROOT / "roles/oracle_common/tasks/guest-hosts.yml"
+    ).read_text(encoding="utf-8")
     service_tasks = (
         REPO_ROOT / "roles/oracle_service_manage/tasks/create-service.yml"
     ).read_text(encoding="utf-8") + (
@@ -112,14 +115,22 @@ def test_db_manage_role_uses_writable_dbca_response_path():
         in network_tasks
     )
     assert "if dg_mode else ('standby' not in group_names" not in network_tasks
-    assert "Ensure guest /etc/hosts has the lab host aliases" in network_tasks
+    assert "Ensure guest hosts files have the lab host aliases" in common_guest_hosts
+    assert 'mktemp "${hosts_file}.ansible-oracle.XXXXXX"' in common_guest_hosts
+    assert "trap 'rm -f -- \"$tmp\"' EXIT" in common_guest_hosts
+    assert "if ! awk" in common_guest_hosts
+    assert 'mv -f -- "$tmp" "$hosts_file"' in common_guest_hosts
+    assert "Inspect cloud-init hosts template" in common_guest_hosts
+    assert "/etc/cloud/templates/hosts.redhat.tmpl" in common_guest_hosts
+    assert "_common_guest_hosts_managed_files" in common_guest_hosts
+    assert "Verify guest FQDN resolves to a non-loopback IPv4 address" in common_guest_hosts
     assert "oracle_network_open_firewall: false" in network_defaults
     assert "oracle_lab_host_map_mode: standalone" in network_defaults
     assert "oracle_lab_listener_vips: []" in network_defaults
     assert "oracle_network_persist_listener_vips: true" in network_defaults
     assert "oracle_network_listener_vip_prefix: 24" in network_defaults
     assert "oracle_network_open_firewall: true" in lab_group_vars
-    assert "oracle_lab_host_map_mode: standalone" in lab_group_vars
+    assert "oracle_lab_host_map_mode: dataguard" in lab_group_vars
     assert "192.168.87.21" in lab_group_vars
     assert "names: superdb.domain.is superdb" in lab_group_vars
     assert "modes: [standalone]" in lab_group_vars
@@ -158,7 +169,7 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "nmcli is required to persist listener VIP" in network_tasks
     assert "nmcli connection modify" in network_tasks
     assert "ip addr add" in network_tasks
-    assert "register: _guest_hosts" in network_tasks
+    assert "register: _common_guest_hosts" in common_guest_hosts
     assert "Restart listener where bind inputs changed" in network_tasks
     assert "vip_changed" in network_tasks
     assert "_home_is_current" in network_tasks

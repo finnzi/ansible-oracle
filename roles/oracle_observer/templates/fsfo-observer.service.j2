@@ -7,12 +7,16 @@ Wants=network-online.target
 Type=simple
 User={{ oracle_user }}
 Group={{ oracle_group }}
+RuntimeDirectory={{ observer_service_name }}
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 EnvironmentFile=/etc/sysconfig/{{ observer_service_name }}
+ExecStartPre=/usr/local/bin/{{ observer_service_name }}-cold-boot-guard
 ExecStart=/usr/local/bin/{{ observer_service_name }}-start
 ExecStop=/usr/local/bin/{{ observer_service_name }}-stop
 Restart=on-failure
 RestartSec=15
-TimeoutStartSec=180
+TimeoutStartSec={{ observer_cold_boot_guard_timeout }}
 TimeoutStopSec=180
 
 [Install]

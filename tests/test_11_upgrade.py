@@ -3,6 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+from ansible.parsing.splitter import split_args
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -86,10 +89,31 @@ def test_db_deinstall_role_safety_contract():
     )[0]
     assert "Detach Oracle home from central inventory" in tasks
     assert "-detachHome" in tasks
+    assert "-waitforcompletion -ignoreSysPrereqs" in tasks
+    assert "ContentsXML/inventory.xml" in tasks
+    assert "home_is_registered" in tasks
+    assert 'REMOVED="T"' in tasks
+    assert 'fallback={{ item.item.current_home_path | quote }}' in tasks
+    assert "DETACH_FAILED" in tasks
+    assert "DETACH_BEST_EFFORT" not in tasks
+    assert "failed_when: _deinstall_detach.rc != 0" in tasks
     assert "Rescue spfile/pfile/orapw before removing Oracle home" in tasks
     assert "Remove Oracle home directory tree" in tasks
     assert "Remove per-home install staging directory" in tasks
     assert "Report deinstall plan (readiness)" in tasks
+
+
+def test_db_deinstall_shell_commands_are_parseable_by_ansible():
+    task_list = yaml.safe_load(
+        (REPO_ROOT / "roles/oracle_db_deinstall/tasks/main.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    for task in task_list:
+        command = task.get("ansible.builtin.shell")
+        if isinstance(command, str):
+            split_args(command)
 
 
 def test_dual_home_switch_relocates_spfile_to_durable_data_path():

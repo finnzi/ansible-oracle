@@ -129,11 +129,62 @@
     _install_apply_ru: >-
       {{ (ansible_distribution_major_version | default('7')) not in ['7'] }}
 
+- name: Resolve Database RU media for installer applyRU
+  ansible.builtin.set_fact:
+    _db_ru_zip_input: >-
+      {{
+        oracle_db_install_apply_ru_zip
+        | default(
+            oracle_patch_db_zip
+            | default(
+                oracle_stage_dir ~ '/' ~
+                (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip'))
+              ),
+            true
+          )
+      }}
+    _db_ru_component_path: >-
+      {{
+        oracle_db_install_apply_ru_component_path
+        | default(
+            oracle_patch_apply_component_path
+            | default(oracle_db_install_apply_ru_component_id | default(''), true),
+            true
+          )
+      }}
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
+- name: Normalize Database RU media path for installer applyRU
+  ansible.builtin.set_fact:
+    _db_ru_zip_path: >-
+      {{
+        _db_ru_zip_input
+        if _db_ru_zip_input.startswith('/')
+        else oracle_stage_dir ~ '/' ~ _db_ru_zip_input
+      }}
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
+- name: Verify Database RU media for installer applyRU
+  ansible.builtin.stat:
+    path: "{{ _db_ru_zip_path }}"
+  register: _db_ru_zip_stat
+  failed_when: not _db_ru_zip_stat.stat.exists
+  when:
+    - not _marker.stat.exists
+    - not _oracle_home_linked | default(false)
+    - _install_apply_ru | bool
+
 - name: Set DB RU staging paths
   ansible.builtin.set_fact:
     _db_ru_extract_dir: "{{ _home_stage }}/db_ru"
     _db_ru_extract_marker: >-
-      {{ _home_stage }}/db_ru/.{{ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip')) }}.extracted
+      {{ _home_stage }}/db_ru/.{{ _db_ru_zip_path | basename }}.extracted
   when:
     - not _marker.stat.exists
     - not _oracle_home_linked | default(false)
@@ -162,7 +213,7 @@
 
 - name: Extract DB RU bundle for runInstaller -applyRU
   ansible.builtin.unarchive:
-    src: "{{ tgt.stage_dir }}/{{ (oracle_patch_files.db_ru_zip | default('p39062931_190000_Linux-x86-64.zip')) }}"
+    src: "{{ _db_ru_zip_path }}"
     dest: "{{ _db_ru_extract_dir }}"
     remote_src: true
     owner: "{{ oracle_user }}"
@@ -192,14 +243,21 @@
   ansible.builtin.shell: |
     set -o pipefail
     root={{ _db_ru_extract_dir | quote }}
-    configured={{ (oracle_db_install_apply_ru_component_id | default('')) | quote }}
+    configured={{ _db_ru_component_path | quote }}
 
     if [ -n "$configured" ]; then
-      found="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "$configured" -print -quit)"
+      candidate="$root/$configured"
+      if [ -d "$candidate" ]; then
+        printf '%s\n' "$candidate"
+        exit 0
+      fi
+      found="$(find "$root" -mindepth 2 -maxdepth 2 -type d -name "${configured##*/}" -print -quit)"
       if [ -n "$found" ]; then
         printf '%s\n' "$found"
         exit 0
       fi
+      echo "Configured Database RU component not found under $root: $configured" >&2
+      exit 1
     fi
 
     while IFS= read -r candidate; do
@@ -271,6 +329,32 @@
   # Support metadata). Surface a clear message in that case rather than retry.
   ignore_errors: "{{ oracle_install_allow_ol8_gap | default(true) | bool }}"
 
+- name: Verify selected Database RU was applied during install
+  ansible.builtin.shell: |
+    set -o pipefail
+    oracle_home={{ tgt.home_path | quote }}
+    expected={{ (_db_ru_component_path | basename) | quote }}
+    if [ -z "$expected" ]; then
+      expected="$(basename {{ _db_ru_apply_dir.stdout | trim | quote }})"
+    fi
+    test -n "$expected"
+    test -s "$oracle_home/bin/oracle"
+    patches="$("$oracle_home/OPatch/opatch" lspatches 2>&1)"
+    printf '%s\n' "$patches"
+    printf '%s\n' "$patches" | grep -Eq "(^|[^0-9])${expected}([^0-9]|$)"
+  args:
+    executable: /bin/bash
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _db_ru_install_verified
+  changed_when: false
+  failed_when: false
+  when:
+    - not _marker.stat.exists
+    - _install_apply_ru | bool
+    - _installer_ru is defined
+    - not (_installer_ru.skipped | default(false))
+
 - name: Determine whether runInstaller completed successfully
   ansible.builtin.set_fact:
     _installer_completed: >-
@@ -278,8 +362,11 @@
         (_oracle_home_linked | default(false)) or
         (((_installer | default({})).rc | default(1) | int) == 0) or
         ('Successfully Setup Software' in ((_installer | default({})).stdout | default(''))) or
-        (((_installer_ru | default({})).rc | default(1) | int) == 0) or
-        ('Successfully Setup Software' in ((_installer_ru | default({})).stdout | default('')))
+        (
+          (((_installer_ru | default({})).rc | default(1) | int) == 0 or
+           'Successfully Setup Software' in ((_installer_ru | default({})).stdout | default(''))) and
+          (((_db_ru_install_verified | default({})).rc | default(1) | int) == 0)
+        )
       }}
   when: not _marker.stat.exists
 
@@ -288,7 +375,9 @@
     msg: >-
       Oracle 19.3 base install could not complete on {{ ansible_distribution }}
       {{ ansible_distribution_version }} (the 19.3 linker is not certified on
-      this OS and the -applyRU bridge did not apply the staged 19.31 RU in this
+      this OS and the -applyRU bridge did not apply the selected RU
+      {{ _db_ru_zip_path }} component
+      {{ _db_ru_component_path | default('auto-discovered', true) }} in this
       offline lab). The home at {{ tgt.home_path }} is staged but its binaries
       are not linked. To complete the install, either (a) run the lab on OL7,
       (b) stage a pre-patched 19.x gold image, or (c) provide network access so

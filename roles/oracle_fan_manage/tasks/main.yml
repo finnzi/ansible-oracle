@@ -1,35 +1,122 @@
 ---
 - name: Read initial Oracle Notification Services state
   ansible.builtin.command:
-    argv: ["{{ oracle_gi_home }}/bin/srvctl", status, ons]
+    argv: ["{{ oracle_gi_home }}/bin/srvctl", "status", "ons"]
   become: true
   become_user: "{{ oracle_user }}"
   register: _fan_ons_initial_status
   changed_when: false
-  failed_when: false
+  failed_when:
+    - (_fan_ons_initial_status.rc | int) != 0
+    - >-
+      (
+        (
+          (_fan_ons_initial_status.stdout | default(''))
+          ~ '\n'
+          ~ (_fan_ons_initial_status.stderr | default(''))
+        ) | upper | regex_search('PRKO-0?2458|PRKO-0?2465')
+      ) is none
+
+- name: Classify initial ONS resource probe
+  ansible.builtin.set_fact:
+    _fan_ons_initial_resource_absent: >-
+      {{
+        (_fan_ons_initial_status.rc | int) != 0
+        and
+        (
+          (
+            (_fan_ons_initial_status.stdout | default(''))
+            ~ '\n'
+            ~ (_fan_ons_initial_status.stderr | default(''))
+          ) | upper | regex_search('PRKO-0?2458|PRKO-0?2465')
+        ) is not none
+      }}
+
+- name: Add Oracle Notification Services to Restart
+  ansible.builtin.command:
+    argv:
+      - "{{ oracle_gi_home }}/bin/srvctl"
+      - "add"
+      - "ons"
+      - "-onsremoteport"
+      - "{{ oracle_fan_remote_port }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _fan_ons_add
+  changed_when: (_fan_ons_add.rc | int) == 0
+  failed_when: >-
+    (_fan_ons_add.rc | int) != 0 and
+    (
+      (
+        (_fan_ons_add.stdout | default(''))
+        ~ '\n'
+        ~ (_fan_ons_add.stderr | default(''))
+      ) | upper | regex_search('PRKO-0?2452')
+    ) is none
+  when: _fan_ons_initial_resource_absent | bool
+
+- name: Read Oracle Notification Services state after registration
+  ansible.builtin.command:
+    argv: ["{{ oracle_gi_home }}/bin/srvctl", "status", "ons"]
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _fan_ons_status_after_registration
+  changed_when: false
+  failed_when: (_fan_ons_status_after_registration.rc | int) != 0
 
 - name: Enable Oracle Notification Services in Restart
   ansible.builtin.command:
-    argv: ["{{ oracle_gi_home }}/bin/srvctl", enable, ons]
+    argv: ["{{ oracle_gi_home }}/bin/srvctl", "enable", "ons"]
   become: true
   become_user: "{{ oracle_user }}"
-  when: "'disabled' in (_fan_ons_initial_status.stdout | default('') | lower)"
+  register: _fan_ons_enable
+  changed_when: (_fan_ons_enable.rc | int) == 0
+  failed_when: >-
+    (_fan_ons_enable.rc | int) != 0 and
+    (
+      (
+        (_fan_ons_enable.stdout | default(''))
+        ~ '\n'
+        ~ (_fan_ons_enable.stderr | default(''))
+      ) | upper | regex_search('PRKO-0?2576')
+    ) is none
 
-- name: Read Oracle Notification Services state
+- name: Read Oracle Notification Services state before start
   ansible.builtin.command:
-    argv: ["{{ oracle_gi_home }}/bin/srvctl", status, ons]
+    argv: ["{{ oracle_gi_home }}/bin/srvctl", "status", "ons"]
   become: true
   become_user: "{{ oracle_user }}"
-  register: _fan_ons_status
+  register: _fan_ons_status_before_start
   changed_when: false
-  failed_when: false
+  failed_when: (_fan_ons_status_before_start.rc | int) != 0
 
 - name: Start Oracle Notification Services
   ansible.builtin.command:
-    argv: ["{{ oracle_gi_home }}/bin/srvctl", start, ons]
+    argv: ["{{ oracle_gi_home }}/bin/srvctl", "start", "ons"]
   become: true
   become_user: "{{ oracle_user }}"
-  when: "'ONS daemon is running' not in (_fan_ons_status.stdout | default(''))"
+  register: _fan_ons_start
+  changed_when: (_fan_ons_start.rc | int) == 0
+  failed_when: >-
+    (_fan_ons_start.rc | int) != 0 and
+    (
+      (
+        (_fan_ons_start.stdout | default(''))
+        ~ '\n'
+        ~ (_fan_ons_start.stderr | default(''))
+      ) | upper | regex_search('PRKO-0?2569')
+    ) is none
+
+- name: Validate Oracle Notification Services after lifecycle convergence
+  ansible.builtin.command:
+    argv: ["{{ oracle_gi_home }}/bin/srvctl", "status", "ons"]
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _fan_ons_final_status
+  changed_when: false
+  failed_when: >-
+    (_fan_ons_final_status.rc | int) != 0 or
+    'ONS daemon is running' not in (_fan_ons_final_status.stdout | default(''))
 
 - name: Probe firewalld for remote ONS
   ansible.builtin.command: firewall-cmd --state

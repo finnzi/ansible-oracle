@@ -72,7 +72,7 @@
 - name: Inspect Restart service configuration
   ansible.builtin.command:
     argv:
-      - "{{ oracle_gi_home }}/bin/srvctl"
+      - "{{ _svc_home_path }}/bin/srvctl"
       - config
       - service
       - -db
@@ -81,17 +81,181 @@
       - "{{ _svc_name }}"
   become: true
   become_user: "{{ oracle_user }}"
+  environment:
+    ORACLE_HOME: "{{ _svc_home_path }}"
   register: _srvctl_config_svc
   changed_when: false
   failed_when: false
   when: oracle_restart_available | bool
+
+- name: Read Restart service resource profile
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home }}/bin/crsctl" status resource \
+      ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc -p 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _crsctl_service_profile
+  changed_when: false
+  failed_when: false
+  when: oracle_restart_available | bool
+
+- name: Read Restart service resource status
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ oracle_gi_home }}/bin/crsctl" status resource \
+      ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc -t 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _crsctl_service_status
+  changed_when: false
+  failed_when: false
+  when: oracle_restart_available | bool
+
+- name: Resolve Restart service command output
+  ansible.builtin.set_fact:
+    _svc_srvctl_config_output: >-
+      {{ (_srvctl_config_svc.stdout | default('')) ~
+         (_srvctl_config_svc.stderr | default('')) }}
+  when: oracle_restart_available | bool
+
+- name: Resolve Restart service registration probes
+  ansible.builtin.set_fact:
+    _svc_crs_service_exists: >-
+      {{
+        _crsctl_service_profile.rc == 0 and
+        ('NAME=ora.' ~ _svc_restart_db ~ '.' ~ _svc_name ~ '.svc') in
+        (_crsctl_service_profile.stdout | default(''))
+      }}
+    _svc_srvctl_config_usable: >-
+      {{
+        (
+          _srvctl_config_svc.rc == 0 and
+          'PRCR-' not in (_svc_srvctl_config_output | default('')) and
+          'PRCD-' not in (_svc_srvctl_config_output | default(''))
+        ) or
+        (
+          'PRCR-1001' in (_svc_srvctl_config_output | default('')) and
+          not (_crsctl_service_profile.rc == 0 and
+            ('NAME=ora.' ~ _svc_restart_db ~ '.' ~ _svc_name ~ '.svc') in
+            (_crsctl_service_profile.stdout | default('')))
+        )
+      }}
+    _svc_restart_service_exists: >-
+      {{
+        (_crsctl_service_profile.rc == 0 and
+          ('NAME=ora.' ~ _svc_restart_db ~ '.' ~ _svc_name ~ '.svc') in
+          (_crsctl_service_profile.stdout | default(''))) or
+        (_srvctl_config_svc.rc == 0)
+      }}
+    _svc_crs_service_contract_ok: >-
+      {{
+        _crsctl_service_profile.rc == 0 and
+        ('NAME=ora.' ~ _svc_restart_db ~ '.' ~ _svc_name ~ '.svc') in
+          (_crsctl_service_profile.stdout | default('')) and
+        ('ROLE=' ~ _svc_role) in (_crsctl_service_profile.stdout | default('')) and
+        'MANAGEMENT_POLICY=AUTOMATIC' in (_crsctl_service_profile.stdout | default('')) and
+        'ENABLED=1' in (_crsctl_service_profile.stdout | default('')) and
+        (
+          ('FAILOVER_TYPE=' ~ _svc_failover_type) in (_crsctl_service_profile.stdout | default('')) or
+          (
+            _svc_failover_type == 'NONE' and
+            (_crsctl_service_profile.stdout | default('') |
+              regex_search('(?m)^FAILOVER_TYPE=\\s*$')) is not none
+          )
+        ) and
+        (
+          ('FAILOVER_METHOD=' ~ _svc_failover_method) in (_crsctl_service_profile.stdout | default('')) or
+          (
+            _svc_failover_method == 'NONE' and
+            (_crsctl_service_profile.stdout | default('') |
+              regex_search('(?m)^FAILOVER_METHOD=\\s*$')) is not none
+          )
+        ) and
+        (
+          ('FAILOVER_RETRIES=' ~ (svc.failover_retries | default(30) | string)) in
+            (_crsctl_service_profile.stdout | default('')) or
+          (
+            _svc_failover_type == 'NONE' and
+            (_crsctl_service_profile.stdout | default('') |
+              regex_search('(?m)^FAILOVER_RETRIES=\\s*$')) is not none
+          )
+        ) and
+        (
+          ('TAF_FAILOVER_DELAY=' ~ (svc.failover_delay | default(1) | string)) in
+            (_crsctl_service_profile.stdout | default('')) or
+          (
+            _svc_failover_type == 'NONE' and
+            (_crsctl_service_profile.stdout | default('') |
+              regex_search('(?m)^TAF_FAILOVER_DELAY=\\s*$')) is not none
+          )
+        ) and
+        (
+          ('AQ_HA_NOTIFICATION=' ~
+            ('1' if (svc.notification | default(true) | bool) else '0')) in
+            (_crsctl_service_profile.stdout | default(''))
+        ) and
+        (
+          svc.commit_outcome is not defined or
+          ('COMMIT_OUTCOME=' ~ ('1' if (svc.commit_outcome | bool) else '0')) in
+            (_crsctl_service_profile.stdout | default(''))
+        ) and
+        (
+          svc.retention is not defined or
+          ('RETENTION=' ~ (svc.retention | string)) in
+            (_crsctl_service_profile.stdout | default(''))
+        ) and
+        (
+          svc.replay_init_time is not defined or
+          ('REPLAY_INITIATION_TIME=' ~ (svc.replay_init_time | string)) in
+            (_crsctl_service_profile.stdout | default(''))
+        ) and
+        (
+          svc.failover_restore is not defined or
+          ('FAILOVER_RESTORE=' ~ svc.failover_restore) in
+            (_crsctl_service_profile.stdout | default(''))
+        )
+      }}
+    _svc_crs_service_online: >-
+      {{
+        'ONLINE  ONLINE' in (_crsctl_service_status.stdout | default('')) or
+        'ONLINE ONLINE' in (_crsctl_service_status.stdout | default(''))
+      }}
+  when: oracle_restart_available | bool
+
+- name: Fail when an existing Restart service cannot be reconciled safely
+  ansible.builtin.fail:
+    msg: >-
+      Restart service ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc exists,
+      but srvctl cannot inspect it and its read-only CRS profile does not match
+      the requested {{ _svc_role }}/AUTOMATIC/{{ _svc_failover_type }} service
+      contract. Refusing to mutate an ora.* resource with crsctl; restore
+      supported srvctl/CSS access.
+  when:
+    - oracle_restart_available | bool
+    - _svc_crs_service_exists | bool
+    - not (_svc_srvctl_config_usable | bool)
+    - not (_svc_crs_service_contract_ok | bool)
+
+- name: Fail when a Restart service is absent and srvctl is unavailable
+  ansible.builtin.fail:
+    msg: >-
+      Restart service ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc is absent,
+      and srvctl cannot inspect or add it. Refusing to create or mutate an
+      ora.* resource with crsctl; restore supported srvctl/CSS access.
+  when:
+    - oracle_restart_available | bool
+    - not (_svc_restart_service_exists | bool)
+    - not (_svc_srvctl_config_usable | bool)
 
 - name: Add role-based service to Oracle Restart
   ansible.builtin.command:
     argv: >-
       {{
         [
-          oracle_gi_home ~ '/bin/srvctl', 'add', 'service',
+          _svc_home_path ~ '/bin/srvctl', 'add', 'service',
           '-db', _svc_restart_db,
           '-service', _svc_name,
           '-role', _svc_role,
@@ -113,18 +277,21 @@
       }}
   become: true
   become_user: "{{ oracle_user }}"
+  environment:
+    ORACLE_HOME: "{{ _svc_home_path }}"
   register: _srvctl_add_svc
   changed_when: true
   when:
     - oracle_restart_available | bool
-    - _srvctl_config_svc.rc != 0
+    - _svc_srvctl_config_usable | bool
+    - not (_svc_restart_service_exists | bool)
 
 - name: Reconcile existing Restart service contract
   ansible.builtin.command:
     argv: >-
       {{
         [
-          oracle_gi_home ~ '/bin/srvctl', 'modify', 'service',
+          _svc_home_path ~ '/bin/srvctl', 'modify', 'service',
           '-db', _svc_restart_db,
           '-service', _svc_name,
           '-role', _svc_role,
@@ -146,6 +313,8 @@
       }}
   become: true
   become_user: "{{ oracle_user }}"
+  environment:
+    ORACLE_HOME: "{{ _svc_home_path }}"
   register: _srvctl_modify_svc
   # srvctl modify is the reconcile write; report changed only when the
   # inspected contract did not already match so idempotent runs stay quiet.
@@ -156,12 +325,13 @@
     or ('Failover method: ' ~ _svc_failover_method) not in (_srvctl_config_svc.stdout | default(''))
   when:
     - oracle_restart_available | bool
+    - _svc_srvctl_config_usable | bool
     - _srvctl_config_svc.rc == 0
 
 - name: Re-inspect Restart service configuration after add or reconcile
   ansible.builtin.command:
     argv:
-      - "{{ oracle_gi_home }}/bin/srvctl"
+      - "{{ _svc_home_path }}/bin/srvctl"
       - config
       - service
       - -db
@@ -170,10 +340,13 @@
       - "{{ _svc_name }}"
   become: true
   become_user: "{{ oracle_user }}"
+  environment:
+    ORACLE_HOME: "{{ _svc_home_path }}"
   register: _srvctl_config_after
   changed_when: false
   when:
     - oracle_restart_available | bool
+    - _svc_srvctl_config_usable | bool
     - >-
       (
         _srvctl_add_svc is defined
@@ -232,12 +405,54 @@
     - oracle_restart_available | bool
     - (_srvctl_config_svc.rc | default(1)) == 0
 
+- name: Validate matching Restart service contract through CRS profile
+  ansible.builtin.assert:
+    that:
+      - _svc_crs_service_contract_ok | bool
+    fail_msg: >-
+      Restart service ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc could not
+      be validated through srvctl or a matching read-only CRS profile. Refusing
+      to mutate an ora.* resource with crsctl; restore supported srvctl/CSS
+      access.
+  when:
+    - oracle_restart_available | bool
+    - not (_svc_srvctl_config_usable | bool)
+
+- name: Accept matching Restart service state without SRVCTL mutation
+  ansible.builtin.debug:
+    msg: >-
+      Restart service ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc already
+      matches its CRS contract; CSS is unavailable, so enable/start is a
+      read-only no-op.
+  when:
+    - oracle_restart_available | bool
+    - not (_svc_srvctl_config_usable | bool)
+    - _svc_crs_service_contract_ok | bool
+    - >-
+      not (_svc_manage_current_role | bool) or
+      (_svc_crs_service_online | bool)
+
+- name: Fail when a matching current-role service is not online
+  ansible.builtin.fail:
+    msg: >-
+      Restart service ora.{{ _svc_restart_db }}.{{ _svc_name }}.svc matches
+      its CRS profile, but is not online for the current database role and
+      srvctl is unavailable. Refusing to start or mutate an ora.* resource via
+      crsctl; restore supported srvctl/CSS access.
+  when:
+    - oracle_restart_available | bool
+    - not (_svc_srvctl_config_usable | bool)
+    - _svc_crs_service_contract_ok | bool
+    - _svc_manage_current_role | bool
+    - not (_svc_crs_service_online | bool)
+
 - name: Check standby-role service priming marker
   ansible.builtin.stat:
     path: "{{ oracle_service_prime_marker_dir }}/{{ _svc_restart_db }}-{{ _svc_name }}"
   register: _svc_prime_marker
   when:
     - oracle_restart_available | bool
+    - _svc_srvctl_config_usable | bool
     - oracle_service_prime_standby_role_services | bool
     - _svc_role == 'PHYSICAL_STANDBY'
     - (_svc_database_state.stdout | default('') | trim) == 'PRIMARY|READ WRITE'
@@ -245,6 +460,7 @@
 - name: Prime standby-role service for broker role transitions
   when:
     - oracle_restart_available | bool
+    - _svc_srvctl_config_usable | bool
     - oracle_service_prime_standby_role_services | bool
     - _svc_role == 'PHYSICAL_STANDBY'
     - (_svc_database_state.stdout | default('') | trim) == 'PRIMARY|READ WRITE'
@@ -261,7 +477,7 @@
     - name: Start and stop standby-role service once on the primary
       ansible.builtin.shell: |
         set -o pipefail
-        export ORACLE_HOME={{ oracle_gi_home }}
+        export ORACLE_HOME={{ _svc_home_path }}
         "$ORACLE_HOME/bin/srvctl" start service -db {{ _svc_restart_db }} -service {{ _svc_name }}
         "$ORACLE_HOME/bin/srvctl" stop service -db {{ _svc_restart_db }} -service {{ _svc_name }}
       args: { executable: /bin/bash }
@@ -282,7 +498,7 @@
 - name: Enable and start matching role-based service
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
+    export ORACLE_HOME={{ _svc_home_path }}
     enable_output="$("$ORACLE_HOME/bin/srvctl" enable service -db {{ _svc_restart_db }} -service {{ _svc_name }} 2>&1)"
     enable_rc=$?
     printf '%s\n' "$enable_output"
@@ -313,4 +529,6 @@
     'SERVICE_ENABLED' in (_srvctl_start_svc.stdout | default('')) or
     'SERVICE_STARTED' in (_srvctl_start_svc.stdout | default(''))
   failed_when: _srvctl_start_svc.rc != 0
-  when: oracle_restart_available | bool
+  when:
+    - oracle_restart_available | bool
+    - _svc_srvctl_config_usable | bool

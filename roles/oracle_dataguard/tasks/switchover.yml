@@ -10,6 +10,7 @@
     _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
     _dg_switchover_requested_target: "{{ oracle_dataguard_switchover_target }}"
     _dg_switchover_fsfo_was_enabled: false
+    _dg_gi_home_path: "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
 
 - name: Resolve runtime ORACLE_HOME from Restart for switchover
   ansible.builtin.include_role:
@@ -314,17 +315,18 @@
     SQL
     )"
     output="$(printf '%s\n%s\n' "$target" "$standby")"
+    normalized_output="$(printf '%s\n' "$output" | tr '[:lower:]' '[:upper:]')"
     printf '%s\n' "$output" | sed -E 's#sys/[^@[:space:]]+@#sys/***@#g' \
       > /tmp/dg-validate-last.out 2>/dev/null || true
     printf '%s\n' "$output"
     # Fail closed on connection/SQL errors (but not on RESYNCHRONIZATION text).
-    if printf '%s\n' "$output" | grep -qE 'ORA-[0-9]{5}|^Error:|SP2-'; then
+    if printf '%s\n' "$normalized_output" | grep -qE 'ORA-[0-9]{5}|^ERROR:|SP2-'; then
       exit 1
     fi
-    printf '%s\n' "$output" | grep -qF 'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY' || exit 1
-    printf '%s\n' "$output" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY' || exit 1
+    printf '%s\n' "$normalized_output" | grep -qF 'PRIMARY|READ WRITE|MAXIMUM AVAILABILITY' || exit 1
+    printf '%s\n' "$normalized_output" | grep -qF 'PHYSICAL STANDBY|READ ONLY WITH APPLY|MAXIMUM AVAILABILITY' || exit 1
     # Reject demotion to performance mode.
-    if printf '%s\n' "$output" | grep -qiE 'MAXIMUM PERFORMANCE|UNPROTECTED'; then
+    if printf '%s\n' "$normalized_output" | grep -qE 'MAXIMUM PERFORMANCE|UNPROTECTED'; then
       exit 1
     fi
     exit 0
@@ -338,3 +340,115 @@
   until: _dg_switchover_validate.rc == 0
   failed_when: _dg_switchover_validate.rc != 0
   no_log: true
+
+- name: Resolve post-switchover Restart registration contract
+  ansible.builtin.set_fact:
+    _dg_switchover_restart_registration:
+      - host: "{{ groups['primary'] | first }}"
+        db_unique_name: "{{ _dg_primary_unique_name }}"
+        db_home: "{{ _dg_home_path }}"
+        expected_role: >-
+          {{ 'PRIMARY' if _dg_switchover_target == _dg_primary_unique_name else 'PHYSICAL_STANDBY' }}
+        expected_startoption: >-
+          {{ 'open' if _dg_switchover_target == _dg_primary_unique_name else 'read only' }}
+      - host: "{{ groups['standby'] | first }}"
+        db_unique_name: "{{ _dg_standby_unique_name }}"
+        db_home: "{{ _dg_home_path }}"
+        expected_role: >-
+          {{ 'PRIMARY' if _dg_switchover_target == _dg_standby_unique_name else 'PHYSICAL_STANDBY' }}
+        expected_startoption: >-
+          {{ 'open' if _dg_switchover_target == _dg_standby_unique_name else 'read only' }}
+
+- name: Probe local Restart database registration after switchover
+  ansible.builtin.command:
+    argv:
+      - "{{ _dg_gi_home_path }}/bin/crsctl"
+      - status
+      - resource
+      - "ora.{{ item.db_unique_name }}.db"
+      - -p
+  delegate_to: "{{ item.host }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_restart_registration_probe
+  changed_when: false
+  failed_when: false
+  loop: "{{ _dg_switchover_restart_registration }}"
+  loop_control:
+    label: "{{ item.host }}:{{ item.db_unique_name }}"
+
+- name: Require local Restart registration before reconciliation
+  ansible.builtin.assert:
+    that:
+      - item.rc == 0
+      - "('NAME=ora.' ~ item.item.db_unique_name ~ '.db') in item.stdout"
+      - "'TYPE=ora.database.type' in item.stdout"
+    fail_msg: >-
+      Restart database {{ item.item.db_unique_name }} is not registered on
+      {{ item.item.host }}; cannot reconcile its post-switchover role without
+      changing runtime database state.
+  loop: "{{ _dg_switchover_restart_registration_probe.results }}"
+  loop_control:
+    label: "{{ item.item.host }}:{{ item.item.db_unique_name }}"
+
+- name: Reconcile local Restart database registration after switchover
+  ansible.builtin.command:
+    argv:
+      - "{{ item.item.db_home }}/bin/srvctl"
+      - modify
+      - database
+      - -db
+      - "{{ item.item.db_unique_name }}"
+      - -role
+      - "{{ item.item.expected_role }}"
+      - -policy
+      - AUTOMATIC
+      - -startoption
+      - "{{ item.item.expected_startoption }}"
+      - -stopoption
+      - IMMEDIATE
+  delegate_to: "{{ item.item.host }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_restart_registration_modify
+  changed_when: true
+  when: >-
+    ('role=' ~ item.item.expected_role | lower) not in (item.stdout | default('') | lower) or
+    ('usr_ora_open_mode=' ~ item.item.expected_startoption | lower) not in (item.stdout | default('') | lower) or
+    'usr_ora_stop_mode=immediate' not in (item.stdout | default('') | lower) or
+    'management_policy=automatic' not in (item.stdout | default('') | lower) or
+    'enabled=1' not in (item.stdout | default('') | lower)
+  loop: "{{ _dg_switchover_restart_registration_probe.results }}"
+  loop_control:
+    label: >-
+      {{ item.item.host }}:{{ item.item.db_unique_name }} ->
+      {{ item.item.expected_role }}/{{ item.item.expected_startoption }}
+
+- name: Verify local Restart database registration after switchover
+  ansible.builtin.command:
+    argv:
+      - "{{ _dg_gi_home_path }}/bin/crsctl"
+      - status
+      - resource
+      - "ora.{{ item.db_unique_name }}.db"
+      - -p
+  delegate_to: "{{ item.host }}"
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_switchover_restart_registration_after
+  changed_when: false
+  failed_when: >-
+    _dg_switchover_restart_registration_after.rc != 0 or
+    ('role=' ~ item.expected_role | lower) not in
+      (_dg_switchover_restart_registration_after.stdout | default('') | lower) or
+    ('usr_ora_open_mode=' ~ item.expected_startoption | lower) not in
+      (_dg_switchover_restart_registration_after.stdout | default('') | lower) or
+    'usr_ora_stop_mode=immediate' not in
+      (_dg_switchover_restart_registration_after.stdout | default('') | lower) or
+    'management_policy=automatic' not in
+      (_dg_switchover_restart_registration_after.stdout | default('') | lower) or
+    'enabled=1' not in
+      (_dg_switchover_restart_registration_after.stdout | default('') | lower)
+  loop: "{{ _dg_switchover_restart_registration }}"
+  loop_control:
+    label: "{{ item.host }}:{{ item.db_unique_name }}"

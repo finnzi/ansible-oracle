@@ -6,6 +6,7 @@
   ansible.builtin.set_fact:
     _restart_home_inventory_path: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
+    _restart_db_unique_name: "{{ inst.db_unique_name | default(inst.name) }}"
 
 - name: Resolve runtime ORACLE_HOME from Restart for registration
   ansible.builtin.include_role:
@@ -22,8 +23,8 @@
 - name: Is this DB already registered with Restart?
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" config database -d {{ inst.name }} 2>&1 || echo NOT_REGISTERED
+    export ORACLE_HOME={{ _restart_home_path }}
+    "$ORACLE_HOME/bin/srvctl" config database -db {{ _restart_db_unique_name }} 2>&1 || echo NOT_REGISTERED
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -31,23 +32,122 @@
   changed_when: false
   failed_when: false
 
-- name: Srvctl add database (idempotent)
+- name: Read Restart database resource profile
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" add database \
-      -db {{ inst.name }} \
-      -oraclehome {{ _restart_home_path }} \
-      -spfile {{ inst.dirs.data }}/{{ inst.name }}/spfile{{ inst.name }}.ora \
-      -role PRIMARY \
-      -dbname {{ inst.name }} \
-      -instance {{ inst.name }} \
-      -startoption OPEN \
-      -stopoption IMMEDIATE
+    "$ORACLE_HOME/bin/crsctl" status resource \
+      ora.{{ _restart_db_unique_name }}.db -p 2>&1
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
-  when: "'NOT_REGISTERED' in _srvctl_cfg.stdout or _srvctl_cfg.rc != 0"
+  register: _crsctl_db_profile
+  changed_when: false
+  failed_when: false
+
+- name: Resolve Restart database registration probes
+  ansible.builtin.set_fact:
+    _restart_crs_db_exists: >-
+      {{
+        _crsctl_db_profile.rc == 0 and
+        ('NAME=ora.' ~ _restart_db_unique_name ~ '.db') in
+        (_crsctl_db_profile.stdout | default(''))
+      }}
+    _restart_srvctl_db_config_usable: >-
+      {{
+        _srvctl_cfg.rc == 0 and
+        'NOT_REGISTERED' not in (_srvctl_cfg.stdout | default('')) and
+        'PRCR-' not in (_srvctl_cfg.stdout | default('')) and
+        'PRCD-' not in (_srvctl_cfg.stdout | default(''))
+      }}
+    _restart_crs_db_contract_ok: >-
+      {{
+        _crsctl_db_profile.rc == 0 and
+        'MANAGEMENT_POLICY=AUTOMATIC' in (_crsctl_db_profile.stdout | default('')) and
+        'USR_ORA_STOP_MODE=immediate' in (_crsctl_db_profile.stdout | default('')) and
+        'ENABLED=1' in (_crsctl_db_profile.stdout | default('')) and
+        (
+          (
+            inst.dataguard | default(false) | bool and
+            (
+              (
+                'ROLE=PHYSICAL_STANDBY' in (_crsctl_db_profile.stdout | default('')) and
+                'USR_ORA_OPEN_MODE=read only' in (_crsctl_db_profile.stdout | default(''))
+              ) or
+              (
+                'ROLE=PRIMARY' in (_crsctl_db_profile.stdout | default('')) and
+                'USR_ORA_OPEN_MODE=OPEN' in (_crsctl_db_profile.stdout | default('') | upper)
+              )
+            )
+          ) or
+          (
+            not (inst.dataguard | default(false) | bool) and
+            'ROLE=PRIMARY' in (_crsctl_db_profile.stdout | default('')) and
+            'USR_ORA_OPEN_MODE=OPEN' in (_crsctl_db_profile.stdout | default('') | upper)
+          )
+        )
+      }}
+
+- name: Resolve role-aware database Restart contract
+  ansible.builtin.set_fact:
+    # A broker switchover updates the local Restart registration. Preserve that
+    # role on later inventory convergence instead of forcing the inventory's
+    # original primary host back to PRIMARY before a broker switchback.
+    _restart_db_managed_role: >-
+      {{
+        'PHYSICAL_STANDBY'
+        if (
+          inst.dataguard | default(false) | bool and
+          (
+            'Database role: PHYSICAL_STANDBY' in (_srvctl_cfg.stdout | default('')) or
+            'ROLE=PHYSICAL_STANDBY' in (_crsctl_db_profile.stdout | default(''))
+          )
+        )
+        else 'PRIMARY'
+      }}
+    _restart_db_start_option: >-
+      {{
+        'read only'
+        if (
+          inst.dataguard | default(false) | bool and
+          (
+            'Database role: PHYSICAL_STANDBY' in (_srvctl_cfg.stdout | default('')) or
+            'ROLE=PHYSICAL_STANDBY' in (_crsctl_db_profile.stdout | default(''))
+          )
+        )
+        else 'OPEN'
+      }}
+
+- name: Fail when an existing Restart database cannot be reconciled safely
+  ansible.builtin.fail:
+    msg: >-
+      Restart resource ora.{{ _restart_db_unique_name }}.db exists, but srvctl
+      cannot inspect it and its read-only CRS profile does not match the
+      role-aware database contract. Refusing to mutate an ora.* resource with
+      crsctl; restore supported srvctl/CSS access.
+  when:
+    - _restart_crs_db_exists | bool
+    - not (_restart_srvctl_db_config_usable | bool)
+    - not (_restart_crs_db_contract_ok | bool)
+
+- name: Srvctl add database (idempotent)
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _restart_home_path }}
+    "$ORACLE_HOME/bin/srvctl" add database \
+      -db {{ _restart_db_unique_name }} \
+      -oraclehome {{ _restart_home_path }} \
+      -spfile {{ inst.dirs.data }}/{{ inst.name }}/spfile{{ inst.name }}.ora \
+      -role {{ _restart_db_managed_role }} \
+      -dbname {{ inst.name }} \
+      -instance {{ inst.name }} \
+      -startoption "{{ _restart_db_start_option }}" \
+      -stopoption IMMEDIATE \
+      -policy AUTOMATIC
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  when: not (_restart_crs_db_exists | bool)
   register: _srvctl_add
   changed_when: _srvctl_add.rc == 0
   failed_when: >-
@@ -59,7 +159,7 @@
 - name: Ensure durable spfile path for Restart (seed from $OH/dbs when needed)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
+    export ORACLE_HOME={{ _restart_home_path }}
     durable="{{ inst.dirs.data }}/{{ inst.name }}/spfile{{ inst.name }}.ora"
     home_spfile="{{ _restart_home_path }}/dbs/spfile{{ inst.name }}.ora"
     mkdir -p "$(dirname "$durable")"
@@ -68,10 +168,10 @@
       echo SEEDED_FROM_HOME
     fi
     if [ -f "$durable" ]; then
-      "$ORACLE_HOME/bin/srvctl" modify database -db {{ inst.name }} -spfile "$durable"
+      "$ORACLE_HOME/bin/srvctl" modify database -db {{ _restart_db_unique_name }} -spfile "$durable"
       echo DURABLE
     elif [ -f "$home_spfile" ]; then
-      "$ORACLE_HOME/bin/srvctl" modify database -db {{ inst.name }} -spfile "$home_spfile"
+      "$ORACLE_HOME/bin/srvctl" modify database -db {{ _restart_db_unique_name }} -spfile "$home_spfile"
       echo HOME_FALLBACK
     else
       echo MISSING
@@ -81,6 +181,74 @@
   become_user: "{{ oracle_user }}"
   register: _srvctl_mod_spfile
   changed_when: "'SEEDED_FROM_HOME' in (_srvctl_mod_spfile.stdout | default(''))"
+  failed_when: false
+  when: >-
+    not (_restart_crs_db_exists | bool) or
+    _restart_srvctl_db_config_usable | bool
+
+- name: Reconcile database Restart configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _restart_home_path }}
+    gi_oracle_home="{{ oracle_gi_home }}"
+    db="{{ _restart_db_unique_name }}"
+    role="{{ _restart_db_managed_role }}"
+    start_option="{{ _restart_db_start_option }}"
+    config="$($ORACLE_HOME/bin/srvctl config database -db "$db" -all 2>&1)"
+    config_rc=$?
+    printf '%s\n' "$config"
+    if [ "$config_rc" -eq 0 ] &&
+       printf '%s\n' "$config" | grep -Fiqx "Start options: $start_option" &&
+       printf '%s\n' "$config" | grep -Eiq '^Stop options:[[:space:]]*immediate$' &&
+       printf '%s\n' "$config" | grep -Fiqx "Database role: $role" &&
+       printf '%s\n' "$config" | grep -Eiq '^Management policy:[[:space:]]*automatic$'; then
+      echo DATABASE_CONTRACT_OK
+      exit 0
+    fi
+
+    profile="$(ORACLE_HOME="$gi_oracle_home" "$gi_oracle_home/bin/crsctl" status resource ora.${db}.db -p 2>&1)"
+    profile_rc=$?
+    printf '%s\n' "$profile"
+    if [ "$config_rc" -ne 0 ] && [ "$profile_rc" -eq 0 ] &&
+       printf '%s\n' "$profile" | grep -Fqx "ROLE=$role" &&
+       printf '%s\n' "$profile" | grep -Fiqx "USR_ORA_OPEN_MODE=$start_option" &&
+       printf '%s\n' "$profile" | grep -Fqx 'USR_ORA_STOP_MODE=immediate' &&
+       printf '%s\n' "$profile" | grep -Fqx 'MANAGEMENT_POLICY=AUTOMATIC' &&
+       printf '%s\n' "$profile" | grep -Fqx 'ENABLED=1'; then
+      echo DATABASE_CONTRACT_OK
+      exit 0
+    fi
+
+    if [ "$config_rc" -ne 0 ]; then
+      echo "Restart resource ora.${db}.db cannot be reconciled: srvctl is unavailable and the read-only CRS profile does not match the requested contract. Refusing to mutate ora.* with crsctl." >&2
+      exit 1
+    fi
+
+    "$ORACLE_HOME/bin/srvctl" modify database \
+      -db "$db" \
+      -role "$role" \
+      -policy AUTOMATIC \
+      -startoption "$start_option" \
+      -stopoption IMMEDIATE
+    echo DATABASE_CONTRACT_RECONCILED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_reconcile_db
+  changed_when: "'DATABASE_CONTRACT_RECONCILED' in (_srvctl_reconcile_db.stdout | default(''))"
+  failed_when: _srvctl_reconcile_db.rc != 0
+
+- name: Check listener registration with Restart
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" config listener \
+      -listener LISTENER_{{ inst.name | upper }} 2>&1 || echo NOT_REGISTERED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_cfg_lsnr
+  changed_when: false
   failed_when: false
 
 - name: Srvctl add listener for this instance (idempotent)
@@ -96,18 +264,72 @@
   become_user: "{{ oracle_user }}"
   register: _srvctl_add_lsnr
   changed_when: _srvctl_add_lsnr.rc == 0
-  failed_when: >-
-    _srvctl_add_lsnr.rc != 0 and 'already exists' not in (_srvctl_add_lsnr.stdout | default(''))
+  failed_when: _srvctl_add_lsnr.rc != 0
+  when: "'NOT_REGISTERED' in (_srvctl_cfg_lsnr.stdout | default('')) or _srvctl_cfg_lsnr.rc != 0"
+
+- name: Re-read listener registration after add
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" config listener \
+      -listener LISTENER_{{ inst.name | upper }} 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_cfg_lsnr_after
+  changed_when: false
+  failed_when: _srvctl_cfg_lsnr_after.rc != 0
+  when: >-
+    'NOT_REGISTERED' in (_srvctl_cfg_lsnr.stdout | default('')) or
+    _srvctl_cfg_lsnr.rc != 0
+
+- name: Use current listener registration after add
+  ansible.builtin.set_fact:
+    _srvctl_cfg_lsnr: "{{ _srvctl_cfg_lsnr_after }}"
+  when:
+    - _srvctl_cfg_lsnr_after is defined
+    - not (_srvctl_cfg_lsnr_after.skipped | default(false))
+
+- name: Reconcile listener Restart configuration
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    listener="LISTENER_{{ inst.name | upper }}"
+    config="$($ORACLE_HOME/bin/srvctl config listener -listener "$listener" 2>&1)"
+    printf '%s\n' "$config"
+    if printf '%s\n' "$config" | grep -Fqx "Home: {{ _restart_home_path }}" &&
+       printf '%s\n' "$config" | grep -Eiq '^End points:[[:space:]]*TCP:{{ inst.listener_port | default(1521) }}([[:space:]]|$)'; then
+      echo LISTENER_CONTRACT_OK
+      exit 0
+    fi
+
+    "$ORACLE_HOME/bin/srvctl" modify listener \
+      -listener "$listener" \
+      -oraclehome {{ _restart_home_path }} \
+      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+    echo LISTENER_CONTRACT_RECONCILED
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_reconcile_lsnr
+  changed_when: "'LISTENER_CONTRACT_RECONCILED' in (_srvctl_reconcile_lsnr.stdout | default(''))"
+  failed_when: _srvctl_reconcile_lsnr.rc != 0
 
 - name: Srvctl enable database + listener
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
+    db_oracle_home="{{ _restart_home_path }}"
+    db_srvctl="$db_oracle_home/bin/srvctl"
+    gi_oracle_home="{{ oracle_gi_home }}"
+    gi_srvctl="$gi_oracle_home/bin/srvctl"
+    gi_crsctl="$gi_oracle_home/bin/crsctl"
 
     enable_resource() {
       label="$1"
-      shift
-      enable_output="$("$ORACLE_HOME/bin/srvctl" enable "$@" 2>&1)"
+      oracle_home="$2"
+      srvctl_bin="$3"
+      shift 3
+      enable_output="$(ORACLE_HOME="$oracle_home" "$srvctl_bin" enable "$@" 2>&1)"
       enable_rc=$?
       printf '%s\n' "$enable_output"
       if [ "$enable_rc" -ne 0 ] &&
@@ -121,9 +343,16 @@
       fi
     }
 
-    enable_resource DATABASE database -d {{ inst.name }}
-    database_rc=$?
-    enable_resource LISTENER listener -listener LISTENER_{{ inst.name | upper }}
+    database_profile="$(ORACLE_HOME="$gi_oracle_home" "$gi_crsctl" status resource ora.{{ _restart_db_unique_name }}.db -p 2>&1)" || true
+    printf '%s\n' "$database_profile"
+    if printf '%s\n' "$database_profile" | grep -Fqx 'ENABLED=1'; then
+      echo DATABASE_ALREADY_ENABLED
+      database_rc=0
+    else
+      enable_resource DATABASE "$db_oracle_home" "$db_srvctl" database -db {{ _restart_db_unique_name }}
+      database_rc=$?
+    fi
+    enable_resource LISTENER "$gi_oracle_home" "$gi_srvctl" listener -listener LISTENER_{{ inst.name | upper }}
     listener_rc=$?
 
     if [ "$database_rc" -ne 0 ]; then
@@ -142,19 +371,25 @@
 - name: Srvctl start database + listener (if not already running)
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
+    db_oracle_home="{{ _restart_home_path }}"
+    db_srvctl="$db_oracle_home/bin/srvctl"
+    gi_oracle_home="{{ oracle_gi_home }}"
+    gi_srvctl="$gi_oracle_home/bin/srvctl"
+    gi_crsctl="$gi_oracle_home/bin/crsctl"
 
     start_resource() {
       label="$1"
-      shift
-      status_output="$("$ORACLE_HOME/bin/srvctl" status "$@" 2>&1)" || true
+      oracle_home="$2"
+      srvctl_bin="$3"
+      shift 3
+      status_output="$(ORACLE_HOME="$oracle_home" "$srvctl_bin" status "$@" 2>&1)" || true
       printf '%s\n' "$status_output"
       if printf '%s\n' "$status_output" | grep -Eq 'is running|is already running|running on node'; then
         printf '%s_ALREADY_RUNNING\n' "$label"
         return 0
       fi
 
-      start_output="$("$ORACLE_HOME/bin/srvctl" start "$@" 2>&1)"
+      start_output="$(ORACLE_HOME="$oracle_home" "$srvctl_bin" start "$@" 2>&1)"
       start_rc=$?
       printf '%s\n' "$start_output"
       if [ "$start_rc" -ne 0 ] &&
@@ -164,10 +399,17 @@
       printf '%s_STARTED\n' "$label"
     }
 
-    start_resource LISTENER listener -listener LISTENER_{{ inst.name | upper }}
+    start_resource LISTENER "$gi_oracle_home" "$gi_srvctl" listener -listener LISTENER_{{ inst.name | upper }}
     listener_rc=$?
-    start_resource DATABASE database -d {{ inst.name }}
-    database_rc=$?
+    database_status="$(ORACLE_HOME="$gi_oracle_home" "$gi_crsctl" status resource ora.{{ _restart_db_unique_name }}.db -t 2>&1)" || true
+    printf '%s\n' "$database_status"
+    if printf '%s\n' "$database_status" | grep -Eq 'ONLINE[[:space:]]+ONLINE'; then
+      echo DATABASE_ALREADY_RUNNING
+      database_rc=0
+    else
+      start_resource DATABASE "$db_oracle_home" "$db_srvctl" database -db {{ _restart_db_unique_name }}
+      database_rc=$?
+    fi
 
     if [ "$listener_rc" -ne 0 ]; then
       exit "$listener_rc"
@@ -199,20 +441,22 @@
   changed_when: false
   failed_when: false
 
-- name: Recover a database left mounted by an earlier CSS failure
+- name: Recover a database left mounted instead of its configured open mode
   ansible.builtin.shell: |
     set -o pipefail
-    export ORACLE_HOME={{ oracle_gi_home }}
-    "$ORACLE_HOME/bin/srvctl" stop database -d {{ inst.name }} -stopoption IMMEDIATE
-    "$ORACLE_HOME/bin/srvctl" start database -d {{ inst.name }} -startoption OPEN
+    export ORACLE_HOME={{ _restart_home_path }}
+    "$ORACLE_HOME/bin/srvctl" stop database -db {{ _restart_db_unique_name }} -stopoption IMMEDIATE
+    "$ORACLE_HOME/bin/srvctl" start database -db {{ _restart_db_unique_name }} \
+      -startoption "{{ _restart_db_start_option }}"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
   register: _restart_db_recover
   changed_when: true
   when:
-    - (_restart_db_open_mode.stdout | default('') | trim).startswith('PRIMARY|')
-    - (_restart_db_open_mode.stdout | default('') | trim) != 'PRIMARY|READ WRITE'
+    - >-
+      (_restart_db_open_mode.stdout | default('') | trim) in
+      ['PRIMARY|MOUNTED', 'PHYSICAL STANDBY|MOUNTED']
 
 - name: Wait for database role-appropriate readiness under Restart
   ansible.builtin.shell: |

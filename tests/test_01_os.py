@@ -48,6 +48,38 @@ def test_os_prep_grows_root_disk_via_oracle_common():
     assert "lab_ensure_root_disk_size" in lab_up
 
 
+def test_os_prep_configures_reboot_persistent_guest_hostname_resolution():
+    """NetCA needs the guest FQDN on a non-loopback address before GI install."""
+    common_main = (REPO_ROOT / "roles/oracle_common/tasks/main.yml").read_text(
+        encoding="utf-8"
+    )
+    guest_hosts = (
+        REPO_ROOT / "roles/oracle_common/tasks/guest-hosts.yml"
+    ).read_text(encoding="utf-8")
+    prep = (REPO_ROOT / "playbooks/00-prep-os.yml").read_text(encoding="utf-8")
+
+    assert "include_tasks: guest-hosts.yml" in common_main
+    assert "role: oracle_common" in prep
+    assert "Inspect cloud-init hosts template" in guest_hosts
+    assert "/etc/cloud/templates/hosts.redhat.tmpl" in guest_hosts
+    assert "Ensure guest hosts files have the lab host aliases" in guest_hosts
+    assert "oracle_lab_guest_hosts" in guest_hosts
+    assert "oracle_lab_host_map_mode" in guest_hosts
+    assert r"/\{\{fqdn\}\}|\{\{hostname\}\}/" in guest_hosts
+    assert "NR == 1" in guest_hosts
+
+
+def test_guest_fqdn_resolves_to_non_loopback_address(lab_exec):
+    r = lab_exec(
+        "test \"$(getent ahostsv4 $(hostname -f) | "
+        "awk 'NR == 1 { print $1 }')\" = 192.168.87.11"
+    )
+    assert r.returncode == 0, (
+        "guest FQDN must resolve to its lab address before Oracle NetCA runs: "
+        f"{r.stdout}{r.stderr}"
+    )
+
+
 def test_oracle_user_exists(lab_exec):
     r = lab_exec("id oracle")
     assert r.returncode == 0, f"oracle user missing: {r.stderr}"

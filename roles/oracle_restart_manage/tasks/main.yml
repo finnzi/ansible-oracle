@@ -42,50 +42,28 @@
     - not oracle_restart_available
     - oracle_restart_required | bool
 
-- name: Read local CSS autostart policy
+- name: Read Oracle High Availability Services autostart policy
   ansible.builtin.command: >-
-    {{ oracle_gi_home }}/bin/crsctl stat res ora.cssd -p -init
-  register: _restart_css_properties
+    {{ oracle_gi_home }}/bin/crsctl config has
+  register: _restart_has_autostart
   changed_when: false
   when: oracle_restart_available
 
-# With filesystem-backed databases there is no ASM resource to pull CSS up.
-# The Restart database agent still requires local cluster membership, so CSS
-# must start directly with OHASD after a host reboot.
-- name: Configure local CSS to start with OHASD
+# Oracle documents `crsctl enable has` as the supported way to enable Oracle
+# Restart autostart. Do not modify AUTO_START on an `ora.*` resource directly;
+# SRVCTL is the supported interface for Oracle Restart-managed components.
+#
+# The Grid installer configures ASM/CSS through its supported configuration
+# assistants. This role only enables HAS and manages Oracle entities with
+# SRVCTL; forcing ora.cssd directly would bypass those supported interfaces.
+- name: Enable Oracle High Availability Services autostart
   ansible.builtin.command: >-
-    {{ oracle_gi_home }}/bin/crsctl modify resource ora.cssd
-    -attr AUTO_START=always -init
-  register: _restart_css_autostart
+    {{ oracle_gi_home }}/bin/crsctl enable has
+  register: _restart_has_enable
   changed_when: true
   when:
     - oracle_restart_available
-    - "'AUTO_START=always' not in (_restart_css_properties.stdout | default(''))"
-
-- name: Check local CSS status for Restart database resources
-  ansible.builtin.shell: |
-    set -o pipefail
-    {{ oracle_gi_home }}/bin/crsctl stat res ora.cssd -init 2>&1 || true
-  args: { executable: /bin/bash }
-  register: _restart_css_status
-  changed_when: false
-  when: oracle_restart_available
-
-- name: Start local CSS before srvctl database operations
-  ansible.builtin.shell: |
-    set -o pipefail
-    {{ oracle_gi_home }}/bin/crsctl start resource ora.cssd -init 2>&1
-  args: { executable: /bin/bash }
-  register: _restart_css_start
-  changed_when: "'CRS-2676' in (_restart_css_start.stdout | default(''))"
-  failed_when: >-
-    _restart_css_start.rc != 0 and
-    'CRS-5702' not in (_restart_css_start.stdout | default('')) and
-    'already running' not in (_restart_css_start.stdout | default('') | lower)
-  when:
-    - oracle_restart_available
-    - "'STATE=ONLINE' not in (_restart_css_status.stdout | default(''))"
-    - "'ONLINE  ONLINE' not in (_restart_css_status.stdout | default(''))"
+    - "'CRS-4622' not in (_restart_has_autostart.stdout | default(''))"
 
 # ── Register each instance + its listener with Restart ─────────────────
 - name: Register instance, listener, and start them under Restart
@@ -116,3 +94,155 @@
           inst.dg_role | default('') == 'standby'
         )
       )
+
+# NetCA creates a default LISTENER that binds TCP/1521 on every address. That
+# wildcard socket can make Restart report LISTENER_<INSTANCE> online even
+# though the default process owns the VIP and has no static DGMGRL service.
+# Run this after instance registration at host scope: Data Guard standby
+# registration is owned by oracle_dataguard and therefore skips the include
+# above, but the second 04-register-restart pass must reconcile both hosts.
+- name: Replace wildcard default listener with dedicated port-1521 listener
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home={{ oracle_gi_home | quote }}
+    db_home={{ (listener_inst.oracle_base ~ '/' ~ (((listener_inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(listener_inst.db_homes[0])).suffix)) | quote }}
+    named_listener=LISTENER_{{ listener_inst.name | upper }}
+
+    named_config="$(ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" config listener \
+      -listener "$named_listener" 2>&1)"
+    if [ "$?" -ne 0 ]; then
+      printf '%s\n' "$named_config"
+      echo DEDICATED_LISTENER_NOT_REGISTERED
+      exit 0
+    fi
+
+    default_config="$(ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" config listener \
+      -listener LISTENER -all 2>&1)"
+    default_rc=$?
+    if [ "$default_rc" -eq 0 ]; then
+      if printf '%s\n' "$default_config" | grep -Fqi 'Listener is enabled'; then
+        ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" disable listener -listener LISTENER
+        echo DEFAULT_LISTENER_DISABLED
+      fi
+      default_status="$(ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" status listener \
+        -listener LISTENER 2>&1)" || true
+      if printf '%s\n' "$default_status" | grep -Eiq 'is running|running on node'; then
+        ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" stop listener -listener LISTENER
+        echo DEFAULT_LISTENER_STOPPED
+      fi
+    fi
+
+    named_status="$(ORACLE_HOME="$db_home" "$db_home/bin/lsnrctl" status \
+      "$named_listener" 2>&1)" || true
+    if ! printf '%s\n' "$named_status" |
+         grep -Eiq "^Alias[[:space:]]+${named_listener}$"; then
+      ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" stop listener \
+        -listener "$named_listener" >/dev/null 2>&1 || true
+      ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" start listener \
+        -listener "$named_listener"
+      echo DEDICATED_LISTENER_STARTED
+    fi
+
+    named_status="$(ORACLE_HOME="$db_home" "$db_home/bin/lsnrctl" status \
+      "$named_listener" 2>&1)"
+    printf '%s\n' "$named_status"
+    printf '%s\n' "$named_status" |
+      grep -Eiq "^Alias[[:space:]]+${named_listener}$"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _restart_dedicated_listener
+  changed_when: >-
+    'DEFAULT_LISTENER_DISABLED' in (_restart_dedicated_listener.stdout | default('')) or
+    'DEFAULT_LISTENER_STOPPED' in (_restart_dedicated_listener.stdout | default('')) or
+    'DEDICATED_LISTENER_STARTED' in (_restart_dedicated_listener.stdout | default(''))
+  failed_when: _restart_dedicated_listener.rc != 0
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | oracle_apply_instance_overrides(
+          oracle_instance_overrides | default({}),
+          oracle_restart_apply_instance_overrides_require_dataguard | default(true)
+        )
+    }}
+  loop_control:
+    loop_var: listener_inst
+    label: "{{ listener_inst.name }}"
+  when:
+    - oracle_restart_available
+    - (listener_inst.listener_port | default(1521) | int) == 1521
+    - listener_inst.dataguard | default(false) | bool or 'standby' not in group_names
+
+# Oracle Restart may exhaust its initial start retries while the Data Guard
+# peer is still booting.  Install a bounded, broker-aware pass for the next
+# boot.  It uses each registered database home's srvctl and only reads HAS
+# state through CRSCTL; it never edits ora.* resources with CRSCTL.
+- name: Write Oracle Restart reconciliation environment
+  ansible.builtin.template:
+    src: oracle-restart-reconcile.env.j2
+    dest: "{{ oracle_restart_reconcile_environment_file }}"
+    owner: root
+    group: root
+    mode: "0600"
+  register: _restart_reconcile_environment
+  no_log: true
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Install Oracle Restart post-boot reconciliation script
+  ansible.builtin.template:
+    src: oracle-restart-reconcile.sh.j2
+    dest: "{{ oracle_restart_reconcile_script_path }}"
+    owner: root
+    group: "{{ oracle_group }}"
+    mode: "0750"
+  register: _restart_reconcile_script
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Install Oracle Restart post-boot reconciliation unit
+  ansible.builtin.template:
+    src: oracle-restart-reconcile.service.j2
+    dest: "/etc/systemd/system/{{ oracle_restart_reconcile_service_name }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: _restart_reconcile_unit
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Reload systemd after Oracle Restart reconciliation install
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+    - >-
+      (_restart_reconcile_environment.changed | default(false)) or
+      (_restart_reconcile_script.changed | default(false)) or
+      (_restart_reconcile_unit.changed | default(false))
+
+- name: Enable Oracle Restart post-boot reconciliation
+  ansible.builtin.systemd_service:
+    name: "{{ oracle_restart_reconcile_service_name }}"
+    enabled: true
+  when:
+    - oracle_restart_available
+    - oracle_restart_reconcile_enabled | bool
+
+- name: Disable Oracle Restart post-boot reconciliation when not enabled
+  ansible.builtin.systemd_service:
+    name: "{{ oracle_restart_reconcile_service_name }}"
+    enabled: false
+    state: stopped
+    daemon_reload: true
+  register: _restart_reconcile_disable
+  failed_when: >-
+    (_restart_reconcile_disable.failed | default(false)) and
+    'Could not find the requested service' not in
+      (_restart_reconcile_disable.msg | default('')) and
+    'not found' not in (_restart_reconcile_disable.msg | default('') | lower)
+  when: not (oracle_restart_reconcile_enabled | bool)

@@ -44,6 +44,20 @@ observer_log_dir: "{{ observer_oracle_base }}/diag/fsfo"
 observer_service_name: oracle-fsfo-observer
 observer_fast_start_failover_threshold: 30
 
+# During a coordinated cold boot, Oracle Restart can bring the primary up
+# before the physical standby is reachable.  Do not let the observer's FSFO
+# threshold start counting until broker reports both members in valid roles.
+# The marker lives below systemd's per-boot RuntimeDirectory, so later
+# observer restarts in the same boot remain responsive to genuine failures.
+observer_cold_boot_guard_enabled: true
+observer_cold_boot_guard_retries: 60
+observer_cold_boot_guard_delay: 10
+observer_cold_boot_guard_command_timeout: 30
+# Keep the script's own monotonic deadline below systemd TimeoutStartSec so it
+# exits with a useful diagnostic instead of relying on systemd to kill it.
+observer_cold_boot_guard_total_timeout: 840
+observer_cold_boot_guard_timeout: 900
+
 # Install the Oracle Client home and write observer-side network config.
 oracle_observer_install_client: false
 oracle_observer_recreate_incomplete_home: true

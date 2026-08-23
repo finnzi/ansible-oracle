@@ -63,7 +63,34 @@ def test_gi_install_role_has_oracle_restart_install_path():
     assert "Resolve extracted GI RU directory for gridSetup -applyRU" in tasks
     assert "./gridSetup.sh -silent -force -waitforcompletion" in tasks
     assert "-applyRU {{ _gi_ru_apply_dir.stdout | trim | quote }}" in tasks
+    assert "Verify whether GI root configuration completed" in tasks
+    assert "/etc/oracle/olr.loc" in tasks
+    assert "root/crsstart" in tasks
+    assert "when: _gi_root_configured.rc != 0" in tasks
     assert "{{ oracle_gi_home }}/root.sh" in tasks
+    assert "Run Grid Infrastructure configuration assistants" in tasks
+    assert "- -executeConfigTools" in tasks
+    assert "Allow the Grid owner to update oratab during configuration" in tasks
+    root_scripts = tasks.index("Run GI root scripts")
+    config_tools = tasks.index("Run Grid Infrastructure configuration assistants")
+    asm_css_verify = tasks.index("Verify ASM and CSS after Grid configuration")
+    install_marker = tasks.index("Drop GI install marker")
+    assert root_scripts < config_tools < asm_css_verify < install_marker
+    assert "register: _gi_config_tools" in tasks
+    assert "crsctl check css" in tasks
+    assert "crsctl status resource ora.asm -p" in tasks
+    assert "srvctl status asm" in tasks
+    assert "srvctl status diskgroup" in tasks
+    assert "CRS-4529" in tasks
+    assert "NAME=ora.asm" in tasks
+    assert "register: _gi_asm_css_verify" in tasks
+    assert "Verify ASM and CSS after Grid configuration" in tasks
+    assert "Refresh ASM registration after GI configuration" in tasks
+    refresh_asm = tasks.index("Refresh ASM registration after GI configuration")
+    wait_asm = tasks.index("Wait for the configured Restart ASM stack")
+    assert refresh_asm < wait_asm
+    wait_block = tasks[wait_asm : tasks.index("Probe Restart stack after GI install attempt", wait_asm)]
+    assert "_gi_asm_registered | bool" not in wait_block
     assert "Install systemd OHASD stack-start drop-in" in tasks
     assert "Read native OHASD systemd unit" in tasks
     assert "_gi_ohasd_native_starts_stack" in tasks
@@ -71,6 +98,9 @@ def test_gi_install_role_has_oracle_restart_install_path():
     assert "ExecStartPost=/etc/init.d/ohasd start" in tasks
     assert "Recover an installed but offline Restart stack" in tasks
     assert "Wait for Oracle High Availability Services" in tasks
+    assert "Wait for the configured Restart ASM stack" in tasks
+    assert "srvctl status asm" in tasks
+    assert "srvctl status diskgroup" in tasks
     assert "oracle.install.option=HA_CONFIG" in response
     assert "oracle.install.crs.config.storageOption=FLEX_ASM_STORAGE" in response
     assert "oracle.install.asm.diskGroup.disks={{ oracle_gi_asm_disks }}" in response
@@ -84,29 +114,314 @@ def test_restart_registration_uses_supported_srvctl_syntax():
     register_tasks = (
         REPO_ROOT / "roles/oracle_restart_manage/tasks/register-instance.yml"
     ).read_text(encoding="utf-8")
+    standby_tasks = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/duplicate-standby.yml"
+    ).read_text(encoding="utf-8")
+    broker_tasks = (
+        REPO_ROOT / "roles/oracle_dataguard/tasks/configure-broker.yml"
+    ).read_text(encoding="utf-8")
 
-    assert "Start local CSS before srvctl database operations" in main_tasks
-    assert "Read local CSS autostart policy" in main_tasks
-    assert "Configure local CSS to start with OHASD" in main_tasks
-    assert 'AUTO_START=always' in main_tasks
-    assert 'crsctl modify resource ora.cssd' in main_tasks
-    assert "crsctl start resource ora.cssd -init" in main_tasks
+    assert "Read Oracle High Availability Services autostart policy" in main_tasks
+    assert "Enable Oracle High Availability Services autostart" in main_tasks
+    assert "crsctl config has" in main_tasks
+    assert "crsctl enable has" in main_tasks
+    assert "crsctl modify resource ora.cssd" not in main_tasks
+    assert "crsctl start resource ora.cssd" not in main_tasks
+    assert "crsctl check css" not in main_tasks
     assert "srvctl\" add database" in register_tasks
     assert "-autostart" not in register_tasks
-    assert 'srvctl" enable "$@"' in register_tasks
-    assert "enable_resource DATABASE database -d {{ inst.name }}" in register_tasks
+    assert "Resolve role-aware database Restart contract" in register_tasks
+    assert "_restart_db_managed_role" in register_tasks
+    assert "_restart_db_start_option" in register_tasks
+    assert "Read Restart database resource profile" in register_tasks
+    assert "_restart_crs_db_exists" in register_tasks
+    assert "_restart_srvctl_db_config_usable" in register_tasks
+    assert "Refusing to mutate an ora.* resource" in register_tasks
+    assert "crsctl; restore supported srvctl/CSS access" in register_tasks
+    assert "Database role: PHYSICAL_STANDBY" in register_tasks
+    assert "Reconcile database Restart configuration" in register_tasks
+    assert 'srvctl" modify database' in register_tasks
+    assert "-role {{ _restart_db_managed_role }}" in register_tasks
+    assert "-policy AUTOMATIC" in register_tasks
+    assert '-startoption "{{ _restart_db_start_option }}"' in register_tasks
+    assert "-stopoption IMMEDIATE" in register_tasks
+    assert "Reconcile listener Restart configuration" in register_tasks
+    assert 'srvctl" modify listener' in register_tasks
+    assert '"$srvctl_bin" enable "$@"' in register_tasks
+    assert (
+        'enable_resource DATABASE "$db_oracle_home" "$db_srvctl" database '
+        "-db {{ _restart_db_unique_name }}"
+        in register_tasks
+    )
     assert "already enabled|PRCR-1002" in register_tasks
+    assert "DATABASE_ALREADY_ENABLED" in register_tasks
+    assert "DATABASE_ALREADY_RUNNING" in register_tasks
+    assert "status resource ora.{{ _restart_db_unique_name }}.db -p" in register_tasks
+    assert "status resource ora.{{ _restart_db_unique_name }}.db -t" in register_tasks
     assert "failed_when: _srvctl_enable.rc != 0" in register_tasks
     assert "listener_rc=$?" in register_tasks
     assert "database_rc=$?" in register_tasks
     assert "failed_when: _srvctl_start.rc != 0" in register_tasks
     assert "Probe database open mode after Restart start" in register_tasks
-    assert "Recover a database left mounted by an earlier CSS failure" in register_tasks
+    assert "Recover a database left mounted instead of its configured open mode" in register_tasks
+    assert "'PHYSICAL STANDBY|MOUNTED'" in register_tasks
     assert "Wait for database role-appropriate readiness under Restart" in register_tasks
     assert "database_role || '|' || open_mode" in register_tasks
     assert "'PRIMARY|READ WRITE'" in register_tasks
     assert "'PHYSICAL STANDBY|READ ONLY WITH APPLY'" in register_tasks
-    assert "-startoption OPEN" in register_tasks
+    assert "Reconcile standby database Restart configuration" in standby_tasks
+    assert '-role "{{ _dg_standby_restart_role }}"' in standby_tasks
+    assert "_dg_standby_live_role" in standby_tasks
+    assert "_dg_standby_restart_startoption" in standby_tasks
+    assert "-policy AUTOMATIC" in standby_tasks
+    assert '-startoption "{{ _dg_standby_restart_startoption }}"' in standby_tasks
+    assert "-stopoption IMMEDIATE" in standby_tasks
+    assert "Configure standby Restart start policy for read-only apply" in broker_tasks
+    assert "-startoption" in broker_tasks
+    assert "read only" in broker_tasks
+
+
+def test_fan_registers_ons_and_fails_closed_on_status_errors():
+    """ONS must be registered through SRVCTL, not inferred from a failed probe."""
+    fan_tasks = (
+        REPO_ROOT / "roles/oracle_fan_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Classify initial ONS resource probe" in fan_tasks
+    assert "PRKO-0?2458|PRKO-0?2465" in fan_tasks
+    assert "PRKO-00371" not in fan_tasks
+    assert "Add Oracle Notification Services to Restart" in fan_tasks
+    assert '"-onsremoteport"' in fan_tasks
+    assert '"{{ oracle_fan_remote_port }}"' in fan_tasks
+    assert "when: _fan_ons_initial_resource_absent | bool" in fan_tasks
+    assert "PRKO-0?2452" in fan_tasks
+    assert "PRKO-0?2576" in fan_tasks
+    assert "PRKO-0?2569" in fan_tasks
+    assert 'argv: ["{{ oracle_gi_home }}/bin/srvctl", "enable", "ons"]' in fan_tasks
+    assert 'argv: ["{{ oracle_gi_home }}/bin/srvctl", "start", "ons"]' in fan_tasks
+    ons_lifecycle = fan_tasks.split(
+        "Read initial Oracle Notification Services state", 1
+    )[1].split("Probe firewalld for remote ONS", 1)[0]
+    assert "failed_when: false" not in ons_lifecycle
+    assert "Validate Oracle Notification Services after lifecycle convergence" in ons_lifecycle
+
+
+def test_restart_has_bounded_role_aware_post_boot_reconciliation():
+    """Cold boot retries must use broker state before starting DG databases."""
+    main_tasks = (REPO_ROOT / "roles/oracle_restart_manage/tasks/main.yml").read_text(
+        encoding="utf-8"
+    )
+    defaults = (
+        REPO_ROOT / "roles/oracle_restart_manage/defaults/main.yml"
+    ).read_text(encoding="utf-8")
+    reconcile = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.sh.j2"
+    ).read_text(encoding="utf-8")
+    unit = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.service.j2"
+    ).read_text(encoding="utf-8")
+
+    assert "Install Oracle Restart post-boot reconciliation" in main_tasks
+    assert "oracle_restart_reconcile_enabled" in defaults
+    assert "oracle_restart_reconcile_attempts" in defaults
+    assert "oracle_restart_reconcile_delay_seconds" in defaults
+    assert "oracle_restart_reconcile_command_timeout_seconds" in defaults
+    assert "oracle-ohasd.service" in unit
+    assert "network-online.target" in unit
+    assert "Wants=network-online.target oracle-ohasd.service" in unit
+    assert "Type=oneshot" in unit
+    assert "After=" in unit
+    assert "oracle_restart_reconcile_command_timeout_seconds" in unit
+    assert "for ((attempt=1; attempt<=" in reconcile
+    assert "dgmgrl" in reconcile
+    assert 'timeout --kill-after=5s "$COMMAND_TIMEOUT_SECONDS" "$db_home/bin/dgmgrl"' in reconcile
+    assert "oracle_apply_instance_overrides" in reconcile
+    assert "oracle_instance_overrides" in reconcile
+    assert "SHOW DATABASE" in reconcile
+    assert "ORA-16661" in reconcile
+    assert "grep -Fq 'ORA-16661'" in reconcile
+    assert "grep -Eiq 'ORA-16661|" not in reconcile
+    assert "16808" in reconcile
+    assert "16825" in reconcile
+    assert "-startoption MOUNT" in reconcile
+    assert "MOUNTED to bootstrap broker role discovery" in reconcile
+    assert reconcile.index("MOUNTED to bootstrap broker role discovery") < reconcile.index(
+        'if ! probe_broker "$db_home"'
+    )
+    assert "Primary database" in reconcile
+    assert "Physical standby database" in reconcile
+    assert "DG_BROKER_USER" in reconcile
+    assert "DG_SYS_PASSWORD" not in reconcile
+    assert "srvctl\" modify database" in reconcile
+    assert "srvctl\" start database" in reconcile
+    assert "crsctl modify" not in reconcile
+    assert "crsctl start" not in reconcile
+    assert "PHYSICAL_STANDBY" in reconcile
+    assert "read only" in reconcile
+    assert "Failing closed" in reconcile
+    assert "Waiting for ${db_unique}: Restart registration is not readable yet" in reconcile
+    assert "'standby' not in group_names" in reconcile
+
+
+def test_restart_dedicated_listener_disables_wildcard_default_on_port_1521():
+    main_tasks = (
+        REPO_ROOT / "roles/oracle_restart_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Replace wildcard default listener with dedicated port-1521 listener" in main_tasks
+    assert 'srvctl" disable listener -listener LISTENER' in main_tasks
+    assert 'srvctl" stop listener -listener LISTENER' in main_tasks
+    assert "DEDICATED_LISTENER_STARTED" in main_tasks
+    assert "DEDICATED_LISTENER_NOT_REGISTERED" in main_tasks
+    assert 'grep -Eiq "^Alias[[:space:]]+${named_listener}$"' in main_tasks
+    assert "(listener_inst.listener_port | default(1521) | int) == 1521" in main_tasks
+    assert "loop_var: listener_inst" in main_tasks
+
+
+def test_restart_reconciliation_bounds_all_external_oracle_commands():
+    """CRS, SQL, and SRVCTL calls must not outlive one reconciliation pass."""
+    defaults = (
+        REPO_ROOT / "roles/oracle_restart_manage/defaults/main.yml"
+    ).read_text(encoding="utf-8")
+    env = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.env.j2"
+    ).read_text(encoding="utf-8")
+    unit = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.service.j2"
+    ).read_text(encoding="utf-8")
+    reconcile = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.sh.j2"
+    ).read_text(encoding="utf-8")
+
+    assert "oracle_restart_reconcile_read_timeout_seconds: 30" in defaults
+    assert "oracle_restart_reconcile_mutation_timeout_seconds: 120" in defaults
+    assert "ORACLE_RESTART_RECONCILE_READ_TIMEOUT_SECONDS" in env
+    assert "ORACLE_RESTART_RECONCILE_MUTATION_TIMEOUT_SECONDS" in env
+    assert 'timeout --kill-after=5s "$READ_TIMEOUT_SECONDS"' in reconcile
+    assert 'timeout --kill-after=5s "$MUTATION_TIMEOUT_SECONDS"' in reconcile
+    assert 'timeout --kill-after=5s "$COMMAND_TIMEOUT_SECONDS"' in reconcile
+    assert "non_negative_integer \"$DELAY_SECONDS\"" in reconcile
+    assert "positive_integer \"$ATTEMPTS\"" in reconcile
+    assert 'run_read "$GI_HOME/bin/crsctl" check has' in reconcile
+    assert 'run_read env ORACLE_HOME="$db_home" ORACLE_SID="$sid" "$db_home/bin/sqlplus"' in reconcile
+    assert 'run_read env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" config database' in reconcile
+    assert 'run_read env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" status database' in reconcile
+    assert 'run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" modify database' in reconcile
+    assert 'run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" stop database' in reconcile
+    assert 'run_mutation env ORACLE_HOME="$db_home" "$db_home/bin/srvctl" start database' in reconcile
+    assert "oracle_instances | default([]) | length" in unit
+    assert "oracle_restart_reconcile_read_timeout_seconds" in unit
+    assert "oracle_restart_reconcile_mutation_timeout_seconds" in unit
+    assert "* 4 *" in unit
+    assert "* 3 *" in unit
+
+
+def test_restart_reconciliation_is_disabled_when_opted_out():
+    """Opting out must stop and disable a previously installed unit."""
+    tasks = (
+        REPO_ROOT / "roles/oracle_restart_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+
+    disable = tasks.split(
+        "Disable Oracle Restart post-boot reconciliation when not enabled", 1
+    )[1].split("- name:", 1)[0]
+    assert "ansible.builtin.systemd_service:" in disable
+    assert "enabled: false" in disable
+    assert "state: stopped" in disable
+    assert "daemon_reload: true" in disable
+    assert "Could not find the requested service" in disable
+    assert "when: not (oracle_restart_reconcile_enabled | bool)" in disable
+
+
+def test_restart_reconciliation_keeps_broker_credentials_out_of_executable():
+    """The systemd unit must load credentials from a protected env file."""
+    defaults = (
+        REPO_ROOT / "roles/oracle_restart_manage/defaults/main.yml"
+    ).read_text(encoding="utf-8")
+    tasks = (
+        REPO_ROOT / "roles/oracle_restart_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+    unit = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.service.j2"
+    ).read_text(encoding="utf-8")
+    reconcile = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.sh.j2"
+    ).read_text(encoding="utf-8")
+
+    assert "oracle_restart_reconcile_environment_file" in defaults
+    env_task = tasks.split(
+        "Write Oracle Restart reconciliation environment", 1
+    )[1].split("- name:", 1)[0]
+    assert "ansible.builtin.template:" in env_task
+    assert "mode: \"0600\"" in env_task
+    assert "owner: root" in env_task
+    assert "group: root" in env_task
+    assert "no_log: true" in env_task
+    assert "EnvironmentFile={{ oracle_restart_reconcile_environment_file }}" in unit
+    assert "ORACLE_RESTART_RECONCILE_DGMGRL_PASSWORD" in reconcile
+    assert "DG_BROKER_PASSWORD=" not in reconcile
+    assert "oracle_restart_reconcile_dgmgrl_password" not in reconcile
+
+
+def test_restart_reconciliation_validates_broker_evidence_before_mutation():
+    """Broker role parsing must reject ambiguous or unexpected diagnostics."""
+    reconcile = (
+        REPO_ROOT
+        / "roles/oracle_restart_manage/templates/oracle-restart-reconcile.sh.j2"
+    ).read_text(encoding="utf-8")
+
+    assert "validate_broker_output" in reconcile
+    assert "validate_member_output" in reconcile
+    assert "Configuration Status" in reconcile
+    assert "waiting && $0 ~ /[^[:space:]]/" in reconcile
+    assert "print toupper(fields[1])" in reconcile
+    assert "PRIMARY_COUNT" in reconcile
+    assert "STANDBY_COUNT" in reconcile
+    assert "-eq 1" in reconcile
+    assert "ORA-(16072|16661|16808|16819|16820|16825)" in reconcile
+    assert "unrecognized broker diagnostic" in reconcile
+    assert "SHOW DATABASE '${db_unique}'" in reconcile
+    assert "member_output" in reconcile
+    assert "if ! validate_broker_output \"$output\"" in reconcile
+    assert "if ! validate_member_output" in reconcile
+    assert "Configuration Status:[[:space:]]+ERROR" not in reconcile
+
+
+def test_restart_database_srvctl_runs_from_registered_database_home():
+    """Database SRVCTL must come from the registered DB home, not GI home."""
+    register_tasks = (
+        REPO_ROOT / "roles/oracle_restart_manage/tasks/register-instance.yml"
+    ).read_text(encoding="utf-8")
+
+    assert 'export ORACLE_HOME={{ _restart_home_path }}' in register_tasks
+    assert '"$ORACLE_HOME/bin/srvctl" config database' in register_tasks
+    assert '"$ORACLE_HOME/bin/srvctl" add database' in register_tasks
+    assert '"$ORACLE_HOME/bin/srvctl" modify database' in register_tasks
+    assert 'db_oracle_home="{{ _restart_home_path }}"' in register_tasks
+    assert 'enable_output="$(ORACLE_HOME="$oracle_home" "$srvctl_bin" enable' in register_tasks
+    assert 'status_output="$(ORACLE_HOME="$oracle_home" "$srvctl_bin" status' in register_tasks
+    assert (
+        'enable_resource DATABASE "$db_oracle_home" "$db_srvctl" database'
+        in register_tasks
+    )
+    assert (
+        'start_resource DATABASE "$db_oracle_home" "$db_srvctl" database'
+        in register_tasks
+    )
+    assert '"$ORACLE_HOME/bin/srvctl" stop database' in register_tasks
+    assert '"$ORACLE_HOME/bin/srvctl" start database' in register_tasks
+
+    # Listener and CRSCTL operations remain owned by the GI home.
+    assert 'export ORACLE_HOME={{ oracle_gi_home }}' in register_tasks
+    assert '"$ORACLE_HOME/bin/srvctl" config listener' in register_tasks
+    assert '"$ORACLE_HOME/bin/crsctl" status resource' in register_tasks
 
 
 def _restart_installed(lab_exec) -> bool:
@@ -294,8 +609,13 @@ def test_restart_database_registration_details(
     instance,
 ):
     exec_fn = request.getfixturevalue(exec_fixture)
+
+    expected_homes = home if isinstance(home, tuple) else (home,)
+    command_home = expected_homes[0]
     config = exec_fn(
-        f"su - oracle -c '/grid/19c/gi_home1/bin/srvctl config database -db {restart_db_name}'"
+        "su - oracle -c "
+        f"'ORACLE_HOME={command_home} {command_home}/bin/srvctl "
+        f"config database -db {restart_db_name}'"
     )
 
     if config.returncode != 0 and restart_db_name in {"duper", "fluff"}:
@@ -306,7 +626,6 @@ def test_restart_database_registration_details(
     assert config.returncode == 0, config.stdout + config.stderr
     assert f"Database unique name: {restart_db_name}" in config.stdout
     assert f"Database name: {database_name}" in config.stdout
-    expected_homes = home if isinstance(home, tuple) else (home,)
     assert any(f"Oracle home: {value}" in config.stdout for value in expected_homes)
     expected_spfiles = spfile if isinstance(spfile, tuple) else (spfile,)
     assert any(f"Spfile: {value}" in config.stdout for value in expected_spfiles)
@@ -345,7 +664,7 @@ def test_restart_systemd_unit_starts_stack_after_monitor(lab_exec, request):
 
 @pytest.mark.slow
 def test_standby_recovers_after_ohasd_unit_restart(standby_exec):
-    """Opt-in live test of OHASD, CSS, and standby database recovery."""
+    """Opt-in live test of OHASD and standby database recovery."""
     if os.environ.get("ORACLE_TEST_OHASD_RESTART") != "1":
         pytest.skip("set ORACLE_TEST_OHASD_RESTART=1 to restart standby OHASD")
 
@@ -365,13 +684,11 @@ def test_standby_recovers_after_ohasd_unit_restart(standby_exec):
     while time.time() < deadline:
         state = standby_exec(
             "/grid/19c/gi_home1/bin/crsctl check has 2>&1; "
-            "/grid/19c/gi_home1/bin/crsctl stat res ora.cssd -t -init 2>&1; "
             f"su - oracle -c {shlex.quote(sql_command)}"
         )
         last = state.stdout
         if (
             "CRS-4638" in last
-            and "ONLINE  ONLINE" in last
             and "PHYSICAL STANDBY|READ ONLY WITH APPLY" in last
         ):
             return

@@ -24,3 +24,23 @@ oracle_restart_required: false
 # default. The Data Guard site path sets this false so generic Restart
 # registration can skip standby instances and leave them to oracle_dataguard.
 oracle_restart_apply_instance_overrides_require_dataguard: true
+
+# After a cold boot Oracle Restart can start the former primary before the
+# standby is reachable.  A bounded, broker-aware retry pass repairs that race
+# without editing ora.* resources through CRSCTL.  The unit is enabled but is
+# not started during Ansible convergence; it runs from multi-user.target on
+# the next boot.
+oracle_restart_reconcile_enabled: true
+oracle_restart_reconcile_attempts: 18
+oracle_restart_reconcile_delay_seconds: 20
+oracle_restart_reconcile_command_timeout_seconds: 30
+# Read-only CRS/SQL/SRVCTL probes should fail quickly during a cold boot;
+# mutating SRVCTL operations receive a little longer for Oracle Restart to
+# settle while remaining bounded by the systemd unit.
+oracle_restart_reconcile_read_timeout_seconds: 30
+oracle_restart_reconcile_mutation_timeout_seconds: 120
+oracle_restart_reconcile_script_path: /usr/local/sbin/oracle-restart-reconcile
+oracle_restart_reconcile_service_name: oracle-restart-reconcile.service
+oracle_restart_reconcile_environment_file: /etc/sysconfig/oracle-restart-reconcile
+oracle_restart_reconcile_dgmgrl_user: "{{ observer_sysdg_user | default('dgmonitor') }}"
+oracle_restart_reconcile_dgmgrl_password: "{{ observer_sysdg_password | default(oracle_lab_dg_password | default('DgPassword1_')) }}"

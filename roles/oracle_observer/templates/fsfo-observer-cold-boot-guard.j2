@@ -1,0 +1,190 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${DGMGRL_CONNECT:?}"
+: "${DGMGRL_CONNECT_ALTERNATE:?}"
+: "${OBSERVER_CLIENT_HOME:?}"
+: "${TNS_ADMIN:?}"
+: "${OBSERVER_DG_PRIMARY_UNIQUE_NAME:?}"
+: "${OBSERVER_DG_STANDBY_UNIQUE_NAME:?}"
+: "${OBSERVER_COLD_BOOT_GUARD_STATE_FILE:?}"
+
+export ORACLE_HOME="$OBSERVER_CLIENT_HOME"
+export TNS_ADMIN
+
+# RuntimeDirectory is recreated by systemd on every boot.  Include boot_id in
+# the marker as a second line of defence if an administrator overrides the
+# marker path to persistent storage.
+boot_id="$(cat /proc/sys/kernel/random/boot_id)"
+if [[ "${OBSERVER_COLD_BOOT_GUARD_ENABLED:-true}" != "true" ]]; then
+  exit 0
+fi
+if [[ -r "$OBSERVER_COLD_BOOT_GUARD_STATE_FILE" ]] &&
+   grep -Fqx "$boot_id" "$OBSERVER_COLD_BOOT_GUARD_STATE_FILE"; then
+  exit 0
+fi
+
+retries="${OBSERVER_COLD_BOOT_GUARD_RETRIES:-60}"
+delay="${OBSERVER_COLD_BOOT_GUARD_DELAY:-10}"
+command_timeout="${OBSERVER_COLD_BOOT_GUARD_COMMAND_TIMEOUT:-30}"
+total_timeout="${OBSERVER_COLD_BOOT_GUARD_TOTAL_TIMEOUT:-840}"
+
+for numeric_value in "$retries" "$delay" "$command_timeout" "$total_timeout"; do
+  [[ "$numeric_value" =~ ^[0-9]+$ ]] || {
+    echo "Cold-boot guard timing values must be non-negative integers" >&2
+    exit 1
+  }
+done
+((retries > 0 && command_timeout > 0 && total_timeout > 0)) || {
+  echo "Cold-boot guard retries, command timeout, and total timeout must be positive" >&2
+  exit 1
+}
+deadline=$((SECONDS + total_timeout))
+
+next_probe_timeout() {
+  local remaining=$((deadline - SECONDS))
+  ((remaining > 0)) || return 1
+  probe_timeout="$command_timeout"
+  if ((probe_timeout > remaining)); then
+    probe_timeout="$remaining"
+  fi
+}
+
+configuration_is_ready() {
+  local connect="$1"
+  local output probe_timeout
+  next_probe_timeout || return 1
+  output="$(
+    timeout "$probe_timeout" "$ORACLE_HOME/bin/dgmgrl" -silent "$connect" <<'DGMGRL'
+SHOW CONFIGURATION VERBOSE;
+EXIT;
+DGMGRL
+  )" || return 1
+
+  local normalized
+  normalized="$(printf '%s\n' "$output" | tr '\n' ' ')"
+  printf '%s\n' "$normalized" | grep -Fq 'Protection Mode: MaxAvailability' || return 1
+  # A warning is expected while the observer itself is not yet registered.
+  # ERROR is retained as a distinct state: it is accepted below only for the
+  # precisely diagnosed observer-absent or ORA-16661 AutoReinstate paths.
+  configuration_status="$(
+    printf '%s\n' "$normalized" |
+      grep -Eo 'Configuration Status:[[:space:]]+(SUCCESS|WARNING|ERROR)' |
+      head -n 1 |
+      awk '{print $3}'
+  )"
+  [[ -n "$configuration_status" ]] || return 1
+}
+
+database_is_ready() {
+  local connect="$1"
+  local database="$2"
+  local output probe_timeout
+  next_probe_timeout || return 1
+  output="$(
+    timeout "$probe_timeout" "$ORACLE_HOME/bin/dgmgrl" -silent "$connect" <<DGMGRL
+SHOW DATABASE VERBOSE '$database';
+EXIT;
+DGMGRL
+  )" || return 1
+
+  local normalized
+  normalized="$(printf '%s\n' "$output" | tr '\n' ' ')"
+  printf '%s\n' "$normalized" | grep -Fq "Database - $database" || return 1
+
+  if printf '%s\n' "$normalized" | grep -Eq 'Role:[[:space:]]+PRIMARY'; then
+    database_role=PRIMARY
+  elif printf '%s\n' "$normalized" | grep -Eq 'Role:[[:space:]]+PHYSICAL STANDBY'; then
+    database_role='PHYSICAL STANDBY'
+  else
+    return 1
+  fi
+
+  # While this service is stopped, an otherwise healthy broker member reports
+  # ORA-16819/ORA-16820 solely because no observer is present.  ORA-16661 is
+  # the one additional state that is safe here: the old primary is mounted as
+  # a physical standby and needs the observer to perform AutoReinstate.
+  error_codes="$(printf '%s\n' "$normalized" | grep -Eo 'ORA-[0-9]+' || true)"
+  unexpected_errors="$(printf '%s\n' "$error_codes" |
+    grep -Ev '^ORA-(16819|16820|16661)$' || true)"
+  [[ -z "$unexpected_errors" ]] || return 1
+
+  database_needs_reinstate=false
+  database_observer_only=false
+  if printf '%s\n' "$error_codes" | grep -Fxq 'ORA-16661'; then
+    [[ "$database_role" == 'PHYSICAL STANDBY' ]] || return 1
+    database_needs_reinstate=true
+  elif printf '%s\n' "$error_codes" | grep -Eq '^ORA-(16819|16820)$'; then
+    # With no observer process running yet, Oracle reports ORA-16819/16820 on
+    # both otherwise healthy members and may elevate Configuration Status to
+    # ERROR. This exact two-member condition is the bootstrap signal.
+    database_observer_only=true
+  fi
+
+  if [[ "$database_needs_reinstate" == false ]] &&
+     { printf '%s\n' "$normalized" | grep -Eq 'Database Status:[[:space:]]+SUCCESS' ||
+       printf '%s\n' "$error_codes" | grep -Eq '^ORA-(16819|16820)$'; }; then
+    database_healthy=true
+  else
+    database_healthy=false
+  fi
+}
+
+for ((attempt = 1; attempt <= retries; attempt++)); do
+  ((SECONDS < deadline)) || break
+  # The configured primary alias is intentionally tried first, but the
+  # alternate alias is required after a switchover or FSFO promotion.
+  for connect in "$DGMGRL_CONNECT" "$DGMGRL_CONNECT_ALTERNATE"; do
+    if configuration_is_ready "$connect" &&
+       database_is_ready "$connect" "$OBSERVER_DG_PRIMARY_UNIQUE_NAME" &&
+       first_role="$database_role" &&
+       first_healthy="$database_healthy" &&
+       first_needs_reinstate="$database_needs_reinstate" &&
+       first_observer_only="$database_observer_only" &&
+       database_is_ready "$connect" "$OBSERVER_DG_STANDBY_UNIQUE_NAME" &&
+       second_role="$database_role" &&
+       second_healthy="$database_healthy" &&
+       second_needs_reinstate="$database_needs_reinstate" &&
+       second_observer_only="$database_observer_only" &&
+       [[ "$first_role" != "$second_role" ]]; then
+      if [[ "$first_role" == PRIMARY ]]; then
+        primary_healthy="$first_healthy"
+        standby_healthy="$second_healthy"
+        standby_needs_reinstate="$second_needs_reinstate"
+      else
+        primary_healthy="$second_healthy"
+        standby_healthy="$first_healthy"
+        standby_needs_reinstate="$first_needs_reinstate"
+      fi
+
+      # Normal cold boot requires both members to be healthy.  The sole ERROR
+      # exception is a healthy primary plus an ORA-16661 physical standby,
+      # because starting the observer is what lets AutoReinstate repair it.
+      if { [[ "$configuration_status" =~ ^(SUCCESS|WARNING)$ ]] &&
+           [[ "$primary_healthy" == true && "$standby_healthy" == true ]]; } ||
+         { [[ "$configuration_status" == ERROR ]] &&
+           [[ "$primary_healthy" == true && "$standby_healthy" == true ]] &&
+           [[ "$first_observer_only" == true && "$second_observer_only" == true ]]; } ||
+         { [[ "$configuration_status" == ERROR ]] &&
+           [[ "$primary_healthy" == true ]] &&
+           [[ "$standby_needs_reinstate" == true ]]; }; then
+      umask 022
+      mkdir -p "$(dirname "$OBSERVER_COLD_BOOT_GUARD_STATE_FILE")"
+      printf '%s\n' "$boot_id" >"$OBSERVER_COLD_BOOT_GUARD_STATE_FILE"
+      exit 0
+      fi
+    fi
+  done
+
+  if ((attempt < retries && SECONDS < deadline)); then
+    remaining=$((deadline - SECONDS))
+    sleep_for="$delay"
+    if ((sleep_for > remaining)); then
+      sleep_for="$remaining"
+    fi
+    ((sleep_for > 0)) && sleep "$sleep_for"
+  fi
+done
+
+echo "Data Guard broker did not report a valid primary and physical standby within the cold-boot guard window" >&2
+exit 1

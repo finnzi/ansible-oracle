@@ -9,6 +9,7 @@
     _dg_primary_unique_name: "{{ inst.db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
     _dg_standby_unique_name: "{{ inst.dg_standby_db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
     _dg_primary_pwfile: "{{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}"
+    _dg_gi_home_path: "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
 
 - name: Resolve runtime ORACLE_HOME from Restart for broker config
   ansible.builtin.include_role:
@@ -153,6 +154,132 @@
     )
   no_log: true
 
+- name: Read Data Guard broker roles after member convergence
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    SHOW CONFIGURATION;
+    EXIT;
+    DGMGRL
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_broker_roles_current
+  changed_when: false
+  failed_when: >-
+    _dg_broker_roles_current.rc != 0 or
+    'Primary database' not in (_dg_broker_roles_current.stdout | default('')) or
+    'Physical standby database' not in (_dg_broker_roles_current.stdout | default(''))
+  no_log: true
+
+- name: Read live Data Guard member roles and open modes
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ _dg_home_path }}
+    probe_member() {
+      local unique="$1"
+      local output
+      output="$($ORACLE_HOME/bin/sqlplus -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@${unique}_dgb as sysdba" <<'SQL'
+    SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
+    SELECT database_role || '|' || open_mode FROM v$database;
+    EXIT;
+    SQL
+      )" || true
+      printf '%s\n' "$output" | awk -v unique="$unique" '$0 ~ /^[[:space:]]*(PRIMARY|PHYSICAL STANDBY)\|(READ WRITE|READ ONLY WITH APPLY|READ ONLY|MOUNTED)[[:space:]]*$/ {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $0); print "LIVE_DB_STATE=" unique "|" $0; exit}'
+    }
+    probe_member "{{ _dg_primary_unique_name }}"
+    probe_member "{{ _dg_standby_unique_name }}"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_live_db_state_probe
+  changed_when: false
+  failed_when: >-
+    _dg_live_db_state_probe.rc != 0 or
+    'LIVE_DB_STATE={{ _dg_primary_unique_name }}|' not in
+      (_dg_live_db_state_probe.stdout | default('')) or
+    'LIVE_DB_STATE={{ _dg_standby_unique_name }}|' not in
+      (_dg_live_db_state_probe.stdout | default(''))
+  no_log: true
+
+- name: Resolve live Data Guard member state lines
+  ansible.builtin.set_fact:
+    _dg_primary_live_state_line: >-
+      {{
+        _dg_live_db_state_probe.stdout_lines
+        | select('match', '^LIVE_DB_STATE=' ~ _dg_primary_unique_name ~ '[|]')
+        | list | first | default('')
+      }}
+    _dg_standby_live_state_line: >-
+      {{
+        _dg_live_db_state_probe.stdout_lines
+        | select('match', '^LIVE_DB_STATE=' ~ _dg_standby_unique_name ~ '[|]')
+        | list | first | default('')
+      }}
+
+- name: Resolve live Data Guard roles and open modes
+  ansible.builtin.set_fact:
+    _dg_primary_live_role: "{{ (_dg_primary_live_state_line.split('|')[1] | default('')) | trim | upper }}"
+    _dg_primary_live_open_mode: "{{ (_dg_primary_live_state_line.split('|')[2] | default('')) | trim | upper }}"
+    _dg_standby_live_role: "{{ (_dg_standby_live_state_line.split('|')[1] | default('')) | trim | upper }}"
+    _dg_standby_live_open_mode: "{{ (_dg_standby_live_state_line.split('|')[2] | default('')) | trim | upper }}"
+
+- name: Fail closed when live Data Guard roles are ambiguous
+  ansible.builtin.assert:
+    that:
+      - _dg_primary_live_role in ['PRIMARY', 'PHYSICAL STANDBY']
+      - _dg_standby_live_role in ['PRIMARY', 'PHYSICAL STANDBY']
+      - (_dg_primary_live_role == 'PRIMARY') != (_dg_standby_live_role == 'PRIMARY')
+      - >-
+        (_dg_primary_live_role == 'PRIMARY' and _dg_primary_live_open_mode == 'READ WRITE') or
+        (_dg_primary_live_role == 'PHYSICAL STANDBY' and _dg_primary_live_open_mode in ['MOUNTED', 'READ ONLY', 'READ ONLY WITH APPLY'])
+      - >-
+        (_dg_standby_live_role == 'PRIMARY' and _dg_standby_live_open_mode == 'READ WRITE') or
+        (_dg_standby_live_role == 'PHYSICAL STANDBY' and _dg_standby_live_open_mode in ['MOUNTED', 'READ ONLY', 'READ ONLY WITH APPLY'])
+    fail_msg: >-
+      Live Data Guard state is not a safe two-member configuration:
+      {{ _dg_primary_unique_name }}={{ _dg_primary_live_role }}/{{ _dg_primary_live_open_mode }};
+      {{ _dg_standby_unique_name }}={{ _dg_standby_live_role }}/{{ _dg_standby_live_open_mode }}.
+      Refusing to force inventory roles or Restart start options.
+
+- name: Resolve live Data Guard primary and standby endpoints
+  ansible.builtin.set_fact:
+    _dg_live_primary_unique: >-
+      {{ _dg_primary_unique_name if _dg_primary_live_role == 'PRIMARY' else _dg_standby_unique_name }}
+    _dg_live_standby_unique: >-
+      {{ _dg_standby_unique_name if _dg_primary_live_role == 'PRIMARY' else _dg_primary_unique_name }}
+    _dg_live_primary_host: >-
+      {{ groups['primary'] | first if _dg_primary_live_role == 'PRIMARY' else groups['standby'] | first }}
+    _dg_live_standby_host: >-
+      {{ groups['standby'] | first if _dg_primary_live_role == 'PRIMARY' else groups['primary'] | first }}
+    _dg_live_standby_role: >-
+      {{ _dg_standby_live_role if _dg_primary_live_role == 'PRIMARY' else _dg_primary_live_role }}
+    _dg_live_standby_startoption: >-
+      {{
+        'open'
+        if (_dg_standby_live_role if _dg_primary_live_role == 'PRIMARY' else _dg_primary_live_role) == 'PRIMARY'
+        else 'read only'
+      }}
+
+- name: Verify broker roles match live database state
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_dg_broker_roles_current.stdout | default('') |
+        regex_search('(?mi)^\\s*' ~ _dg_live_primary_unique ~
+        '\\s+-\\s+(\\(\\*\\)\\s+)?Primary database')) is not none
+      - >-
+        (_dg_broker_roles_current.stdout | default('') |
+        regex_search('(?mi)^\\s*' ~ _dg_live_standby_unique ~
+        '\\s+-\\s+(\\(\\*\\)\\s+)?Physical standby database')) is not none
+    fail_msg: >-
+      Broker roles (Primary database / Physical standby database) do not match
+      the live database role probe:
+      {{ _dg_live_primary_unique }}={{ _dg_primary_live_role }}/{{ _dg_primary_live_open_mode }};
+      {{ _dg_live_standby_unique }}={{ _dg_standby_live_role }}/{{ _dg_standby_live_open_mode }}.
+      Refusing to force inventory roles or Restart start options.
+
 - name: Ensure observer SYSDG account exists on the primary
   ansible.builtin.shell: |
     set -o pipefail
@@ -233,6 +360,16 @@
 # primary yet fail when it checks the standby unless both copies are aligned.
 # After switchover the inventory-primary host may be the live standby; copy
 # from the live primary unique name, never from a hardcoded inventory path.
+- name: Fail closed when observer account setup cannot identify the live primary
+  ansible.builtin.assert:
+    that:
+      - >-
+        (_dg_observer_user.stdout_lines | default([])
+        | select('match', '^LIVE_PRIMARY_UNIQUE=.+') | list | length) == 1
+    fail_msg: >-
+      Observer account setup did not identify exactly one live primary. Refusing
+      to infer a Data Guard role from inventory group membership.
+
 - name: Resolve live primary unique name after observer account update
   ansible.builtin.set_fact:
     _dg_live_primary_unique: >-
@@ -242,7 +379,7 @@
           | select('match', '^LIVE_PRIMARY_UNIQUE=.+')
           | list
           | first
-          | default('LIVE_PRIMARY_UNIQUE=' ~ _dg_primary_unique_name)
+          | default('LIVE_PRIMARY_UNIQUE=' ~ _dg_live_primary_unique)
         ).split('=', 1)[1]
       }}
 
@@ -270,9 +407,9 @@
 - name: Discover live primary password file path
   ansible.builtin.shell: |
     set -o pipefail
-    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    db_home="{{ _dg_home_path }}"
     db={{ _dg_live_primary_unique | trim | quote }}
-    path="$("${gi}/bin/srvctl" config database -db "$db" 2>/dev/null |
+    path="$("${db_home}/bin/srvctl" config database -db "$db" 2>/dev/null |
       awk -F': ' '$1 == "Password file" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
     if [ -z "$path" ] || [ ! -f "$path" ]; then
       path={{ _dg_primary_pwfile | quote }}
@@ -292,9 +429,9 @@
 - name: Discover live standby password file destination
   ansible.builtin.shell: |
     set -o pipefail
-    gi="{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    db_home="{{ _dg_home_path }}"
     db={{ _dg_pwfile_dest_unique | quote }}
-    path="$("${gi}/bin/srvctl" config database -db "$db" 2>/dev/null |
+    path="$("${db_home}/bin/srvctl" config database -db "$db" 2>/dev/null |
       awk -F': ' '$1 == "Password file" {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
     if [ -z "$path" ]; then
       path={{ _dg_primary_pwfile | quote }}
@@ -329,7 +466,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "{{ oracle_dataguard_observer_user }}/{{ oracle_dataguard_observer_password }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    "$ORACLE_HOME/bin/dgmgrl" -silent "{{ oracle_dataguard_observer_user }}/{{ oracle_dataguard_observer_password }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
     SHOW CONFIGURATION;
     EXIT;
     DGMGRL
@@ -380,7 +517,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
     EDIT DATABASE '{{ _dg_primary_unique_name }}' SET PROPERTY LogXptMode='SYNC';
     EDIT DATABASE '{{ _dg_standby_unique_name }}' SET PROPERTY LogXptMode='SYNC';
     EXIT;
@@ -400,7 +537,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
     SHOW FAST_START FAILOVER;
     EXIT;
     DGMGRL
@@ -423,7 +560,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
     EDIT CONFIGURATION SET PROTECTION MODE AS MAXAVAILABILITY;
     EXIT;
     DGMGRL
@@ -443,7 +580,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb as sysdba" <<'SQL'
+    "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_standby_unique }}_dgb as sysdba" <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT database_role || '|' || open_mode FROM v$database;
     EXIT;
@@ -464,8 +601,8 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
-    EDIT DATABASE '{{ _dg_standby_unique_name }}' SET STATE='APPLY-OFF';
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
+    EDIT DATABASE '{{ _dg_live_standby_unique }}' SET STATE='APPLY-OFF';
     EXIT;
     DGMGRL
   args: { executable: /bin/bash }
@@ -484,7 +621,7 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb as sysdba" <<'SQL'
+    "$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_standby_unique }}_dgb as sysdba" <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
     DECLARE
       v_open_mode v$database.open_mode%TYPE;
@@ -525,8 +662,8 @@
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
-    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
-    EDIT DATABASE '{{ _dg_standby_unique_name }}' SET STATE='APPLY-ON';
+    "$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
+    EDIT DATABASE '{{ _dg_live_standby_unique }}' SET STATE='APPLY-ON';
     EXIT;
     DGMGRL
   args: { executable: /bin/bash }
@@ -544,49 +681,113 @@
 - name: Read standby Restart start policy after broker convergence
   ansible.builtin.command:
     argv:
-      - "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl"
+      - "{{ _dg_home_path }}/bin/srvctl"
       - config
       - database
       - -db
-      - "{{ _dg_standby_unique_name }}"
+      - "{{ _dg_live_standby_unique }}"
   become: true
   become_user: "{{ oracle_user }}"
-  delegate_to: "{{ groups['standby'] | first }}"
+  delegate_to: "{{ _dg_live_standby_host }}"
   register: _dg_standby_restart_config
   changed_when: false
+  failed_when: false
+
+- name: Read standby Restart database resource profile after broker convergence
+  ansible.builtin.shell: |
+    set -o pipefail
+    "{{ _dg_gi_home_path }}/bin/crsctl" \
+      status resource ora.{{ _dg_live_standby_unique }}.db -p 2>&1
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  delegate_to: "{{ _dg_live_standby_host }}"
+  register: _dg_standby_restart_resource
+  changed_when: false
+  failed_when: false
+
+- name: Resolve standby Restart policy probe results
+  ansible.builtin.set_fact:
+    _dg_standby_restart_srvctl_usable: >-
+      {{
+        _dg_standby_restart_config.rc == 0 and
+        'PRCR-' not in (_dg_standby_restart_config.stdout | default('')) and
+        'PRCD-' not in (_dg_standby_restart_config.stdout | default(''))
+      }}
+    _dg_standby_restart_resource_exists: >-
+      {{
+        _dg_standby_restart_resource.rc == 0 and
+        ('NAME=ora.' ~ _dg_live_standby_unique ~ '.db') in
+        (_dg_standby_restart_resource.stdout | default(''))
+      }}
+    _dg_standby_restart_resource_contract_ok: >-
+      {{
+        _dg_standby_restart_resource.rc == 0 and
+        'ROLE=PHYSICAL_STANDBY' in (_dg_standby_restart_resource.stdout | default('')) and
+        'MANAGEMENT_POLICY=AUTOMATIC' in (_dg_standby_restart_resource.stdout | default('')) and
+        'USR_ORA_OPEN_MODE=read only' in (_dg_standby_restart_resource.stdout | default('')) and
+        'USR_ORA_STOP_MODE=immediate' in (_dg_standby_restart_resource.stdout | default('')) and
+        'ENABLED=1' in (_dg_standby_restart_resource.stdout | default(''))
+      }}
+
+- name: Fail when standby Restart policy cannot be reconciled safely
+  ansible.builtin.fail:
+    msg: >-
+      Standby Restart resource ora.{{ _dg_live_standby_unique }}.db cannot be
+      inspected through srvctl and its read-only CRS profile does not match
+      the PHYSICAL_STANDBY/AUTOMATIC/read-only contract. Refusing to mutate an
+      ora.* resource with crsctl; restore supported srvctl/CSS access.
+  when:
+    - _dg_standby_restart_resource_exists | bool
+    - not (_dg_standby_restart_srvctl_usable | bool)
+    - not (_dg_standby_restart_resource_contract_ok | bool)
 
 - name: Configure standby Restart start policy for read-only apply
   ansible.builtin.command:
     argv:
-      - "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}/bin/srvctl"
+      - "{{ _dg_home_path }}/bin/srvctl"
       - modify
       - database
       - -db
-      - "{{ _dg_standby_unique_name }}"
+      - "{{ _dg_live_standby_unique }}"
       - -startoption
-      - read only
+      - "{{ _dg_live_standby_startoption }}"
+      - -stopoption
+      - IMMEDIATE
+      - -role
+      - PHYSICAL_STANDBY
+      - -policy
+      - AUTOMATIC
   become: true
   become_user: "{{ oracle_user }}"
-  delegate_to: "{{ groups['standby'] | first }}"
-  when: "'Start options: read only' not in (_dg_standby_restart_config.stdout | default(''))"
+  delegate_to: "{{ _dg_live_standby_host }}"
+  changed_when: true
+  when: >-
+    _dg_standby_restart_srvctl_usable | bool and
+    (
+      ('start options: ' ~ _dg_live_standby_startoption | lower) not in (_dg_standby_restart_config.stdout | default('') | lower) or
+      'stop options: immediate' not in (_dg_standby_restart_config.stdout | default('') | lower) or
+      'database role: physical_standby' not in (_dg_standby_restart_config.stdout | default('') | lower) or
+      'management policy: automatic' not in (_dg_standby_restart_config.stdout | default('') | lower)
+    )
 
 - name: Validate Data Guard broker and standby open mode
   ansible.builtin.shell: |
     set -o pipefail
     export ORACLE_HOME={{ _dg_home_path }}
     export ORACLE_SID={{ inst.name }}
-    broker="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_primary_unique_name }}_dgb" <<'DGMGRL'
+    broker="$("$ORACLE_HOME/bin/dgmgrl" -silent "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb" <<'DGMGRL'
     SHOW CONFIGURATION;
     EXIT;
     DGMGRL
     )"
-    standby="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_standby_unique_name }}_dgb as sysdba" <<'SQL'
+    standby="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_standby_unique }}_dgb as sysdba" <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
     EXIT;
     SQL
     )"
-    primary="$("$ORACLE_HOME/bin/sqlplus" -S / as sysdba <<'SQL'
+    primary="$("$ORACLE_HOME/bin/sqlplus" -L -S "sys/{{ oracle_lab_sys_password | default('SysPassword1_') }}@{{ _dg_live_primary_unique }}_dgb as sysdba" <<'SQL'
     SET PAGES 0 LINESIZE 32767 FEEDBACK OFF HEADING OFF VERIFY OFF
     SELECT database_role || '|' || open_mode || '|' || protection_mode || '|' || protection_level FROM v$database;
     EXIT;
