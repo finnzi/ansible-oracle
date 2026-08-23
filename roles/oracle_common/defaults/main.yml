@@ -45,6 +45,12 @@ oracle_common_grow_root_partition: /dev/vda4
 oracle_common_grow_root_vg: vg_main
 oracle_common_grow_root_lv: lv_root
 
+# Optional lab hostname mappings. When supplied, install them during the OS
+# substrate pass so Oracle NetCA can resolve the guest FQDN before Grid is
+# installed. Production inventories leave this empty and use DNS.
+oracle_lab_guest_hosts: []
+oracle_lab_host_map_mode: standalone
+
 # sysctl / limits — conservative lab defaults. Tune via inventory in real envs.
 oracle_sysctl:
   fs.file-max: 6815744

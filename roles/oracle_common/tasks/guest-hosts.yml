@@ -1,0 +1,114 @@
+---
+# Lab-only hostname mappings required before Oracle installers run. Oracle
+# Linux cloud images rebuild /etc/hosts from hosts.redhat.tmpl at boot, so both
+# files must carry the same managed block.
+
+- name: Inspect cloud-init hosts template
+  ansible.builtin.stat:
+    path: /etc/cloud/templates/hosts.redhat.tmpl
+  register: _common_guest_hosts_cloud_template
+
+- name: Resolve guest hosts files managed across reboot
+  ansible.builtin.set_fact:
+    _common_guest_hosts_managed_files: >-
+      {{
+        ['/etc/hosts']
+        + (
+          ['/etc/cloud/templates/hosts.redhat.tmpl']
+          if (_common_guest_hosts_cloud_template.stat.exists | default(false))
+          else []
+        )
+      }}
+
+- name: Remove stale lab aliases from guest hosts files
+  ansible.builtin.shell: |
+    set -euo pipefail
+    hosts_file="{{ guest_hosts_file }}"
+    if [ ! -f "$hosts_file" ] || [ ! -r "$hosts_file" ]; then
+      echo "Cannot safely read hosts file: $hosts_file" >&2
+      exit 1
+    fi
+    tmp="$(mktemp "${hosts_file}.ansible-oracle.XXXXXX")"
+    trap 'rm -f -- "$tmp"' EXIT
+    aliases="{{ oracle_lab_guest_hosts | map(attribute='names') | join(' ') }}"
+    if ! awk -v b="# BEGIN ANSIBLE-ORACLE lab guest hosts" \
+        -v e="# END ANSIBLE-ORACLE lab guest hosts" \
+        -v aliases="$aliases" '
+      BEGIN {
+        split(aliases, alias_list, /[[:space:]]+/)
+        for (i in alias_list) {
+          if (alias_list[i] != "") {
+            stale[alias_list[i]] = 1
+          }
+        }
+      }
+      $0==b {ind=1; print; next}
+      $0==e {ind=0; print; next}
+      ind {print; next}
+      # The Oracle Linux cloud template maps its Jinja hostname placeholders
+      # to loopback. Remove that source line so a reboot cannot recreate a
+      # loopback-first FQDN ahead of the managed lab address.
+      ($1 ~ /^127\./ || $1 == "::1") && $0 ~ /\{\{fqdn\}\}|\{\{hostname\}\}/ {next}
+      {
+        for (i = 2; i <= NF; i++) {
+          if ($i in stale) {
+            next
+          }
+        }
+      }
+      {print}
+    ' "$hosts_file" > "$tmp"; then
+      echo "Failed to scrub hosts file safely: $hosts_file" >&2
+      exit 1
+    fi
+    if ! cmp -s "$tmp" "$hosts_file"; then
+      chown --reference="$hosts_file" "$tmp"
+      chmod --reference="$hosts_file" "$tmp"
+      if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+        chcon --reference="$hosts_file" "$tmp"
+      fi
+      mv -f -- "$tmp" "$hosts_file"
+      trap - EXIT
+      echo CHANGED
+    fi
+  args:
+    executable: /bin/bash
+  register: _common_guest_hosts_scrub
+  changed_when: "'CHANGED' in (_common_guest_hosts_scrub.stdout | default(''))"
+  loop: "{{ _common_guest_hosts_managed_files }}"
+  loop_control:
+    loop_var: guest_hosts_file
+    label: "{{ guest_hosts_file }}"
+
+- name: Ensure guest hosts files have the lab host aliases
+  ansible.builtin.blockinfile:
+    path: "{{ guest_hosts_file }}"
+    marker: "# {mark} ANSIBLE-ORACLE lab guest hosts"
+    block: |
+      {% for entry in oracle_lab_guest_hosts %}
+      {% if oracle_lab_host_map_mode in (entry.modes | default([oracle_lab_host_map_mode])) %}
+      {{ entry.ip }} {{ entry.names }}
+      {% endif %}
+      {% endfor %}
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ _common_guest_hosts_managed_files }}"
+  loop_control:
+    loop_var: guest_hosts_file
+    label: "{{ guest_hosts_file }}"
+  register: _common_guest_hosts
+
+- name: Verify guest FQDN resolves to a non-loopback IPv4 address
+  ansible.builtin.shell: |
+    set -o pipefail
+    resolved="$(getent ahostsv4 "$(hostname -f)" | awk 'NR == 1 { print $1 }')"
+    case "$resolved" in
+      ""|127.*|0.0.0.0)
+        echo "Guest FQDN resolved first to invalid address: ${resolved:-<none>}" >&2
+        exit 1
+        ;;
+    esac
+  args:
+    executable: /bin/bash
+  changed_when: false

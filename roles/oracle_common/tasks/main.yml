@@ -13,6 +13,13 @@
   ansible.builtin.include_tasks: grow-root.yml
   when: oracle_common_grow_root | default(false) | bool
 
+# Oracle NetCA validates the machine hostname while installing Grid. Lab cloud
+# images initially map their FQDN to 127.0.0.1, so install the inventory's real
+# guest mappings before any Oracle installer runs and persist them across boot.
+- name: Configure lab guest hostname resolution
+  ansible.builtin.include_tasks: guest-hosts.yml
+  when: oracle_lab_guest_hosts | default([]) | length > 0
+
 # ── 1. Groups ─────────────────────────────────────────────────────────
 - name: Ensure oinstall group exists
   ansible.builtin.group:

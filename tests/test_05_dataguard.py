@@ -63,6 +63,9 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     network_defaults = (
         REPO_ROOT / "roles/oracle_network/defaults/main.yml"
     ).read_text(encoding="utf-8")
+    common_guest_hosts = (
+        REPO_ROOT / "roles/oracle_common/tasks/guest-hosts.yml"
+    ).read_text(encoding="utf-8")
     listener_template = (
         REPO_ROOT / "roles/oracle_network/templates/listener.ora.j2"
     ).read_text(encoding="utf-8")
@@ -142,8 +145,8 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
         in network_tasks
     )
     assert "if dg_mode else ('standby' not in group_names" not in network_tasks
-    assert "oracle_lab_guest_hosts | map(attribute='names')" in network_tasks
-    assert "Remove stale lab host aliases from guest /etc/hosts" in network_tasks
+    assert "oracle_lab_guest_hosts | map(attribute='names')" in common_guest_hosts
+    assert "Remove stale lab aliases from guest hosts files" in common_guest_hosts
     assert "'dc2' if 'standby' in group_names else 'dc1'" in network_tasks
     assert "lab_domain | default('domain.is')" in network_tasks
     assert (
