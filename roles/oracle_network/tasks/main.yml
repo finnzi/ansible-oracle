@@ -18,13 +18,12 @@
 
 - name: Resolve explicit Oracle listener network interface
   ansible.builtin.set_fact:
-    _oracle_network_interface: >-
-      {{ oracle_network_interface | default('') | trim
-         or oracle_network_listener_interface | default('') | trim }}
+    _oracle_network_interface: "{{ oracle_network_interface | default('') | trim }}"
 
 - name: Require an explicit Oracle listener network interface
   ansible.builtin.assert:
     that:
+      - oracle_network_interface is defined
       - (_oracle_network_interface | default('') | length) > 0
     fail_msg: >-
       Set oracle_network_interface to the client/VIP network interface (for
@@ -103,12 +102,6 @@
             {%- set _ = homes.append(current_home) -%}
           {%- endif -%}
           {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
-          {%- set vip = namespace(ip=(inst.listener_ip | default(''))) -%}
-          {%- for entry in (oracle_lab_listener_vips | default([])) -%}
-            {%- if (vip.ip | length) == 0 and listener_name in (entry.names | default('') | string).split() -%}
-              {%- set vip.ip = entry.ip -%}
-            {%- endif -%}
-          {%- endfor -%}
           {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
           {%- for home in homes -%}
             {%- set _ = out.append(inst | combine({
@@ -116,7 +109,7 @@
               '_home_path': inst.oracle_base ~ '/' ~ home.suffix,
               '_home_is_current': (home.suffix == current_home.suffix),
               '_net': listener_name,
-              '_vip': vip.ip,
+              '_vip': (inst.listener_ip | default('') | trim),
               '_port': (inst.listener_port | default(1521))})) -%}
           {%- endfor -%}
         {%- endif -%}
@@ -126,12 +119,13 @@
 - name: Require a dedicated literal listener VIP for every network instance
   ansible.builtin.assert:
     that:
+      - inst.listener_ip is defined
       - inst._vip is defined
       - (inst._vip | string | trim | length) > 0
       - inst._vip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
     fail_msg: >-
-      {{ inst.name }} has no dedicated listener_ip and no matching
-      oracle_lab_listener_vips entry. Configure a literal listener IP before
+      {{ inst.name }} has no dedicated listener_ip. Configure a literal
+      listener IP before
       managing Oracle Net/Restart.
   loop: "{{ _net_instances }}"
   loop_control:

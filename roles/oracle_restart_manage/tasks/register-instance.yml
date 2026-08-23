@@ -10,13 +10,7 @@
 
 - name: Resolve dedicated listener IP for Restart registration
   ansible.builtin.set_fact:
-    _restart_listener_ip: >-
-      {%- set explicit = inst.listener_ip | default('') | trim -%}
-      {%- if explicit -%}{{ explicit }}{%- else -%}
-      {%- for entry in (oracle_lab_listener_vips | default([])) -%}
-      {%- if inst.listener_vip | default('') in (entry.names | default('') | string).split() -%}{{ entry.ip }}{%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
+    _restart_listener_ip: "{{ inst.listener_ip | default('') | trim }}"
 
 - name: Require a dedicated listener IP for Restart registration
   ansible.builtin.assert:
@@ -24,8 +18,7 @@
       - (_restart_listener_ip | default('') | length) > 0
       - _restart_listener_ip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
     fail_msg: >-
-      {{ inst.name }} needs listener_ip or an explicit matching
-      oracle_lab_listener_vips entry before Restart listener registration.
+      {{ inst.name }} needs listener_ip before Restart listener registration.
 
 - name: Resolve runtime ORACLE_HOME from Restart for registration
   ansible.builtin.include_role:

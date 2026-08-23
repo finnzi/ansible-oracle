@@ -8,13 +8,7 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dbca_stage: "{{ inst.oracle_base }}/.stage_{{ inst.name }}"
     _dbca_response_file: "{{ inst.oracle_base }}/.stage_{{ inst.name }}/dbca.rsp"
-    _listener_host: >-
-      {%- set explicit = inst.listener_ip | default('') | trim -%}
-      {%- if explicit -%}{{ explicit }}{%- else -%}
-      {%- for entry in (oracle_lab_listener_vips | default([])) -%}
-      {%- if inst.listener_vip | default('') in (entry.names | default('') | string).split() -%}{{ entry.ip }}{%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
+    _listener_host: "{{ inst.listener_ip | default('') | trim }}"
     _listener_port: "{{ inst.listener_port | default(1521) }}"
     # These facts are host-scoped, so reset them before every include_tasks
     # iteration instead of inheriting the previous instance's SQL state.
@@ -28,8 +22,7 @@
       - (_listener_host | default('') | length) > 0
       - _listener_host is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
     fail_msg: >-
-      {{ inst.name }} needs listener_ip or a matching
-      oracle_lab_listener_vips entry. LOCAL_LISTENER must point at the
+      {{ inst.name }} needs listener_ip. LOCAL_LISTENER must point at the
       database's dedicated literal VIP, not a hostname/default route.
 
 - name: Resolve runtime ORACLE_HOME from Restart for instance manage

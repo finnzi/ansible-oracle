@@ -230,6 +230,25 @@ def test_lab_autostart_verifies_exact_listener_socket_addresses():
     assert "grep -Evx -- \"${listener_ip}:${port}\"" in verifier
 
 
+def test_listener_ip_and_network_interface_are_canonical_required_inputs():
+    network = _read("roles/oracle_network/tasks/main.yml")
+    network_defaults = _read("roles/oracle_network/defaults/main.yml")
+    db_manage = _read("roles/oracle_db_manage/tasks/manage-instance.yml")
+    restart = _read("roles/oracle_restart_manage/tasks/register-instance.yml")
+    dg_primary = _read("roles/oracle_dataguard/tasks/prepare-primary.yml")
+    dg_standby = _read("roles/oracle_dataguard/tasks/prepare-standby.yml")
+    dg_duplicate = _read("roles/oracle_dataguard/tasks/duplicate-standby.yml")
+
+    assert "oracle_network_interface is defined" in network
+    assert "oracle_network_listener_interface" not in network
+    assert "oracle_network_listener_interface" not in network_defaults
+    assert "inst.listener_ip is defined" in network
+    assert "oracle_lab_listener_vips" in network  # assignment/cleanup only
+    for source in (db_manage, restart, dg_primary, dg_standby, dg_duplicate):
+        assert "oracle_lab_listener_vips" not in source
+        assert "listener_ip" in source
+
+
 def test_relocate_spfile_home_copy_uses_sid():
     script = _read("roles/oracle_patch/files/relocate_spfile_for_dual_home.sh")
 

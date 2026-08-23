@@ -79,8 +79,9 @@ oracle_roles:
 # dataguard: true   -> primary+standby pair, VIPs <name>dc1/dc2.domain.is
 #
 # archive / flashback / force_logging are independently toggleable.
-# Listener VIPs are literal addresses from oracle_lab_listener_vips (or
-# listener_ip in production inventory); never infer them from DNS/default route.
+# Every instance must carry a literal listener_ip. oracle_lab_listener_vips is
+# only the lab guest-address assignment/cleanup map; never infer binds from
+# DNS or the default route.
 oracle_network_interface: eth0
 oracle_instances:
   - name: super

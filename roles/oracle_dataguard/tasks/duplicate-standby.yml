@@ -15,13 +15,7 @@
     _dg_standby_pwfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
     _dg_gi_home_path: "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
-    _dg_listener_host: >-
-      {%- set explicit = inst.listener_ip | default('') | trim -%}
-      {%- if explicit -%}{{ explicit }}{%- else -%}
-      {%- for entry in (oracle_lab_listener_vips | default([])) -%}
-      {%- if inst.listener_vip | default('') in (entry.names | default('') | string).split() -%}{{ entry.ip }}{%- endif -%}
-      {%- endfor -%}
-      {%- endif -%}
+    _dg_listener_host: "{{ inst.listener_ip | default('') | trim }}"
 
 - name: Require a literal standby listener IP for duplicate
   ansible.builtin.assert:
@@ -29,7 +23,7 @@
       - (_dg_listener_host | default('') | length) > 0
       - _dg_listener_host is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
     fail_msg: >-
-      {{ inst.name }} requires listener_ip (or an explicit lab VIP mapping)
+      {{ inst.name }} requires listener_ip
       before Data Guard LOCAL_LISTENER configuration.
 
 - name: Check for conflicting standalone Restart registration on standby
