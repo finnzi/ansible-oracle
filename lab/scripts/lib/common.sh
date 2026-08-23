@@ -35,6 +35,7 @@ LAB_ROOT_DISK_SIZE="${LAB_ROOT_DISK_SIZE:-250G}"
 LAB_GRID_DISK_SIZE="${LAB_GRID_DISK_SIZE:-20G}"
 LAB_DB_MEMORY_MIB="${LAB_DB_MEMORY_MIB:-12288}"
 LAB_OBSERVER_MEMORY_MIB="${LAB_OBSERVER_MEMORY_MIB:-4096}"
+LAB_SWAP_SIZE_MIB="${LAB_SWAP_SIZE_MIB:-2048}"
 LAB_DB_VCPUS="${LAB_DB_VCPUS:-4}"
 LAB_OBSERVER_VCPUS="${LAB_OBSERVER_VCPUS:-2}"
 LAB_SHUTDOWN_TIMEOUT_SECONDS="${LAB_SHUTDOWN_TIMEOUT_SECONDS:-600}"
@@ -433,6 +434,13 @@ write_files:
 # Requires the org.qemu.guest_agent.0 channel in write_domain_xml.
 packages:
   - qemu-guest-agent
+# OUI starts nested attachHome sessions while applying RUs. Give those
+# sessions deterministic swap headroom instead of relying on the cloud
+# image's marginal 512 MiB swap device.
+swap:
+  filename: /swapfile
+  size: ${LAB_SWAP_SIZE_MIB}M
+  maxsize: ${LAB_SWAP_SIZE_MIB}M
 runcmd:
   - [ sh, -lc, "growpart /dev/vda 4 || true" ]
   - [ sh, -lc, "pvresize /dev/vda4 || true" ]
@@ -633,6 +641,7 @@ lab_preflight_resources() {
   for value_name in \
     LAB_DB_MEMORY_MIB \
     LAB_OBSERVER_MEMORY_MIB \
+    LAB_SWAP_SIZE_MIB \
     LAB_DB_VCPUS \
     LAB_OBSERVER_VCPUS; do
     if ! lab_is_positive_integer "${!value_name}"; then

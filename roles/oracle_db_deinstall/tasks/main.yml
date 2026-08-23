@@ -350,10 +350,14 @@
     inventory={{ (oracle_inventory_loc | default('/home/oracle/oraInventory')) | quote }}/ContentsXML/inventory.xml
     log=/tmp/ansible-oracle-detach-{{ item.item.name }}-{{ item.item.home_suffix }}.log
 
+    home_is_registered() {
+      grep -F "LOC=\"$oh\"" "$inventory" | grep -Fqv 'REMOVED="T"'
+    }
+
     # A previous interrupted rebuild can remove the target tree while leaving
     # its central-inventory HOME entry behind. Inspect inventory independently
-    # of the directory so the active home's OUI can repair that state.
-    if [ ! -f "$inventory" ] || ! grep -Fq "LOC=\"$oh\"" "$inventory"; then
+    # of the directory so OUI from the active home can repair that state.
+    if [ ! -f "$inventory" ] || ! home_is_registered; then
       echo NOT_REGISTERED
       exit 0
     fi
@@ -368,12 +372,15 @@
       exit 1
     fi
 
-    if ! "$runner" -silent -detachHome "ORACLE_HOME=$oh" -local >"$log" 2>&1; then
+    # Detaching only updates the central inventory. Do not let install-time
+    # memory/swap prerequisites block this metadata-only operation.
+    if ! "$runner" -silent -waitforcompletion -ignoreSysPrereqs \
+         -detachHome "ORACLE_HOME=$oh" -local >"$log" 2>&1; then
       tail -80 "$log" >&2 || true
       echo "DETACH_FAILED: OUI could not detach registered home $oh" >&2
       exit 1
     fi
-    if grep -Fq "LOC=\"$oh\"" "$inventory"; then
+    if home_is_registered; then
       tail -80 "$log" >&2 || true
       echo "DETACH_FAILED: $oh remains in $inventory" >&2
       exit 1

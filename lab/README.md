@@ -237,6 +237,9 @@ when preparing a host or debugging permissions.
   `LAB_DB_MEMORY_MIB` and `LAB_DB_VCPUS`.
 - The observer defaults to `4096` MiB and 2 vCPUs. Override with
   `LAB_OBSERVER_MEMORY_MIB` and `LAB_OBSERVER_VCPUS`.
+- Cloud-init creates a persistent `2048` MiB `/swapfile` so Oracle Universal
+  Installer and its nested `attachHome` sessions have deterministic prerequisite
+  headroom. Override with `LAB_SWAP_SIZE_MIB`.
 - Preflight refuses to start the lab when configured guest memory exceeds
   visible host memory. Lower `LAB_DB_MEMORY_MIB` / `LAB_OBSERVER_MEMORY_MIB`,
   or set `LAB_SKIP_RESOURCE_CHECK=1` only when you intentionally allow host

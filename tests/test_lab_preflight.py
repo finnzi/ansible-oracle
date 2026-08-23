@@ -1270,6 +1270,9 @@ def test_render_config_writes_valid_lab_artifacts(tmp_path: Path):
     assert 'kernel-uek-modules-$(uname -r)' in user_data
     assert "qemu-guest-agent" in user_data
     assert "enable, --now, qemu-guest-agent" in user_data
+    assert "filename: /swapfile" in user_data
+    assert "size: 2048M" in user_data
+    assert "maxsize: 2048M" in user_data
 
     domain_xml = (state_dir / "vms/superdb1.xml").read_text(encoding="utf-8")
     assert "superdb1-grid.qcow2" in domain_xml
