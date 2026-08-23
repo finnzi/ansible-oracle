@@ -8,6 +8,25 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _restart_db_unique_name: "{{ inst.db_unique_name | default(inst.name) }}"
 
+- name: Resolve dedicated listener IP for Restart registration
+  ansible.builtin.set_fact:
+    _restart_listener_ip: >-
+      {%- set explicit = inst.listener_ip | default('') | trim -%}
+      {%- if explicit -%}{{ explicit }}{%- else -%}
+      {%- for entry in (oracle_lab_listener_vips | default([])) -%}
+      {%- if inst.listener_vip | default('') in (entry.names | default('') | string).split() -%}{{ entry.ip }}{%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+
+- name: Require a dedicated listener IP for Restart registration
+  ansible.builtin.assert:
+    that:
+      - (_restart_listener_ip | default('') | length) > 0
+      - _restart_listener_ip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      {{ inst.name }} needs listener_ip or an explicit matching
+      oracle_lab_listener_vips entry before Restart listener registration.
+
 - name: Resolve runtime ORACLE_HOME from Restart for registration
   ansible.builtin.include_role:
     name: oracle_common
@@ -258,7 +277,7 @@
     "$ORACLE_HOME/bin/srvctl" add listener \
       -listener LISTENER_{{ inst.name | upper }} \
       -oraclehome {{ _restart_home_path }} \
-      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+      -endpoints "/IPC:LISTENER_{{ inst.name | upper }}"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -298,7 +317,7 @@
     config="$($ORACLE_HOME/bin/srvctl config listener -listener "$listener" 2>&1)"
     printf '%s\n' "$config"
     if printf '%s\n' "$config" | grep -Fqx "Home: {{ _restart_home_path }}" &&
-       printf '%s\n' "$config" | grep -Eiq '^End points:[[:space:]]*TCP:{{ inst.listener_port | default(1521) }}([[:space:]]|$)'; then
+       printf '%s\n' "$config" | grep -Fqx "End points: /IPC:LISTENER_{{ inst.name | upper }}"; then
       echo LISTENER_CONTRACT_OK
       exit 0
     fi
@@ -306,7 +325,7 @@
     "$ORACLE_HOME/bin/srvctl" modify listener \
       -listener "$listener" \
       -oraclehome {{ _restart_home_path }} \
-      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+      -endpoints "/IPC:LISTENER_{{ inst.name | upper }}"
     echo LISTENER_CONTRACT_RECONCILED
   args: { executable: /bin/bash }
   become: true
@@ -367,6 +386,22 @@
     'DATABASE_ENABLED' in (_srvctl_enable.stdout | default('')) or
     'LISTENER_ENABLED' in (_srvctl_enable.stdout | default(''))
   failed_when: _srvctl_enable.rc != 0
+
+- name: Restart listener after endpoint contract reconciliation
+  ansible.builtin.shell: |
+    set -o pipefail
+    export ORACLE_HOME={{ oracle_gi_home }}
+    "$ORACLE_HOME/bin/srvctl" stop listener \
+      -listener LISTENER_{{ inst.name | upper }} 2>&1 || true
+    "$ORACLE_HOME/bin/srvctl" start listener \
+      -listener LISTENER_{{ inst.name | upper }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _srvctl_listener_endpoint_restart
+  changed_when: true
+  failed_when: _srvctl_listener_endpoint_restart.rc != 0
+  when: _srvctl_reconcile_lsnr.changed | default(false) | bool
 
 - name: Srvctl start database + listener (if not already running)
   ansible.builtin.shell: |

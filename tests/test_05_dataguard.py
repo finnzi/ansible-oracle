@@ -364,8 +364,10 @@ def test_dataguard_inventory_and_network_prerequisites_are_wired():
     assert "_DGMGRL" in listener_template
     assert "dg_primary_unique = inst.dg_primary_db_unique_name" in tns_template
     assert "dg_standby_unique = inst.dg_standby_db_unique_name" in tns_template
-    assert "inst.name ~ 'dc1.'" in tns_template
-    assert "inst.name ~ 'dc2.'" in tns_template
+    assert "inst.dg_primary_host" in tns_template
+    assert "inst.dg_standby_host" in tns_template
+    assert "inst.name ~ 'dc1.'" not in tns_template
+    assert "inst.name ~ 'dc2.'" not in tns_template
     assert "(FAILOVER = ON)" in tns_template
     assert "(LOAD_BALANCE = OFF)" in tns_template
     assert "SERVICE_NAME = {{ inst.service_name" in tns_template
@@ -436,7 +438,7 @@ def test_primary_dataguard_prerequisites(lab_exec):
     assert 'db_unique_name="super_sby"' in log_archive_dest_2_lower
     assert log_archive_dest_state_2.upper() == "ENABLE"
     assert fal_server in {"super_sby_dgb", "<unset>"}
-    assert "HOST=superdc1.domain.is" in local_listener
+    assert "HOST=192.168.87.31" in local_listener
     assert standby_log_count >= needed_standby_logs
     assert standby_logs_on_dedicated_path == standby_log_count
 
@@ -494,7 +496,7 @@ def test_standby_auxiliary_prerequisites(standby_exec):
     assert "db_unique_name='super_sby'" in pfile_text.stdout
     assert "fal_server='super_dgb'" in pfile_text.stdout
     assert (
-        "local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST=superdc2.domain.is)(PORT=1521))'"
+        "local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST=192.168.87.32)(PORT=1521))'"
         in pfile_text.stdout
     )
 

@@ -198,14 +198,20 @@ check_database_config() {
 }
 
 check_listener_config() {
-  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" config
+  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" listener_ip="$5" config sockets
   config="$(remote_state "${host_ip}" \
     "runuser -u oracle -- ${GI_HOME}/bin/srvctl config listener -listener ${listener}" || true)"
   append_check "${listener} Restart configuration" "${config}" \
-    "enabled, home=${oracle_home}, TCP:${port}"
+    "enabled, home=${oracle_home}, IPC-only Restart endpoint; TCP:${listener_ip}:${port} in listener.ora"
   output_has_ci "${config}" "Listener is enabled" || ready=1
   output_has_ci "${config}" "Home: ${oracle_home}" || ready=1
-  output_has_ci "${config}" "End points: TCP:${port}" || ready=1
+  output_has_ci "${config}" "End points: /IPC:${listener}" || ready=1
+  sockets="$(remote_state "${host_ip}" "ss -H -ltn sport = :${port} | awk '{print \$4}'" || true)"
+  append_check "${listener} TCP sockets" "${sockets}" "exactly ${listener_ip}:${port}"
+  [ "$(grep -Fc -- "${listener_ip}:${port}" <<<"${sockets}" || true)" -eq 1 ] || ready=1
+  if grep -Evx -- "${listener_ip}:${port}" <<<"${sockets}" | grep -q '[^[:space:]]'; then
+    ready=1
+  fi
 }
 
 check_service_configs() {
@@ -284,7 +290,13 @@ check_standalone_database() {
   append_check "${db_unique} database" "${state}" "PRIMARY|READ WRITE"
   output_has "${state}" "PRIMARY|READ WRITE" || ready=1
   check_database_config "${IP_SUPERDB1}" "${home}" "${db_unique}" PRIMARY open
-  check_listener_config "${IP_SUPERDB1}" "${listener}" "${home}" "${port}"
+  local listener_ip
+  case "${db_unique}" in
+    duper) listener_ip=192.168.87.22 ;;
+    fluff) listener_ip=192.168.87.23 ;;
+    *) listener_ip=192.168.87.21 ;;
+  esac
+  check_listener_config "${IP_SUPERDB1}" "${listener}" "${home}" "${port}" "${listener_ip}"
   check_service_configs "${IP_SUPERDB1}" "${home}" "${db_unique}" 1
   check_service_resource "${IP_SUPERDB1}" "${db_unique}" "${service}" PRIMARY
 }
@@ -344,7 +356,7 @@ check_lab_autostart() {
     role=PRIMARY
     start_option=open
     check_database_config "${host_ip}" "${home}" "${db_unique}" "${role}" "${start_option}"
-    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521
+    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521 192.168.87.31
     check_service_configs "${host_ip}" "${home}" "${db_unique}" 4
     check_service_resource "${host_ip}" "${db_unique}" super_svc PRIMARY
     check_service_resource "${host_ip}" "${db_unique}" super_pri PRIMARY
@@ -358,7 +370,7 @@ check_lab_autostart() {
     role=PHYSICAL_STANDBY
     start_option="read only"
     check_database_config "${host_ip}" "${home}" "${db_unique}" "${role}" "${start_option}"
-    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521
+    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521 192.168.87.32
     check_service_configs "${host_ip}" "${home}" "${db_unique}" 4
     check_service_resource "${host_ip}" "${db_unique}" super_stb PHYSICAL_STANDBY
   fi

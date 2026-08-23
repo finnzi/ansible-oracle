@@ -15,6 +15,9 @@ oracle_instance_overrides:
     dataguard: true
     flashback: true
     listener_vip: "superdc1.domain.is"
+    listener_ip: "192.168.87.31"
+    dg_primary_host: "superdc1.domain.is"
+    dg_standby_host: "superdc2.domain.is"
     dg_role: primary
     # db_unique_name must differ between primary and standby in a DG config.
     db_unique_name: super

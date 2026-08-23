@@ -15,6 +15,22 @@
     _dg_standby_pwfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
     _dg_gi_home_path: "{{ oracle_gi_home | default('/grid/19c/gi_home1') }}"
+    _dg_listener_host: >-
+      {%- set explicit = inst.listener_ip | default('') | trim -%}
+      {%- if explicit -%}{{ explicit }}{%- else -%}
+      {%- for entry in (oracle_lab_listener_vips | default([])) -%}
+      {%- if inst.listener_vip | default('') in (entry.names | default('') | string).split() -%}{{ entry.ip }}{%- endif -%}
+      {%- endfor -%}
+      {%- endif -%}
+
+- name: Require a literal standby listener IP for duplicate
+  ansible.builtin.assert:
+    that:
+      - (_dg_listener_host | default('') | length) > 0
+      - _dg_listener_host is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      {{ inst.name }} requires listener_ip (or an explicit lab VIP mapping)
+      before Data Guard LOCAL_LISTENER configuration.
 
 - name: Check for conflicting standalone Restart registration on standby
   ansible.builtin.shell: |
@@ -428,7 +444,7 @@
     ALTER SYSTEM SET log_archive_config='DG_CONFIG=({{ _dg_primary_unique_name }},{{ _dg_standby_unique_name }})' SCOPE=BOTH;
     ALTER SYSTEM SET fal_server='{{ _dg_primary_unique_name }}_dgb' SCOPE=BOTH;
     ALTER SYSTEM SET fal_client='{{ _dg_standby_unique_name }}_dgb' SCOPE=BOTH;
-    ALTER SYSTEM SET local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST={{ inst.listener_vip }})(PORT={{ inst.listener_port | default(1521) }}))' SCOPE=BOTH;
+    ALTER SYSTEM SET local_listener='(ADDRESS=(PROTOCOL=TCP)(HOST={{ _dg_listener_host }})(PORT={{ inst.listener_port | default(1521) }}))' SCOPE=BOTH;
     EXIT;
     SQL
   args: { executable: /bin/bash }
@@ -578,7 +594,7 @@
     "{{ _dg_gi_home_path }}/bin/srvctl" add listener \
       -listener LISTENER_{{ inst.name | upper }} \
       -oraclehome {{ _dg_home_path }} \
-      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+      -endpoints "/IPC:LISTENER_{{ inst.name | upper }}"
   args: { executable: /bin/bash }
   become: true
   become_user: "{{ oracle_user }}"
@@ -600,7 +616,7 @@
     config="$("$gi_home/bin/srvctl" config listener -listener "$listener" 2>&1)"
     printf '%s\n' "$config"
     if printf '%s\n' "$config" | grep -Fqx "Home: {{ _dg_home_path }}" &&
-       printf '%s\n' "$config" | grep -Eiq '^End points:[[:space:]]*TCP:{{ inst.listener_port | default(1521) }}([[:space:]]|$)'; then
+       printf '%s\n' "$config" | grep -Fqx "End points: /IPC:LISTENER_{{ inst.name | upper }}"; then
       echo LISTENER_CONTRACT_OK
       exit 0
     fi
@@ -608,7 +624,7 @@
     "$gi_home/bin/srvctl" modify listener \
       -listener "$listener" \
       -oraclehome {{ _dg_home_path }} \
-      -endpoints "TCP:{{ inst.listener_port | default(1521) }}"
+      -endpoints "/IPC:LISTENER_{{ inst.name | upper }}"
     echo LISTENER_CONTRACT_RECONCILED
   args: { executable: /bin/bash }
   become: true
@@ -660,6 +676,22 @@
   become_user: "{{ oracle_user }}"
   register: _dg_standby_srvctl_enable
   changed_when: "'CHANGED' in (_dg_standby_srvctl_enable.stdout | default(''))"
+
+- name: Restart standby listener after endpoint contract reconciliation
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home="{{ _dg_gi_home_path }}"
+    "$gi_home/bin/srvctl" stop listener \
+      -listener LISTENER_{{ inst.name | upper }} 2>&1 || true
+    "$gi_home/bin/srvctl" start listener \
+      -listener LISTENER_{{ inst.name | upper }}
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _dg_standby_listener_endpoint_restart
+  changed_when: true
+  failed_when: _dg_standby_listener_endpoint_restart.rc != 0
+  when: _dg_standby_srvctl_reconcile_listener.changed | default(false) | bool
 
 - name: Validate standby Restart registration
   ansible.builtin.shell: |

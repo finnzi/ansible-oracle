@@ -23,6 +23,9 @@ Compose, and Containerfile lab artifacts are intentionally absent.
 The libvirt network is `ansible-oracle-lab` on `192.168.87.0/24`, with fixed
 DHCP leases for the VM MAC addresses. Listener names use dedicated VIPs that
 the `oracle_network` role assigns inside the guest before starting listeners.
+The lab inventory sets `oracle_network_interface: eth0`; production inventories
+must set this explicitly to the client/VIP interface (for example `bond0`) and
+must provide each instance's literal `listener_ip`.
 
 ## Host Requirements
 

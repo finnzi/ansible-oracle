@@ -17,6 +17,12 @@ oracle_lab_guest_hosts: []
 oracle_lab_host_map_mode: standalone
 oracle_lab_listener_vips: []
 oracle_network_dataguard_enabled: false
+# Explicit interface used for listener VIP assignment.  Do not infer this
+# from the default route: database, backup, and management networks are often
+# separate (and production hosts may use bonds/VLANs).
+oracle_network_interface: ""
+# Backwards-compatible alias.  New inventories should use
+# oracle_network_interface.
 oracle_network_listener_interface: ""
 oracle_network_persist_listener_vips: true
 oracle_network_listener_vip_prefix: 24

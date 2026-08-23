@@ -13,6 +13,8 @@ all:
     ansible_python_interpreter: /usr/bin/python3
     ansible_ssh_private_key_file: "{{ '~/.ssh/lab_oracle' | expanduser }}"
     ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+    # Set this to the client/VIP interface on every DB host (eth0 is the lab).
+    oracle_network_interface: eth0
 
   children:
     # The standalone-or-primary DB host(s).

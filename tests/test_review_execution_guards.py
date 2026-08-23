@@ -196,6 +196,40 @@ def test_listener_start_fails_closed_without_tns_token():
     assert "'TNS-' in (_lsnr_start.stdout | default(''))" not in start
 
 
+def test_listeners_use_literal_vips_and_restart_ipc_endpoints():
+    network = _read("roles/oracle_network/tasks/main.yml")
+    listener_template = _read("roles/oracle_network/templates/listener.ora.j2")
+    restart = _read("roles/oracle_restart_manage/tasks/register-instance.yml")
+    duplicate = _read("roles/oracle_dataguard/tasks/duplicate-standby.yml")
+    db_manage = _read("roles/oracle_db_manage/tasks/manage-instance.yml")
+
+    assert "Require an explicit Oracle listener network interface" in network
+    assert "ip -o route show default" not in network
+    assert "oracle_network_interface" in network
+    assert "HOST = {{ inst._vip }}" in listener_template
+    assert '-endpoints "/IPC:LISTENER_{{ inst.name | upper }}"' in restart
+    assert '-endpoints "/IPC:LISTENER_{{ inst.name | upper }}"' in duplicate
+    assert "_restart_listener_ip" in restart
+    assert "HOST={{ _listener_host }}" in db_manage
+
+
+def test_dataguard_tnsnames_require_explicit_hosts():
+    network = _read("roles/oracle_network/tasks/main.yml")
+    tns = _read("roles/oracle_network/templates/tnsnames.ora.j2")
+    assert "Require explicit Data Guard descriptor hosts" in network
+    assert "inst.dg_primary_host" in tns
+    assert "inst.dg_standby_host" in tns
+    assert "inst.name ~ 'dc1.'" not in tns
+    assert "inst.name ~ 'dc2.'" not in tns
+
+
+def test_lab_autostart_verifies_exact_listener_socket_addresses():
+    verifier = _read("scripts/verify-lab-autostart.sh")
+    assert "ss -H -ltn sport = :${port}" in verifier
+    assert "exactly ${listener_ip}:${port}" in verifier
+    assert "grep -Evx -- \"${listener_ip}:${port}\"" in verifier
+
+
 def test_relocate_spfile_home_copy_uses_sid():
     script = _read("roles/oracle_patch/files/relocate_spfile_for_dual_home.sh")
 
