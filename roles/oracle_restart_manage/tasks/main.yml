@@ -95,6 +95,84 @@
         )
       )
 
+# NetCA creates a default LISTENER that binds TCP/1521 on every address. That
+# wildcard socket can make Restart report LISTENER_<INSTANCE> online even
+# though the default process owns the VIP and has no static DGMGRL service.
+# Run this after instance registration at host scope: Data Guard standby
+# registration is owned by oracle_dataguard and therefore skips the include
+# above, but the second 04-register-restart pass must reconcile both hosts.
+- name: Replace wildcard default listener with dedicated port-1521 listener
+  ansible.builtin.shell: |
+    set -o pipefail
+    gi_home={{ oracle_gi_home | quote }}
+    db_home={{ (listener_inst.oracle_base ~ '/' ~ (((listener_inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(listener_inst.db_homes[0])).suffix)) | quote }}
+    named_listener=LISTENER_{{ listener_inst.name | upper }}
+
+    named_config="$(ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" config listener \
+      -listener "$named_listener" 2>&1)"
+    if [ "$?" -ne 0 ]; then
+      printf '%s\n' "$named_config"
+      echo DEDICATED_LISTENER_NOT_REGISTERED
+      exit 0
+    fi
+
+    default_config="$(ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" config listener \
+      -listener LISTENER -all 2>&1)"
+    default_rc=$?
+    if [ "$default_rc" -eq 0 ]; then
+      if printf '%s\n' "$default_config" | grep -Fqi 'Listener is enabled'; then
+        ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" disable listener -listener LISTENER
+        echo DEFAULT_LISTENER_DISABLED
+      fi
+      default_status="$(ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" status listener \
+        -listener LISTENER 2>&1)" || true
+      if printf '%s\n' "$default_status" | grep -Eiq 'is running|running on node'; then
+        ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" stop listener -listener LISTENER
+        echo DEFAULT_LISTENER_STOPPED
+      fi
+    fi
+
+    named_status="$(ORACLE_HOME="$db_home" "$db_home/bin/lsnrctl" status \
+      "$named_listener" 2>&1)" || true
+    if ! printf '%s\n' "$named_status" |
+         grep -Eiq "^Alias[[:space:]]+${named_listener}$"; then
+      ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" stop listener \
+        -listener "$named_listener" >/dev/null 2>&1 || true
+      ORACLE_HOME="$gi_home" "$gi_home/bin/srvctl" start listener \
+        -listener "$named_listener"
+      echo DEDICATED_LISTENER_STARTED
+    fi
+
+    named_status="$(ORACLE_HOME="$db_home" "$db_home/bin/lsnrctl" status \
+      "$named_listener" 2>&1)"
+    printf '%s\n' "$named_status"
+    printf '%s\n' "$named_status" |
+      grep -Eiq "^Alias[[:space:]]+${named_listener}$"
+  args: { executable: /bin/bash }
+  become: true
+  become_user: "{{ oracle_user }}"
+  register: _restart_dedicated_listener
+  changed_when: >-
+    'DEFAULT_LISTENER_DISABLED' in (_restart_dedicated_listener.stdout | default('')) or
+    'DEFAULT_LISTENER_STOPPED' in (_restart_dedicated_listener.stdout | default('')) or
+    'DEDICATED_LISTENER_STARTED' in (_restart_dedicated_listener.stdout | default(''))
+  failed_when: _restart_dedicated_listener.rc != 0
+  loop: >-
+    {{
+      (oracle_instances | default([]))
+      | oracle_apply_instance_overrides(
+          oracle_instance_overrides | default({}),
+          oracle_restart_apply_instance_overrides_require_dataguard | default(true)
+        )
+    }}
+  loop_control:
+    loop_var: listener_inst
+    label: "{{ listener_inst.name }}"
+  when:
+    - oracle_restart_available
+    - (listener_inst.listener_port | default(1521) | int) == 1521
+    - listener_inst.dataguard | default(false) | bool or 'standby' not in group_names
+
 # Oracle Restart may exhaust its initial start retries while the Data Guard
 # peer is still booting.  Install a bounded, broker-aware pass for the next
 # boot.  It uses each registered database home's srvctl and only reads HAS

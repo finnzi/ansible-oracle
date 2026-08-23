@@ -130,7 +130,7 @@ def test_db_manage_role_uses_writable_dbca_response_path():
     assert "oracle_network_persist_listener_vips: true" in network_defaults
     assert "oracle_network_listener_vip_prefix: 24" in network_defaults
     assert "oracle_network_open_firewall: true" in lab_group_vars
-    assert "oracle_lab_host_map_mode: standalone" in lab_group_vars
+    assert "oracle_lab_host_map_mode: dataguard" in lab_group_vars
     assert "192.168.87.21" in lab_group_vars
     assert "names: superdb.domain.is superdb" in lab_group_vars
     assert "modes: [standalone]" in lab_group_vars

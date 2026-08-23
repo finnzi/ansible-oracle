@@ -243,7 +243,13 @@ def test_restart_has_bounded_role_aware_post_boot_reconciliation():
     assert "ORA-16661" in reconcile
     assert "grep -Fq 'ORA-16661'" in reconcile
     assert "grep -Eiq 'ORA-16661|" not in reconcile
+    assert "16808" in reconcile
+    assert "16825" in reconcile
     assert "-startoption MOUNT" in reconcile
+    assert "MOUNTED to bootstrap broker role discovery" in reconcile
+    assert reconcile.index("MOUNTED to bootstrap broker role discovery") < reconcile.index(
+        'if ! probe_broker "$db_home"'
+    )
     assert "Primary database" in reconcile
     assert "Physical standby database" in reconcile
     assert "DG_BROKER_USER" in reconcile
@@ -255,6 +261,23 @@ def test_restart_has_bounded_role_aware_post_boot_reconciliation():
     assert "PHYSICAL_STANDBY" in reconcile
     assert "read only" in reconcile
     assert "Failing closed" in reconcile
+    assert "Waiting for ${db_unique}: Restart registration is not readable yet" in reconcile
+    assert "'standby' not in group_names" in reconcile
+
+
+def test_restart_dedicated_listener_disables_wildcard_default_on_port_1521():
+    main_tasks = (
+        REPO_ROOT / "roles/oracle_restart_manage/tasks/main.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "Replace wildcard default listener with dedicated port-1521 listener" in main_tasks
+    assert 'srvctl" disable listener -listener LISTENER' in main_tasks
+    assert 'srvctl" stop listener -listener LISTENER' in main_tasks
+    assert "DEDICATED_LISTENER_STARTED" in main_tasks
+    assert "DEDICATED_LISTENER_NOT_REGISTERED" in main_tasks
+    assert 'grep -Eiq "^Alias[[:space:]]+${named_listener}$"' in main_tasks
+    assert "(listener_inst.listener_port | default(1521) | int) == 1521" in main_tasks
+    assert "loop_var: listener_inst" in main_tasks
 
 
 def test_restart_reconciliation_bounds_all_external_oracle_commands():
@@ -357,10 +380,12 @@ def test_restart_reconciliation_validates_broker_evidence_before_mutation():
     assert "validate_broker_output" in reconcile
     assert "validate_member_output" in reconcile
     assert "Configuration Status" in reconcile
+    assert "waiting && $0 ~ /[^[:space:]]/" in reconcile
+    assert "print toupper(fields[1])" in reconcile
     assert "PRIMARY_COUNT" in reconcile
     assert "STANDBY_COUNT" in reconcile
     assert "-eq 1" in reconcile
-    assert "ORA-(16072|16661|16819|16820)" in reconcile
+    assert "ORA-(16072|16661|16808|16819|16820|16825)" in reconcile
     assert "unrecognized broker diagnostic" in reconcile
     assert "SHOW DATABASE '${db_unique}'" in reconcile
     assert "member_output" in reconcile

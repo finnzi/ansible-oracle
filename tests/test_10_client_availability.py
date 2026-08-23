@@ -105,8 +105,12 @@ def test_client_availability_contract_is_wired():
 
 def test_live_role_services_and_client_aliases(lab_exec, standby_exec, observer_exec):
     command = (
-            "ORACLE_HOME=/super/app/oracle/dbhome_1 "
-            "/super/app/oracle/dbhome_1/bin/srvctl status service -db super 2>&1; "
+            "/grid/19c/gi_home1/bin/crsctl status resource "
+            "ora.super.super_pri.svc -t; "
+            "/grid/19c/gi_home1/bin/crsctl status resource "
+            "ora.super.super_stb.svc -t; "
+            "/grid/19c/gi_home1/bin/crsctl status resource "
+            "ora.super.super_tac.svc -t; "
             "ORACLE_HOME=/super/app/oracle/dbhome_1 "
             "/super/app/oracle/dbhome_1/bin/srvctl config service "
             "-db super -service super_pri; "
@@ -127,8 +131,9 @@ def test_live_role_services_and_client_aliases(lab_exec, standby_exec, observer_
     assert "Failover type: AUTO" in primary.stdout
     assert "Commit Outcome: true" in primary.stdout
     assert "Failover restore: LEVEL1" in primary.stdout
-    assert "Service super_pri is running" in primary.stdout
-    assert "Service super_stb is not running" in primary.stdout
+    assert "ora.super.super_pri.svc\n      1        ONLINE  ONLINE" in primary.stdout
+    assert "ora.super.super_stb.svc\n      1        OFFLINE OFFLINE" in primary.stdout
+    assert "ora.super.super_tac.svc\n      1        ONLINE  ONLINE" in primary.stdout
     assert "ONS daemon is running" in primary.stdout
 
     # Verify the public SRVCTL view first, then independently inspect the

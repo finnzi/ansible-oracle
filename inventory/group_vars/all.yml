@@ -152,7 +152,11 @@ oracle_lab_dg_password: "DgPassword1_"
 # ── Domain / DNS conventions for the lab ──────────────────────────────
 lab_domain: domain.is
 oracle_network_open_firewall: true
-oracle_lab_host_map_mode: standalone
+# This inventory contains both primary and standby groups, so keep the
+# Data Guard VIP aliases persistent even when a maintenance playbook invokes
+# oracle_common through a role dependency without passing site.yml's vars.
+# The reusable role default remains standalone for non-Data-Guard inventories.
+oracle_lab_host_map_mode: dataguard
 
 oracle_lab_guest_hosts:
   - ip: 192.168.87.11
@@ -163,6 +167,12 @@ oracle_lab_guest_hosts:
     modes: [standalone, dataguard]
   - ip: 192.168.87.13
     names: observer.domain.is observer
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.22
+    names: duperdb.domain.is duperdb
+    modes: [standalone, dataguard]
+  - ip: 192.168.87.23
+    names: fluffdb.domain.is fluffdb
     modes: [standalone, dataguard]
   - ip: 192.168.87.21
     names: superdb.domain.is superdb
