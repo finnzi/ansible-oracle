@@ -1,10 +1,10 @@
 {# listener.ora.j2 — per-instance listener bound to the dedicated VIP. #}
 {# Managed by ansible-oracle / oracle_network. Do not edit by hand. #}
-# Listener for instance {{ inst.name }} on {{ inst._net }}:{{ inst._port }}
+# Listener for instance {{ inst.name }} on dedicated {{ inst._vip }}:{{ inst._port }}
 LISTENER_{{ inst.name | upper }} =
   (DESCRIPTION_LIST =
     (DESCRIPTION =
-      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._net }})(PORT = {{ inst._port }}))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._vip }})(PORT = {{ inst._port }}))
     )
   )
 

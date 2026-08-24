@@ -198,14 +198,33 @@ check_database_config() {
 }
 
 check_listener_config() {
-  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" config
+  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" listener_ip="$5" config endpoint_line socket_probe socket_addresses
   config="$(remote_state "${host_ip}" \
     "runuser -u oracle -- ${GI_HOME}/bin/srvctl config listener -listener ${listener}" || true)"
   append_check "${listener} Restart configuration" "${config}" \
-    "enabled, home=${oracle_home}, TCP:${port}"
+    "enabled, home=${oracle_home}, End points: IPC:${listener}; TCP:${listener_ip}:${port} in listener.ora"
   output_has_ci "${config}" "Listener is enabled" || ready=1
   output_has_ci "${config}" "Home: ${oracle_home}" || ready=1
-  output_has_ci "${config}" "End points: TCP:${port}" || ready=1
+  endpoint_line="$(awk '
+    /^[[:space:]]*End points:/ {
+      line=$0
+      sub(/^[^:]*:[[:space:]]*/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      print line
+      exit
+    }
+  ' <<<"${config}")"
+  [ "${endpoint_line}" = "IPC:${listener}" ] || ready=1
+  # remote_state intentionally preserves SSH stderr for diagnostics. Mark
+  # actual ss address fields remotely, then normalize only those marked lines
+  # so an SSH warning cannot be mistaken for an extra listening socket.
+  socket_probe="$(remote_state "${host_ip}" "ss -H -ltn sport = :${port} | awk '{print \"ANSIBLE_ORACLE_SOCKET=\" \$4}'" || true)"
+  socket_addresses="$(sed -n 's/^ANSIBLE_ORACLE_SOCKET=//p' <<<"${socket_probe}")"
+  append_check "${listener} TCP sockets" "${socket_probe}" "exactly ${listener_ip}:${port}"
+  [ "$(grep -Fc -- "${listener_ip}:${port}" <<<"${socket_addresses}" || true)" -eq 1 ] || ready=1
+  if grep -Evx -- "${listener_ip}:${port}" <<<"${socket_addresses}" | grep -q '[^[:space:]]'; then
+    ready=1
+  fi
 }
 
 check_service_configs() {
@@ -284,7 +303,13 @@ check_standalone_database() {
   append_check "${db_unique} database" "${state}" "PRIMARY|READ WRITE"
   output_has "${state}" "PRIMARY|READ WRITE" || ready=1
   check_database_config "${IP_SUPERDB1}" "${home}" "${db_unique}" PRIMARY open
-  check_listener_config "${IP_SUPERDB1}" "${listener}" "${home}" "${port}"
+  local listener_ip
+  case "${db_unique}" in
+    duper) listener_ip=192.168.87.22 ;;
+    fluff) listener_ip=192.168.87.23 ;;
+    *) listener_ip=192.168.87.21 ;;
+  esac
+  check_listener_config "${IP_SUPERDB1}" "${listener}" "${home}" "${port}" "${listener_ip}"
   check_service_configs "${IP_SUPERDB1}" "${home}" "${db_unique}" 1
   check_service_resource "${IP_SUPERDB1}" "${db_unique}" "${service}" PRIMARY
 }
@@ -344,7 +369,7 @@ check_lab_autostart() {
     role=PRIMARY
     start_option=open
     check_database_config "${host_ip}" "${home}" "${db_unique}" "${role}" "${start_option}"
-    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521
+    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521 192.168.87.31
     check_service_configs "${host_ip}" "${home}" "${db_unique}" 4
     check_service_resource "${host_ip}" "${db_unique}" super_svc PRIMARY
     check_service_resource "${host_ip}" "${db_unique}" super_pri PRIMARY
@@ -358,7 +383,7 @@ check_lab_autostart() {
     role=PHYSICAL_STANDBY
     start_option="read only"
     check_database_config "${host_ip}" "${home}" "${db_unique}" "${role}" "${start_option}"
-    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521
+    check_listener_config "${host_ip}" LISTENER_SUPER "${home}" 1521 192.168.87.32
     check_service_configs "${host_ip}" "${home}" "${db_unique}" 4
     check_service_resource "${host_ip}" "${db_unique}" super_stb PHYSICAL_STANDBY
   fi

@@ -79,6 +79,10 @@ oracle_roles:
 # dataguard: true   -> primary+standby pair, VIPs <name>dc1/dc2.domain.is
 #
 # archive / flashback / force_logging are independently toggleable.
+# Every instance must carry a literal listener_ip. oracle_lab_listener_vips is
+# only the lab guest-address assignment/cleanup map; never infer binds from
+# DNS or the default route.
+oracle_network_interface: eth0
 oracle_instances:
   - name: super
     oracle_base: /super/app/oracle
@@ -107,7 +111,10 @@ oracle_instances:
       pga_aggregate_target: 1G
     # standalone listener hostname; for DG this is overridden by primary/standby
     listener_vip: superdb.domain.is
+    listener_ip: 192.168.87.21
     listener_port: 1521
+    dg_primary_host: superdc1.domain.is
+    dg_standby_host: superdc2.domain.is
     # Backward-compatible primary service used by the original test slice.
     service_name: super_svc
     # Role-based Data Guard services. super_pri follows the writable primary;

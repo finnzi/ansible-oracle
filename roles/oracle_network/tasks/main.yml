@@ -2,8 +2,7 @@
 # tasks/main.yml for oracle_network
 #
 # Per-instance listener configuration. We bind each instance's listener to its
-# dedicated VIP hostname (superdb.domain.is for standalone; superdc1/dc2 for
-# DG) and configure a STATIC SID_LIST entry. The research confirmed that
+# dedicated literal VIP IP and configure a STATIC SID_LIST entry. The research confirmed that
 # dynamic service registration can come back "blocked" in constrained labs, so
 # we add the static entry for reliability.
 #
@@ -16,6 +15,29 @@
       oracle_network_home_selection={{ oracle_network_home_selection }} is
       invalid. Supported values are current and selected.
   when: oracle_network_home_selection | default('current') not in ['current', 'selected']
+
+- name: Resolve explicit Oracle listener network interface
+  ansible.builtin.set_fact:
+    _oracle_network_interface: "{{ oracle_network_interface | default('') | trim }}"
+
+- name: Require an explicit Oracle listener network interface
+  ansible.builtin.assert:
+    that:
+      - oracle_network_interface is defined
+      - (_oracle_network_interface | default('') | length) > 0
+    fail_msg: >-
+      Set oracle_network_interface to the client/VIP network interface (for
+      example eth0 or bond0). Refusing to infer it from the default route.
+
+- name: Verify explicit Oracle listener network interface exists
+  ansible.builtin.command:
+    argv:
+      - ip
+      - link
+      - show
+      - dev
+      - "{{ _oracle_network_interface }}"
+  changed_when: false
 
 # Resolve which VIPs this host must keep even when the role is invoked with a
 # filtered oracle_network_instances list (dual-home prepare for standalones).
@@ -80,12 +102,6 @@
             {%- set _ = homes.append(current_home) -%}
           {%- endif -%}
           {%- set listener_name = (inst.listener_vip | default(inst.name ~ (('dc2' if 'standby' in group_names else 'dc1') if (inst.dataguard | default(false) | bool) else 'db') ~ '.' ~ (lab_domain | default('domain.is')))) -%}
-          {%- set vip = namespace(ip='') -%}
-          {%- for entry in (oracle_lab_listener_vips | default([])) -%}
-            {%- if listener_name in (entry.names | default('') | string).split() -%}
-              {%- set vip.ip = entry.ip -%}
-            {%- endif -%}
-          {%- endfor -%}
           {%- set current_home = (inst.db_homes | selectattr('current','equalto',true) | list | first) | default(inst.db_homes[0]) -%}
           {%- for home in homes -%}
             {%- set _ = out.append(inst | combine({
@@ -93,12 +109,44 @@
               '_home_path': inst.oracle_base ~ '/' ~ home.suffix,
               '_home_is_current': (home.suffix == current_home.suffix),
               '_net': listener_name,
-              '_vip': vip.ip,
+              '_vip': (inst.listener_ip | default('') | trim),
               '_port': (inst.listener_port | default(1521))})) -%}
           {%- endfor -%}
         {%- endif -%}
       {%- endfor -%}
       {{ out }}
+
+- name: Require a dedicated literal listener VIP for every network instance
+  ansible.builtin.assert:
+    that:
+      - inst.listener_ip is defined
+      - inst._vip is defined
+      - (inst._vip | string | trim | length) > 0
+      - inst._vip is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      {{ inst.name }} has no dedicated listener_ip. Configure a literal
+      listener IP before
+      managing Oracle Net/Restart.
+  loop: "{{ _net_instances }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
+
+- name: Require explicit Data Guard descriptor hosts
+  ansible.builtin.assert:
+    that:
+      - inst.dg_primary_host is defined
+      - (inst.dg_primary_host | string | trim | length) > 0
+      - inst.dg_standby_host is defined
+      - (inst.dg_standby_host | string | trim | length) > 0
+    fail_msg: >-
+      {{ inst.name }} is a Data Guard instance but dg_primary_host and
+      dg_standby_host were not both supplied. Configure the real listener
+      hostnames explicitly; production descriptors must not derive dc1/dc2.
+  loop: "{{ _net_instances | selectattr('dataguard', 'defined') | selectattr('dataguard', 'equalto', true) | list }}"
+  loop_control:
+    loop_var: inst
+    label: "{{ inst.name }}"
 
 - name: Resolve runtime listener Oracle home from Restart
   ansible.builtin.shell: |
@@ -155,10 +203,7 @@
 - name: Remove unmanaged lab listener VIPs from the guest interface
   ansible.builtin.shell: |
     set -o pipefail
-    iface="{{ oracle_network_listener_interface | default('') }}"
-    if [ -z "$iface" ]; then
-      iface="$(ip -o route show default | awk '{print $5; exit}')"
-    fi
+    iface="{{ _oracle_network_interface }}"
 
     # Retain VIPs for every inventory instance on this host (not only the
     # filtered oracle_network_instances subset for this run). Union with the
@@ -220,10 +265,7 @@
 - name: Assign dedicated listener VIPs to the guest interface
   ansible.builtin.shell: |
     set -o pipefail
-    iface="{{ oracle_network_listener_interface | default('') }}"
-    if [ -z "$iface" ]; then
-      iface="$(ip -o route show default | awk '{print $5; exit}')"
-    fi
+    iface="{{ _oracle_network_interface }}"
     if ip -4 addr show dev "$iface" | grep -Eq '(^|[[:space:]]){{ inst._vip }}/'; then
       runtime_present=1
     else

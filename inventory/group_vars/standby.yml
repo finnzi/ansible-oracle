@@ -10,6 +10,9 @@ oracle_instance_overrides:
     dataguard: true
     flashback: true
     listener_vip: "superdc2.domain.is"
+    listener_ip: "192.168.87.32"
+    dg_primary_host: "superdc1.domain.is"
+    dg_standby_host: "superdc2.domain.is"
     dg_role: standby
     db_unique_name: super_sby
     # Requirement: standby must be OPEN READ ONLY WITH APPLY (not MOUNTED).

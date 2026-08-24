@@ -8,12 +8,21 @@
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}
     _dg_standby_unique_name: "{{ inst.db_unique_name | default(dg_standby.db_unique_name | default(inst.name ~ '_sby')) }}"
     _dg_primary_unique_name: "{{ inst.dg_primary_db_unique_name | default(dg_primary.db_unique_name | default(inst.name)) }}"
-    _dg_listener_host: "{{ inst.listener_vip }}"
+    _dg_listener_host: "{{ inst.listener_ip | default('') | trim }}"
     _dg_listener_port: "{{ inst.listener_port | default(1521) }}"
     _dg_standby_pfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/init{{ inst.name }}.ora
     _dg_standby_pwfile: >-
       {{ inst.oracle_base }}/{{ ((inst.db_homes | selectattr('current', 'equalto', true) | list | first) | default(inst.db_homes[0])).suffix }}/dbs/orapw{{ inst.name }}
+
+- name: Require a literal standby listener IP for Data Guard
+  ansible.builtin.assert:
+    that:
+      - (_dg_listener_host | default('') | length) > 0
+      - _dg_listener_host is match('^[0-9]{1,3}(\\.[0-9]{1,3}){3}$')
+    fail_msg: >-
+      {{ inst.name }} requires listener_ip
+      before Data Guard LOCAL_LISTENER configuration.
 
 - name: Resolve runtime ORACLE_HOME from Restart for standby prep
   ansible.builtin.include_role:

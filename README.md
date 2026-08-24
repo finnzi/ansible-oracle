@@ -72,6 +72,11 @@ Implemented:
   listener services, and broker TNS aliases.
 - Dedicated listener VIPs in the KVM lab (`superdb`, `duperdb`, `fluffdb`,
   `superdc1`, `superdc2`) separate from VM management IPs.
+- Listener/VIP inputs are explicit: every DB host sets
+  `oracle_network_interface` to its client/VIP NIC, every instance carries a
+  literal `listener_ip`, and Data Guard instances carry explicit
+  `dg_primary_host` / `dg_standby_host` values. The role refuses to infer a
+  NIC from the default route or derive production `dc1`/`dc2` descriptors.
 - Multi-instance inventory example for `super`, `duper`, and `fluff`, with
   distinct filesystem trees, listener names/ports, services, and host-specific
   Data Guard overrides covered by unit tests.

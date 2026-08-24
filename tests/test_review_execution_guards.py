@@ -1,6 +1,7 @@
 """Contract tests for execution-safety guards found in the repo review."""
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -194,6 +195,95 @@ def test_listener_start_fails_closed_without_tns_token():
 
     assert "'TNS-01106' not in (_lsnr_start.stdout | default(''))" in start
     assert "'TNS-' in (_lsnr_start.stdout | default(''))" not in start
+
+
+def test_listeners_use_literal_vips_and_restart_ipc_endpoints():
+    network = _read("roles/oracle_network/tasks/main.yml")
+    listener_template = _read("roles/oracle_network/templates/listener.ora.j2")
+    restart = _read("roles/oracle_restart_manage/tasks/register-instance.yml")
+    duplicate = _read("roles/oracle_dataguard/tasks/duplicate-standby.yml")
+    db_manage = _read("roles/oracle_db_manage/tasks/manage-instance.yml")
+
+    assert "Require an explicit Oracle listener network interface" in network
+    assert "ip -o route show default" not in network
+    assert "oracle_network_interface" in network
+    assert "HOST = {{ inst._vip }}" in listener_template
+    assert '-endpoints "/IPC:LISTENER_{{ inst.name | upper }}"' in restart
+    assert '-endpoints "/IPC:LISTENER_{{ inst.name | upper }}"' in duplicate
+    assert "_restart_listener_ip" in restart
+    assert "HOST={{ _listener_host }}" in db_manage
+
+
+def test_dataguard_tnsnames_require_explicit_hosts():
+    network = _read("roles/oracle_network/tasks/main.yml")
+    tns = _read("roles/oracle_network/templates/tnsnames.ora.j2")
+    assert "Require explicit Data Guard descriptor hosts" in network
+    assert "inst.dg_primary_host" in tns
+    assert "inst.dg_standby_host" in tns
+    assert "inst.name ~ 'dc1.'" not in tns
+    assert "inst.name ~ 'dc2.'" not in tns
+
+
+def test_lab_autostart_verifies_exact_listener_socket_addresses():
+    verifier = _read("scripts/verify-lab-autostart.sh")
+    assert '[ "${endpoint_line}" = "IPC:${listener}" ] || ready=1' in verifier
+    assert 'ANSIBLE_ORACLE_SOCKET=' in verifier
+    assert 'socket_addresses="$(sed -n' in verifier
+    assert "ss -H -ltn sport = :${port}" in verifier
+    assert "exactly ${listener_ip}:${port}" in verifier
+    assert "grep -Evx -- \"${listener_ip}:${port}\"" in verifier
+
+
+def test_listener_socket_normalization_ignores_ssh_diagnostics_but_rejects_extra_addresses():
+    verifier = _read("scripts/verify-lab-autostart.sh")
+    assert "remote_state intentionally preserves SSH stderr" in verifier
+    assert 'grep -Fc -- "${listener_ip}:${port}" <<<"${socket_addresses}"' in verifier
+    assert 'grep -Evx -- "${listener_ip}:${port}" <<<"${socket_addresses}"' in verifier
+
+    probe = """Warning: Permanently added '192.0.2.10' (ED25519) to the list of known hosts.
+Warning: kex warning: post-quantum key exchange is not in use.
+ANSIBLE_ORACLE_SOCKET=192.168.87.22:1522
+"""
+    normalized = subprocess.run(
+        ["sed", "-n", "s/^ANSIBLE_ORACLE_SOCKET=//p"],
+        input=probe,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    assert normalized == ["192.168.87.22:1522"]
+
+    extra_probe = probe + "ANSIBLE_ORACLE_SOCKET=192.168.87.11:1522\n"
+    extra = subprocess.run(
+        ["sed", "-n", "s/^ANSIBLE_ORACLE_SOCKET=//p"],
+        input=extra_probe,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    assert extra == ["192.168.87.22:1522", "192.168.87.11:1522"]
+    assert [line for line in extra if line != "192.168.87.22:1522"] == [
+        "192.168.87.11:1522"
+    ]
+
+
+def test_listener_ip_and_network_interface_are_canonical_required_inputs():
+    network = _read("roles/oracle_network/tasks/main.yml")
+    network_defaults = _read("roles/oracle_network/defaults/main.yml")
+    db_manage = _read("roles/oracle_db_manage/tasks/manage-instance.yml")
+    restart = _read("roles/oracle_restart_manage/tasks/register-instance.yml")
+    dg_primary = _read("roles/oracle_dataguard/tasks/prepare-primary.yml")
+    dg_standby = _read("roles/oracle_dataguard/tasks/prepare-standby.yml")
+    dg_duplicate = _read("roles/oracle_dataguard/tasks/duplicate-standby.yml")
+
+    assert "oracle_network_interface is defined" in network
+    assert "oracle_network_listener_interface" not in network
+    assert "oracle_network_listener_interface" not in network_defaults
+    assert "inst.listener_ip is defined" in network
+    assert "oracle_lab_listener_vips" in network  # assignment/cleanup only
+    for source in (db_manage, restart, dg_primary, dg_standby, dg_duplicate):
+        assert "oracle_lab_listener_vips" not in source
+        assert "listener_ip" in source
 
 
 def test_relocate_spfile_home_copy_uses_sid():

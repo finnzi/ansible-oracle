@@ -8,11 +8,11 @@
     (ADDRESS_LIST =
       (FAILOVER = ON)
       (LOAD_BALANCE = OFF)
-      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst.name }}dc1.{{ lab_domain | default('domain.is') }})(PORT = {{ inst._port }}))
-      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst.name }}dc2.{{ lab_domain | default('domain.is') }})(PORT = {{ inst._port }}))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst.dg_primary_host }})(PORT = {{ inst._port }}))
+      (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst.dg_standby_host }})(PORT = {{ inst._port }}))
     )
 {% else %}
-    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._net }})(PORT = {{ inst._port }}))
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._vip }})(PORT = {{ inst._port }}))
 {% endif %}
     (CONNECT_DATA =
       (SERVER = DEDICATED)
@@ -23,7 +23,7 @@
 # The instance itself (useful for administration / sqlplus / as sysdba).
 {{ inst.name }} =
   (DESCRIPTION =
-    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._net }})(PORT = {{ inst._port }}))
+    (ADDRESS = (PROTOCOL = TCP)(HOST = {{ inst._vip }})(PORT = {{ inst._port }}))
     (CONNECT_DATA =
       (SERVER = DEDICATED)
       (SID = {{ inst.name }})
@@ -33,12 +33,11 @@
 {% if inst.dataguard | default(false) | bool %}
 # Data Guard broker connect identifiers. Each database host needs both site
 # aliases so DGMGRL can create, inspect, and switchover the configuration.
-{% set dg_domain = lab_domain | default('domain.is') %}
 {% set dg_primary_unique = inst.dg_primary_db_unique_name | default(inst.name) %}
 {% set dg_standby_unique = inst.dg_standby_db_unique_name | default(inst.name ~ '_sby') %}
 {% set dg_sites = [
-  {'alias': dg_primary_unique ~ '_dgb', 'host': inst.name ~ 'dc1.' ~ dg_domain, 'service_name': dg_primary_unique ~ '_DGMGRL'},
-  {'alias': dg_standby_unique ~ '_dgb', 'host': inst.name ~ 'dc2.' ~ dg_domain, 'service_name': dg_standby_unique ~ '_DGMGRL'},
+  {'alias': dg_primary_unique ~ '_dgb', 'host': inst.dg_primary_host, 'service_name': dg_primary_unique ~ '_DGMGRL'},
+  {'alias': dg_standby_unique ~ '_dgb', 'host': inst.dg_standby_host, 'service_name': dg_standby_unique ~ '_DGMGRL'},
 ] %}
 {% for dg in dg_sites %}
 {{ dg.alias }} =

@@ -1,9 +1,9 @@
 ---
 # defaults/main.yml for oracle_network
 #
-# Bind the listener to a dedicated IP/hostname per instance. The hostname is
-# already in /etc/hosts (lab/scripts/update-hosts.sh) and on the host too, so
-# clients resolve the VIP without a dedicated DNS.
+# Bind the listener to a dedicated literal IP per instance. Each instance must
+# provide listener_ip; oracle_lab_listener_vips is only a lab assignment and
+# stale-address cleanup map.
 
 oracle_user: oracle
 oracle_group: oinstall
@@ -17,7 +17,10 @@ oracle_lab_guest_hosts: []
 oracle_lab_host_map_mode: standalone
 oracle_lab_listener_vips: []
 oracle_network_dataguard_enabled: false
-oracle_network_listener_interface: ""
+# Explicit interface used for listener VIP assignment.  Do not infer this
+# from the default route: database, backup, and management networks are often
+# separate (and production hosts may use bonds/VLANs).
+oracle_network_interface: ""
 oracle_network_persist_listener_vips: true
 oracle_network_listener_vip_prefix: 24
 oracle_network_open_firewall: false
