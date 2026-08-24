@@ -225,6 +225,7 @@ def test_dataguard_tnsnames_require_explicit_hosts():
 
 def test_lab_autostart_verifies_exact_listener_socket_addresses():
     verifier = _read("scripts/verify-lab-autostart.sh")
+    assert '[ "${endpoint_line}" = "IPC:${listener}" ] || ready=1' in verifier
     assert "ss -H -ltn sport = :${port}" in verifier
     assert "exactly ${listener_ip}:${port}" in verifier
     assert "grep -Evx -- \"${listener_ip}:${port}\"" in verifier

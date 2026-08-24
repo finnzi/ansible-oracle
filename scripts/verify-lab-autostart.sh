@@ -198,14 +198,23 @@ check_database_config() {
 }
 
 check_listener_config() {
-  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" listener_ip="$5" config sockets
+  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" listener_ip="$5" config endpoint_line sockets
   config="$(remote_state "${host_ip}" \
     "runuser -u oracle -- ${GI_HOME}/bin/srvctl config listener -listener ${listener}" || true)"
   append_check "${listener} Restart configuration" "${config}" \
-    "enabled, home=${oracle_home}, IPC-only Restart endpoint; TCP:${listener_ip}:${port} in listener.ora"
+    "enabled, home=${oracle_home}, End points: IPC:${listener}; TCP:${listener_ip}:${port} in listener.ora"
   output_has_ci "${config}" "Listener is enabled" || ready=1
   output_has_ci "${config}" "Home: ${oracle_home}" || ready=1
-  output_has_ci "${config}" "End points: /IPC:${listener}" || ready=1
+  endpoint_line="$(awk '
+    /^[[:space:]]*End points:/ {
+      line=$0
+      sub(/^[^:]*:[[:space:]]*/, "", line)
+      gsub(/[[:space:]]+$/, "", line)
+      print line
+      exit
+    }
+  ' <<<"${config}")"
+  [ "${endpoint_line}" = "IPC:${listener}" ] || ready=1
   sockets="$(remote_state "${host_ip}" "ss -H -ltn sport = :${port} | awk '{print \$4}'" || true)"
   append_check "${listener} TCP sockets" "${sockets}" "exactly ${listener_ip}:${port}"
   [ "$(grep -Fc -- "${listener_ip}:${port}" <<<"${sockets}" || true)" -eq 1 ] || ready=1

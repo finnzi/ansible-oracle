@@ -51,6 +51,9 @@ def test_full_lab_power_cycles_before_read_only_autostart_verification():
     assert "srvctl status diskgroup -diskgroup RESTART" in verifier
     assert "srvctl config database -db ${db_unique_name} -all" in verifier
     assert "srvctl config listener" in verifier
+    assert 'endpoint_line="$(awk' in verifier
+    assert '[ "${endpoint_line}" = "IPC:${listener}" ] || ready=1' in verifier
+    assert 'End points: /IPC:${listener}' not in verifier
     assert "srvctl config service" in verifier
     assert "Management policy: AUTOMATIC" in verifier
     assert "Database is enabled" in verifier
