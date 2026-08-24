@@ -1,6 +1,7 @@
 """Contract tests for execution-safety guards found in the repo review."""
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -226,9 +227,44 @@ def test_dataguard_tnsnames_require_explicit_hosts():
 def test_lab_autostart_verifies_exact_listener_socket_addresses():
     verifier = _read("scripts/verify-lab-autostart.sh")
     assert '[ "${endpoint_line}" = "IPC:${listener}" ] || ready=1' in verifier
+    assert 'ANSIBLE_ORACLE_SOCKET=' in verifier
+    assert 'socket_addresses="$(sed -n' in verifier
     assert "ss -H -ltn sport = :${port}" in verifier
     assert "exactly ${listener_ip}:${port}" in verifier
     assert "grep -Evx -- \"${listener_ip}:${port}\"" in verifier
+
+
+def test_listener_socket_normalization_ignores_ssh_diagnostics_but_rejects_extra_addresses():
+    verifier = _read("scripts/verify-lab-autostart.sh")
+    assert "remote_state intentionally preserves SSH stderr" in verifier
+    assert 'grep -Fc -- "${listener_ip}:${port}" <<<"${socket_addresses}"' in verifier
+    assert 'grep -Evx -- "${listener_ip}:${port}" <<<"${socket_addresses}"' in verifier
+
+    probe = """Warning: Permanently added '192.0.2.10' (ED25519) to the list of known hosts.
+Warning: kex warning: post-quantum key exchange is not in use.
+ANSIBLE_ORACLE_SOCKET=192.168.87.22:1522
+"""
+    normalized = subprocess.run(
+        ["sed", "-n", "s/^ANSIBLE_ORACLE_SOCKET=//p"],
+        input=probe,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    assert normalized == ["192.168.87.22:1522"]
+
+    extra_probe = probe + "ANSIBLE_ORACLE_SOCKET=192.168.87.11:1522\n"
+    extra = subprocess.run(
+        ["sed", "-n", "s/^ANSIBLE_ORACLE_SOCKET=//p"],
+        input=extra_probe,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout.splitlines()
+    assert extra == ["192.168.87.22:1522", "192.168.87.11:1522"]
+    assert [line for line in extra if line != "192.168.87.22:1522"] == [
+        "192.168.87.11:1522"
+    ]
 
 
 def test_listener_ip_and_network_interface_are_canonical_required_inputs():

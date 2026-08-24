@@ -54,6 +54,8 @@ def test_full_lab_power_cycles_before_read_only_autostart_verification():
     assert 'endpoint_line="$(awk' in verifier
     assert '[ "${endpoint_line}" = "IPC:${listener}" ] || ready=1' in verifier
     assert 'End points: /IPC:${listener}' not in verifier
+    assert 'ANSIBLE_ORACLE_SOCKET=' in verifier
+    assert 'sed -n \'s/^ANSIBLE_ORACLE_SOCKET=//p\'' in verifier
     assert "srvctl config service" in verifier
     assert "Management policy: AUTOMATIC" in verifier
     assert "Database is enabled" in verifier

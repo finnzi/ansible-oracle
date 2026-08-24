@@ -198,7 +198,7 @@ check_database_config() {
 }
 
 check_listener_config() {
-  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" listener_ip="$5" config endpoint_line sockets
+  local host_ip="$1" listener="$2" oracle_home="$3" port="$4" listener_ip="$5" config endpoint_line socket_probe socket_addresses
   config="$(remote_state "${host_ip}" \
     "runuser -u oracle -- ${GI_HOME}/bin/srvctl config listener -listener ${listener}" || true)"
   append_check "${listener} Restart configuration" "${config}" \
@@ -215,10 +215,14 @@ check_listener_config() {
     }
   ' <<<"${config}")"
   [ "${endpoint_line}" = "IPC:${listener}" ] || ready=1
-  sockets="$(remote_state "${host_ip}" "ss -H -ltn sport = :${port} | awk '{print \$4}'" || true)"
-  append_check "${listener} TCP sockets" "${sockets}" "exactly ${listener_ip}:${port}"
-  [ "$(grep -Fc -- "${listener_ip}:${port}" <<<"${sockets}" || true)" -eq 1 ] || ready=1
-  if grep -Evx -- "${listener_ip}:${port}" <<<"${sockets}" | grep -q '[^[:space:]]'; then
+  # remote_state intentionally preserves SSH stderr for diagnostics. Mark
+  # actual ss address fields remotely, then normalize only those marked lines
+  # so an SSH warning cannot be mistaken for an extra listening socket.
+  socket_probe="$(remote_state "${host_ip}" "ss -H -ltn sport = :${port} | awk '{print \"ANSIBLE_ORACLE_SOCKET=\" \$4}'" || true)"
+  socket_addresses="$(sed -n 's/^ANSIBLE_ORACLE_SOCKET=//p' <<<"${socket_probe}")"
+  append_check "${listener} TCP sockets" "${socket_probe}" "exactly ${listener_ip}:${port}"
+  [ "$(grep -Fc -- "${listener_ip}:${port}" <<<"${socket_addresses}" || true)" -eq 1 ] || ready=1
+  if grep -Evx -- "${listener_ip}:${port}" <<<"${socket_addresses}" | grep -q '[^[:space:]]'; then
     ready=1
   fi
 }
